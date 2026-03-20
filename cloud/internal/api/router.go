@@ -69,7 +69,6 @@ func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
 		// Telemetry
 		r.Get("/api/v1/data/readings", readingsHandler(pool))
 		r.Get("/api/v1/data/sensors/{id}/latest", latestReadingHandler(pool))
-		r.Get("/api/v1/qubes/{id}/sensors", listAllSensorsForQubeTelemetryHandler(pool))
 
 		// Admin only
 		r.Group(func(r chi.Router) {

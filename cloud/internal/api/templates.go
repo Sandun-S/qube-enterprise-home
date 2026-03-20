@@ -181,13 +181,15 @@ func updateTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			writeError(w, http.StatusNotFound, "template not found")
 			return
 		}
-		if isGlobal && role != "superadmin" {
-			writeError(w, http.StatusForbidden, "global templates can only be updated by superadmin")
-			return
-		}
-		if !isGlobal && (existingOrgID == nil || *existingOrgID != orgID) {
-			writeError(w, http.StatusForbidden, "cannot update another org's template")
-			return
+		if role != "superadmin" {
+			if isGlobal {
+				writeError(w, http.StatusForbidden, "global templates can only be updated by superadmin")
+				return
+			}
+			if existingOrgID == nil || *existingOrgID != orgID {
+				writeError(w, http.StatusForbidden, "cannot update another org's template")
+				return
+			}
 		}
 
 		var req struct {
@@ -239,13 +241,16 @@ func patchTemplateRegistersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			writeError(w, http.StatusNotFound, "template not found")
 			return
 		}
-		if isGlobal && role != "superadmin" {
-			writeError(w, http.StatusForbidden, "global templates only editable by superadmin")
-			return
-		}
-		if !isGlobal && (existingOrgID == nil || *existingOrgID != orgID) {
-			writeError(w, http.StatusForbidden, "not your template")
-			return
+		// superadmin can edit any template (global or org-scoped)
+		if role != "superadmin" {
+			if isGlobal {
+				writeError(w, http.StatusForbidden, "global templates only editable by superadmin")
+				return
+			}
+			if existingOrgID == nil || *existingOrgID != orgID {
+				writeError(w, http.StatusForbidden, "not your template")
+				return
+			}
 		}
 
 		var req struct {

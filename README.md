@@ -109,11 +109,6 @@ open http://localhost:8888   # test UI
 ```
 
 After stack is up, run through the test scenarios in TESTING.md.
-```bash
-chmod +x test/test_api.sh
-./test/test_api.sh                        # localhost
-./test/test_api.sh http://192.168.1.10    # remote cloud VM
-```
 
 ---
 

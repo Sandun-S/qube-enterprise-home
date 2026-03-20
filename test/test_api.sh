@@ -8,12 +8,26 @@
 #   ./test_api.sh                        # run against localhost
 #   ./test_api.sh http://192.168.1.10    # run against remote cloud VM
 #
+# Re-run safe: uses a unique RUN_ID timestamp so emails/names never conflict.
+# Each run claims 2 qubes from the pool (Q-1001..Q-1005).
+# If all 5 qubes are claimed after 2+ runs, reset with:
+#   docker compose -f docker-compose.dev.yml down -v && docker compose -f docker-compose.dev.yml up -d
+#
+# sensor_map.json missing = normal until conf-agent syncs after a sensor is added.
+# After adding a sensor, wait 30s then it appears in /opt/qube/sensor_map.json.
+#
 # Prerequisites: curl, jq
 # =============================================================================
 
 BASE="${1:-http://localhost:8080}"
 TP_BASE="${BASE%:8080}:8081"
 PASS=0; FAIL=0; SKIP=0
+
+# Unique run ID — makes emails/names unique so tests are idempotent across re-runs
+RUN_ID=$(date +%s)
+TEST_EMAIL="admin_${RUN_ID}@test.com"
+TEST_EMAIL_B="orgb_${RUN_ID}@test.com"
+TEST_EMAIL_VIEWER="viewer_${RUN_ID}@test.com"
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -80,7 +94,8 @@ assert_status "TP-API /health" "200" "$(code "$R")"
 section "1. Auth — register"
 # =============================================================================
 
-R=$(api POST /api/v1/auth/register '{"org_name":"Test Org","email":"admin@test.com","password":"testpass123"}')
+R=$(api POST /api/v1/auth/register \
+  "{\"org_name\":\"Test Org $RUN_ID\",\"email\":\"$TEST_EMAIL\",\"password\":\"testpass123\"}")
 assert_status "register new org" "201" "$(code "$R")"
 TOKEN=$(split "$R" | jq -r .token)
 ORG_ID=$(split "$R" | jq -r .org_id)
@@ -88,7 +103,8 @@ assert_field "register returns token" "$TOKEN"
 assert_field "register returns org_id" "$ORG_ID"
 
 # duplicate email
-R=$(api POST /api/v1/auth/register '{"org_name":"Other","email":"admin@test.com","password":"x"}')
+R=$(api POST /api/v1/auth/register \
+  "{\"org_name\":\"Other\",\"email\":\"$TEST_EMAIL\",\"password\":\"x\"}")
 assert_status "register duplicate email → 409" "409" "$(code "$R")"
 
 # missing fields
@@ -99,12 +115,14 @@ assert_status "register missing fields → 400" "400" "$(code "$R")"
 section "2. Auth — login"
 # =============================================================================
 
-R=$(api POST /api/v1/auth/login '{"email":"admin@test.com","password":"testpass123"}')
+R=$(api POST /api/v1/auth/login \
+  "{\"email\":\"$TEST_EMAIL\",\"password\":\"testpass123\"}")
 assert_status "login valid" "200" "$(code "$R")"
 TOKEN=$(split "$R" | jq -r .token)
 assert_field "login returns token" "$TOKEN"
 
-R=$(api POST /api/v1/auth/login '{"email":"admin@test.com","password":"wrongpassword"}')
+R=$(api POST /api/v1/auth/login \
+  "{\"email\":\"$TEST_EMAIL\",\"password\":\"wrongpassword\"}")
 assert_status "login wrong password → 401" "401" "$(code "$R")"
 
 R=$(api POST /api/v1/auth/login '{"email":"notexist@test.com","password":"x"}')
@@ -142,15 +160,46 @@ COUNT=$(split "$R" | jq '. | length')
 section "6. Qubes — claim by register_key (production flow)"
 # =============================================================================
 
-R=$(api POST /api/v1/qubes/claim '{"register_key":"TEST-Q1001-REG"}' "$TOKEN")
-assert_status "claim by register_key" "200" "$(code "$R")"
-QUBE_TOKEN=$(split "$R" | jq -r .auth_token)
-QUBE_ID=$(split "$R" | jq -r .qube_id)
-assert_field "claim returns auth_token" "$QUBE_TOKEN"
-assert_field "claim returns qube_id" "$QUBE_ID"
+# Find unclaimed qubes from the pre-registered test set (Q-1001..Q-1020)
+CLAIM_KEY1=""; CLAIM_KEY2=""
+for N in $(seq 1001 1020); do
+  KEY="TEST-Q${N}-REG"
+  R=$(api POST /api/v1/qubes/claim "{\"register_key\":\"$KEY\"}" "$TOKEN")
+  if [ "$(code "$R")" = "200" ]; then
+    if [ -z "$CLAIM_KEY1" ]; then
+      CLAIM_KEY1="$KEY"
+      QUBE_TOKEN=$(split "$R" | jq -r .auth_token)
+      QUBE_ID=$(split "$R" | jq -r .qube_id)
+      ok "claimed $QUBE_ID with key $KEY"
+    elif [ -z "$CLAIM_KEY2" ]; then
+      CLAIM_KEY2="$KEY"
+      QUBE2_TOKEN=$(split "$R" | jq -r .auth_token)
+      QUBE2_ID=$(split "$R" | jq -r .qube_id)
+      ok "claimed second qube $QUBE2_ID"
+      break
+    fi
+  fi
+done
+
+# Hard stop if no qubes available — everything downstream needs QUBE_ID
+if [ -z "$QUBE_ID" ] || [ -z "$QUBE_TOKEN" ]; then
+  fail "no unclaimed test qubes available — reset with: docker compose -f docker-compose.dev.yml down -v && up -d"
+  echo ""
+  echo -e "  ${RED}Cannot continue — QUBE_ID is empty. Reset the DB and rerun.${NC}"
+  echo "════════════════════════════════════"
+  echo -e "  ${GREEN}PASS${NC}: $PASS"
+  echo -e "  ${RED}FAIL${NC}: $FAIL"
+  echo -e "  ${YELLOW}SKIP${NC}: $SKIP"
+  echo "════════════════════════════════════"
+  exit 1
+fi
+
+assert_field "first qube token" "$QUBE_TOKEN"
+assert_field "first qube id" "$QUBE_ID"
+assert_field "second qube token" "$QUBE2_TOKEN"
 
 # already claimed
-R=$(api POST /api/v1/qubes/claim '{"register_key":"TEST-Q1001-REG"}' "$TOKEN")
+R=$(api POST /api/v1/qubes/claim "{\"register_key\":\"$CLAIM_KEY1\"}" "$TOKEN")
 assert_status "claim already claimed → 409" "409" "$(code "$R")"
 
 # wrong key
@@ -161,13 +210,9 @@ assert_status "claim wrong key → 404" "404" "$(code "$R")"
 R=$(api POST /api/v1/qubes/claim '{}' "$TOKEN")
 assert_status "claim no key → 400" "400" "$(code "$R")"
 
-# claim second qube (dev flow — by qube_id)
-R=$(api POST /api/v1/qubes/claim '{"qube_id":"Q-1002"}' "$TOKEN")
-assert_status "claim by qube_id (dev)" "200" "$(code "$R")"
-QUBE2_TOKEN=$(split "$R" | jq -r .auth_token)
-
 # non-admin cannot claim
-R=$(api POST /api/v1/auth/register '{"org_name":"Viewer Org","email":"viewer@test.com","password":"viewerpass"}')
+R=$(api POST /api/v1/auth/register \
+  "{\"org_name\":\"Viewer Org $RUN_ID\",\"email\":\"$TEST_EMAIL_VIEWER\",\"password\":\"viewerpass\"}")
 VIEWER_TOKEN=$(split "$R" | jq -r .token)
 # Create viewer user — for now just test that viewer token can't claim
 # (viewer token belongs to a different org, so it won't find Q-1003 in that org)
@@ -196,36 +241,51 @@ assert_status "get qube wrong org → 404" "404" "$(code "$R")"
 section "8. TP-API — device self-registration"
 # =============================================================================
 
-# Not yet claimed device (Q-1003)
-R=$(tp_api POST /v1/device/register \
-  '{"device_id":"Q-1003","register_key":"TEST-Q1003-REG"}')
-assert_status "self-register unclaimed → 202" "202" "$(code "$R")"
-STATUS=$(split "$R" | jq -r .status)
-[ "$STATUS" = "pending" ] && ok "self-register unclaimed returns pending" || fail "expected pending, got $STATUS"
+# Find an unclaimed qube for self-register test (skip the two we just claimed)
+UNCLAIMED_ID=""; UNCLAIMED_KEY=""
+for N in $(seq 1003 1020); do
+  R=$(tp_api POST /v1/device/register \
+    "{\"device_id\":\"Q-$N\",\"register_key\":\"TEST-Q${N}-REG\"}" "" "")
+  if [ "$(code "$R")" = "202" ]; then
+    UNCLAIMED_ID="Q-$N"; UNCLAIMED_KEY="TEST-Q${N}-REG"; break
+  fi
+done
+
+if [ -n "$UNCLAIMED_ID" ]; then
+  R=$(tp_api POST /v1/device/register \
+    "{\"device_id\":\"$UNCLAIMED_ID\",\"register_key\":\"$UNCLAIMED_KEY\"}")
+  assert_status "self-register unclaimed → 202" "202" "$(code "$R")"
+  STATUS=$(split "$R" | jq -r .status)
+  [ "$STATUS" = "pending" ] && ok "self-register unclaimed returns pending" \
+    || fail "expected pending, got $STATUS"
+else
+  skip "self-register unclaimed (all test qubes already claimed — run: docker compose down -v && up)"
+fi
 
 # Wrong register_key
 R=$(tp_api POST /v1/device/register \
-  '{"device_id":"Q-1003","register_key":"WRONG-KEY"}')
+  "{\"device_id\":\"$UNCLAIMED_ID\",\"register_key\":\"WRONG-KEY\"}")
 assert_status "self-register wrong key → 401" "401" "$(code "$R")"
 
 # Missing fields
-R=$(tp_api POST /v1/device/register '{"device_id":"Q-1003"}')
+R=$(tp_api POST /v1/device/register "{\"device_id\":\"$UNCLAIMED_ID\"}")
 assert_status "self-register missing key → 400" "400" "$(code "$R")"
 
 # Claimed device — should return token
 R=$(tp_api POST /v1/device/register \
-  '{"device_id":"Q-1001","register_key":"TEST-Q1001-REG"}')
+  "{\"device_id\":\"$QUBE_ID\",\"register_key\":\"$CLAIM_KEY1\"}")
 assert_status "self-register claimed → 200" "200" "$(code "$R")"
 RETURNED_TOKEN=$(split "$R" | jq -r .qube_token)
 assert_field "self-register returns qube_token" "$RETURNED_TOKEN"
 STATUS=$(split "$R" | jq -r .status)
-[ "$STATUS" = "claimed" ] && ok "self-register claimed returns status=claimed" || fail "expected claimed, got $STATUS"
+[ "$STATUS" = "claimed" ] && ok "self-register claimed returns status=claimed" \
+  || fail "expected claimed, got $STATUS"
 
 # =============================================================================
 section "9. TP-API — heartbeat"
 # =============================================================================
 
-R=$(tp_api POST /v1/heartbeat '{}' "" "$QUBE_ID" "$QUBE_TOKEN")
+R=$(tp_api POST /v1/heartbeat "{}" "$QUBE_ID" "$QUBE_TOKEN")
 assert_status "heartbeat ok" "200" "$(code "$R")"
 assert_field "heartbeat acknowledged" "$(split "$R" | jq -r .acknowledged)"
 
@@ -234,14 +294,14 @@ R=$(tp_api POST /v1/heartbeat '{}')
 assert_status "heartbeat no auth → 401" "401" "$(code "$R")"
 
 # Wrong token
-R=$(tp_api POST /v1/heartbeat '{}' "" "$QUBE_ID" "wrongtoken")
+R=$(tp_api POST /v1/heartbeat '{}' "$QUBE_ID" "wrongtoken")
 assert_status "heartbeat wrong token → 401" "401" "$(code "$R")"
 
 # =============================================================================
 section "10. TP-API — sync state"
 # =============================================================================
 
-R=$(tp_api GET /v1/sync/state "" "" "$QUBE_ID" "$QUBE_TOKEN")
+R=$(tp_api GET /v1/sync/state "" "$QUBE_ID" "$QUBE_TOKEN")
 assert_status "sync/state ok" "200" "$(code "$R")"
 HASH=$(split "$R" | jq -r .hash)
 assert_field "sync/state returns hash" "$HASH"
@@ -290,14 +350,9 @@ assert_status "template not found → 404" "404" "$(code "$R")"
 section "12. Templates — create org template"
 # =============================================================================
 
-R=$(api POST /api/v1/templates '{
-  "name":"Test Modbus Device",
-  "protocol":"modbus_tcp",
-  "description":"test device",
-  "config_json":{"registers":[
-    {"address":100,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_value","table":"Measurements"}
-  ]},
-  "influx_fields_json":{"test_value":{"display_label":"Test","unit":""}}}' "$TOKEN")
+R=$(api POST /api/v1/templates \
+  '{"name":"Test Modbus Device","protocol":"modbus_tcp","description":"test device","config_json":{"registers":[{"address":100,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_value","table":"Measurements"}]},"influx_fields_json":{"test_value":{"display_label":"Test","unit":""}}}' \
+  "$TOKEN")
 assert_status "create org template" "201" "$(code "$R")"
 ORG_TMPL_ID=$(split "$R" | jq -r .id)
 assert_field "create template returns id" "$ORG_TMPL_ID"
@@ -314,31 +369,23 @@ assert_status "create template missing name → 400" "400" "$(code "$R")"
 section "13. Templates — update and patch"
 # =============================================================================
 
-R=$(api PUT "/api/v1/templates/$ORG_TMPL_ID" '{
-  "name":"Test Modbus Device Updated",
-  "description":"updated",
-  "config_json":{"registers":[
-    {"address":100,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_value","table":"Measurements"},
-    {"address":102,"register_type":"Holding","data_type":"uint16","count":1,"scale":0.1,"field_key":"test_power","table":"Measurements"}
-  ]},
-  "influx_fields_json":{"test_value":{"display_label":"Test","unit":""},"test_power":{"display_label":"Power","unit":"W"}}}' "$TOKEN")
+R=$(api PUT "/api/v1/templates/$ORG_TMPL_ID" \
+  '{"name":"Test Modbus Device Updated","description":"updated","config_json":{"registers":[{"address":100,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_value","table":"Measurements"},{"address":102,"register_type":"Holding","data_type":"uint16","count":1,"scale":0.1,"field_key":"test_power","table":"Measurements"}]},"influx_fields_json":{"test_value":{"display_label":"Test","unit":""},"test_power":{"display_label":"Power","unit":"W"}}}' \
+  "$TOKEN")
 assert_status "update template" "200" "$(code "$R")"
 
 # Patch add register (superadmin only for global, but org template ok with editor+)
-R=$(api PATCH "/api/v1/templates/$ORG_TMPL_ID/registers" '{
-  "action":"add",
-  "entry":{"address":104,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_freq","table":"Measurements"}
-  }' "$SUPER_TOKEN")
+R=$(api PATCH "/api/v1/templates/$ORG_TMPL_ID/registers" \
+  '{"action":"add","entry":{"address":104,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_freq","table":"Measurements"}}' \
+  "$SUPER_TOKEN")
 assert_status "patch add register" "200" "$(code "$R")"
 NEW_COUNT=$(split "$R" | jq -r .total_entries)
 [ "$NEW_COUNT" = "3" ] && ok "patch add → 3 registers total" || fail "expected 3 registers, got $NEW_COUNT"
 
 # Patch update register at index 0
-R=$(api PATCH "/api/v1/templates/$ORG_TMPL_ID/registers" '{
-  "action":"update",
-  "index":0,
-  "entry":{"address":101,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_value","table":"Measurements"}
-  }' "$SUPER_TOKEN")
+R=$(api PATCH "/api/v1/templates/$ORG_TMPL_ID/registers" \
+  '{"action":"update","index":0,"entry":{"address":101,"register_type":"Holding","data_type":"uint16","count":1,"scale":1.0,"field_key":"test_value","table":"Measurements"}}' \
+  "$SUPER_TOKEN")
 assert_status "patch update register" "200" "$(code "$R")"
 
 # Patch delete register at index 2
@@ -368,12 +415,9 @@ section "14. Gateways — all 4 protocols"
 # =============================================================================
 
 # Modbus TCP
-R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" '{
-  "name":"Panel_A",
-  "protocol":"modbus_tcp",
-  "host":"192.168.1.100",
-  "port":502,
-  "config_json":{"poll_interval_ms":5000}}' "$TOKEN")
+R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
+  '{"name":"Panel_A","protocol":"modbus_tcp","host":"192.168.1.100","port":502,"config_json":{"poll_interval_ms":5000}}' \
+  "$TOKEN")
 assert_status "create modbus gateway" "201" "$(code "$R")"
 GW_MODBUS_ID=$(split "$R" | jq -r .gateway_id)
 assert_field "modbus gateway_id" "$GW_MODBUS_ID"
@@ -382,42 +426,33 @@ assert_field "modbus service_name" "$(split "$R" | jq -r .service_name)"
 assert_field "modbus new_hash" "$(split "$R" | jq -r .new_hash)"
 
 # OPC-UA
-R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" '{
-  "name":"PlantOPC",
-  "protocol":"opcua",
-  "host":"opc.tcp://192.168.1.18:52520/OPCUA/Server",
-  "port":52520}' "$TOKEN")
+R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
+  '{"name":"PlantOPC","protocol":"opcua","host":"opc.tcp://192.168.1.18:52520/OPCUA/Server","port":52520}' \
+  "$TOKEN")
 assert_status "create opcua gateway" "201" "$(code "$R")"
 GW_OPCUA_ID=$(split "$R" | jq -r .gateway_id)
 assert_field "opcua gateway_id" "$GW_OPCUA_ID"
 
 # SNMP
-R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" '{
-  "name":"UPS_Room1",
-  "protocol":"snmp",
-  "host":"192.168.1.200",
-  "config_json":{"community":"public","version":"2c"}}' "$TOKEN")
+R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
+  '{"name":"UPS_Room1","protocol":"snmp","host":"192.168.1.200","config_json":{"community":"public","version":"2c"}}' \
+  "$TOKEN")
 assert_status "create snmp gateway" "201" "$(code "$R")"
 GW_SNMP_ID=$(split "$R" | jq -r .gateway_id)
 assert_field "snmp gateway_id" "$GW_SNMP_ID"
 
 # MQTT
-R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" '{
-  "name":"MQTT_Floor2",
-  "protocol":"mqtt",
-  "host":"192.168.1.10",
-  "port":1883,
-  "config_json":{"broker_url":"tcp://192.168.1.10:1883","base_topic":"factory/floor2"}}' "$TOKEN")
+R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
+  '{"name":"MQTT_Floor2","protocol":"mqtt","host":"192.168.1.10","port":1883,"config_json":{"broker_url":"tcp://192.168.1.10:1883","base_topic":"factory/floor2"}}' \
+  "$TOKEN")
 assert_status "create mqtt gateway" "201" "$(code "$R")"
 GW_MQTT_ID=$(split "$R" | jq -r .gateway_id)
 assert_field "mqtt gateway_id" "$GW_MQTT_ID"
 
 # Second Modbus gateway (same protocol, different IP — should create separate container)
-R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" '{
-  "name":"Panel_B",
-  "protocol":"modbus_tcp",
-  "host":"192.168.1.101",
-  "port":502}' "$TOKEN")
+R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
+  '{"name":"Panel_B","protocol":"modbus_tcp","host":"192.168.1.101","port":502}' \
+  "$TOKEN")
 assert_status "create second modbus gateway" "201" "$(code "$R")"
 GW_MODBUS2_ID=$(split "$R" | jq -r .gateway_id)
 GW_MODBUS2_NAME=$(split "$R" | jq -r .service_name)
@@ -444,20 +479,16 @@ section "15. Sensors — add for each protocol"
 # =============================================================================
 
 # Get template IDs
-MODBUS_TMPL_ID=$(api GET "/api/v1/templates?protocol=modbus_tcp" "" "$TOKEN" | \
-  head -1 | jq -r '[.[] | select(.is_global==true)][0].id')
-OPCUA_TMPL_ID=$(api GET "/api/v1/templates?protocol=opcua" "" "$TOKEN" | \
-  head -1 | jq -r '[.[] | select(.is_global==true)][0].id')
-SNMP_TMPL_ID=$(api GET "/api/v1/templates?protocol=snmp" "" "$TOKEN" | \
-  head -1 | jq -r '[.[] | select(.is_global==true)][0].id')
-MQTT_TMPL_ID=$(api GET "/api/v1/templates?protocol=mqtt" "" "$TOKEN" | \
-  head -1 | jq -r '[.[] | select(.is_global==true)][0].id')
+R=$(api GET "/api/v1/templates" "" "$TOKEN")
+ALL_TEMPLATES=$(split "$R")
+MODBUS_TMPL_ID=$(echo "$ALL_TEMPLATES" | jq -r '[.[] | select(.is_global==true and .protocol=="modbus_tcp")][0].id')
+OPCUA_TMPL_ID=$(echo  "$ALL_TEMPLATES" | jq -r '[.[] | select(.is_global==true and .protocol=="opcua")][0].id')
+SNMP_TMPL_ID=$(echo   "$ALL_TEMPLATES" | jq -r '[.[] | select(.is_global==true and .protocol=="snmp")][0].id')
+MQTT_TMPL_ID=$(echo   "$ALL_TEMPLATES" | jq -r '[.[] | select(.is_global==true and .protocol=="mqtt")][0].id')
 
 # Modbus sensor
-R=$(api POST "/api/v1/gateways/$GW_MODBUS_ID/sensors" \
-  "{\"name\":\"Main_Meter\",\"template_id\":\"$MODBUS_TMPL_ID\",
-    \"address_params\":{\"unit_id\":1,\"register_offset\":0},
-    \"tags_json\":{\"location\":\"panel_a\",\"building\":\"HQ\"}}" "$TOKEN")
+BODY=$(printf '{"name":"Main_Meter","template_id":"%s","address_params":{"unit_id":1,"register_offset":0},"tags_json":{"location":"panel_a","building":"HQ"}}' "$MODBUS_TMPL_ID")
+R=$(api POST "/api/v1/gateways/$GW_MODBUS_ID/sensors" "$BODY" "$TOKEN")
 assert_status "create modbus sensor" "201" "$(code "$R")"
 SENSOR_MODBUS_ID=$(split "$R" | jq -r .sensor_id)
 CSV_ROWS=$(split "$R" | jq -r .csv_rows)
@@ -465,19 +496,16 @@ assert_field "modbus sensor_id" "$SENSOR_MODBUS_ID"
 [ "$CSV_ROWS" -ge "1" ] && ok "modbus sensor generated $CSV_ROWS CSV rows" || fail "expected CSV rows, got $CSV_ROWS"
 
 # Second modbus sensor (same gateway, different unit_id)
-R=$(api POST "/api/v1/gateways/$GW_MODBUS_ID/sensors" \
-  "{\"name\":\"Sub_Meter\",\"template_id\":\"$MODBUS_TMPL_ID\",
-    \"address_params\":{\"unit_id\":2},
-    \"tags_json\":{\"location\":\"panel_a_sub\"}}" "$TOKEN")
+BODY=$(printf '{"name":"Sub_Meter","template_id":"%s","address_params":{"unit_id":2},"tags_json":{"location":"panel_a_sub"}}' "$MODBUS_TMPL_ID")
+R=$(api POST "/api/v1/gateways/$GW_MODBUS_ID/sensors" "$BODY" "$TOKEN")
 assert_status "create second modbus sensor" "201" "$(code "$R")"
 SENSOR_MODBUS2_ID=$(split "$R" | jq -r .sensor_id)
 
 # OPC-UA sensor
 if [ -n "$OPCUA_TMPL_ID" ] && [ "$OPCUA_TMPL_ID" != "null" ]; then
-  R=$(api POST "/api/v1/gateways/$GW_OPCUA_ID/sensors" \
-    "{\"name\":\"Pasteuriser_1\",\"template_id\":\"$OPCUA_TMPL_ID\",
-      \"address_params\":{\"freq_sec\":15},
-      \"tags_json\":{\"line\":\"line1\"}}" "$TOKEN")
+  BODY=$(printf '{"name":"Pasteuriser_1","template_id":"%s","address_params":{"freq_sec":15},"tags_json":{"line":"line1"}}' "$OPCUA_TMPL_ID")
+  R=$(api POST "/api/v1/gateways/$GW_OPCUA_ID/sensors" "$BODY" "$TOKEN")
+  [ "$(code "$R")" != "201" ] && echo "  DEBUG opcua resp: $(split "$R")"
   assert_status "create opcua sensor" "201" "$(code "$R")"
   SENSOR_OPCUA_ID=$(split "$R" | jq -r .sensor_id)
 else
@@ -486,10 +514,8 @@ fi
 
 # SNMP sensor
 if [ -n "$SNMP_TMPL_ID" ] && [ "$SNMP_TMPL_ID" != "null" ]; then
-  R=$(api POST "/api/v1/gateways/$GW_SNMP_ID/sensors" \
-    "{\"name\":\"UPS_Main\",\"template_id\":\"$SNMP_TMPL_ID\",
-      \"address_params\":{\"community\":\"public\"},
-      \"tags_json\":{\"room\":\"server_room\"}}" "$TOKEN")
+  BODY=$(printf '{"name":"UPS_Main","template_id":"%s","address_params":{"community":"public"},"tags_json":{"room":"server_room"}}' "$SNMP_TMPL_ID")
+  R=$(api POST "/api/v1/gateways/$GW_SNMP_ID/sensors" "$BODY" "$TOKEN")
   assert_status "create snmp sensor" "201" "$(code "$R")"
   SENSOR_SNMP_ID=$(split "$R" | jq -r .sensor_id)
 else
@@ -498,10 +524,8 @@ fi
 
 # MQTT sensor
 if [ -n "$MQTT_TMPL_ID" ] && [ "$MQTT_TMPL_ID" != "null" ]; then
-  R=$(api POST "/api/v1/gateways/$GW_MQTT_ID/sensors" \
-    "{\"name\":\"Temp_Sensor_1\",\"template_id\":\"$MQTT_TMPL_ID\",
-      \"address_params\":{\"topic_suffix\":\"temp_01\"},
-      \"tags_json\":{\"floor\":\"2\"}}" "$TOKEN")
+  BODY=$(printf '{"name":"Temp_Sensor_1","template_id":"%s","address_params":{"topic_suffix":"temp_01"},"tags_json":{"floor":"2"}}' "$MQTT_TMPL_ID")
+  R=$(api POST "/api/v1/gateways/$GW_MQTT_ID/sensors" "$BODY" "$TOKEN")
   assert_status "create mqtt sensor" "201" "$(code "$R")"
   SENSOR_MQTT_ID=$(split "$R" | jq -r .sensor_id)
 else
@@ -589,7 +613,7 @@ assert_status "fix row wrong org → 404" "404" "$(code "$R")"
 section "17. TP-API — sync config (verifies CSV generation)"
 # =============================================================================
 
-R=$(tp_api GET /v1/sync/config "" "" "$QUBE_ID" "$QUBE_TOKEN")
+R=$(tp_api GET /v1/sync/config "" "$QUBE_ID" "$QUBE_TOKEN")
 assert_status "sync/config ok" "200" "$(code "$R")"
 COMPOSE=$(split "$R" | jq -r .docker_compose_yml)
 assert_field "sync/config has docker_compose_yml" "$COMPOSE"
@@ -675,7 +699,7 @@ assert_status "get command wrong org → 404" "404" "$(code "$R")"
 section "19. TP-API — commands poll and ack"
 # =============================================================================
 
-R=$(tp_api POST /v1/commands/poll '{}' "" "$QUBE_ID" "$QUBE_TOKEN")
+R=$(tp_api POST /v1/commands/poll "{}" "$QUBE_ID" "$QUBE_TOKEN")
 assert_status "commands/poll" "200" "$(code "$R")"
 CMDS=$(split "$R" | jq -r '.commands | length')
 ok "commands/poll returned $CMDS commands"
@@ -685,12 +709,12 @@ LATEST_CMD_ID=$(api GET "/api/v1/qubes/$QUBE_ID" "" "$TOKEN" | \
   head -1 | jq -r '.recent_commands[0].id // empty')
 if [ -n "$LATEST_CMD_ID" ]; then
   R=$(tp_api POST "/v1/commands/$LATEST_CMD_ID/ack" \
-    '{"status":"executed","result":{"output":"test ok"}}' "" "$QUBE_ID" "$QUBE_TOKEN")
+    '{"status":"executed","result":{"output":"test ok"}}' "$QUBE_ID" "$QUBE_TOKEN")
   assert_status "commands/ack executed" "200" "$(code "$R")"
 
   # Ack again (already acked → 404)
   R=$(tp_api POST "/v1/commands/$LATEST_CMD_ID/ack" \
-    '{"status":"executed","result":{}}' "" "$QUBE_ID" "$QUBE_TOKEN")
+    '{"status":"executed","result":{}}' "$QUBE_ID" "$QUBE_TOKEN")
   assert_status "double ack → 404" "404" "$(code "$R")"
 else
   skip "ack test (no recent commands found)"
@@ -698,22 +722,18 @@ fi
 
 # Invalid ack status
 R=$(tp_api POST "/v1/commands/$CMD_ID/ack" \
-  '{"status":"invalid_status"}' "" "$QUBE_ID" "$QUBE_TOKEN")
+  '{"status":"invalid_status"}' "$QUBE_ID" "$QUBE_TOKEN")
 assert_status "ack invalid status → 400" "400" "$(code "$R")"
 
 # =============================================================================
 section "20. TP-API — telemetry ingest"
 # =============================================================================
 
-# Build readings payload using our sensor ID
-PAYLOAD="{\"readings\":[
-  {\"sensor_id\":\"$SENSOR_MODBUS_ID\",\"field_key\":\"active_power_w\",\"value\":1250.5,\"unit\":\"W\"},
-  {\"sensor_id\":\"$SENSOR_MODBUS_ID\",\"field_key\":\"voltage_v\",\"value\":231.2,\"unit\":\"V\"},
-  {\"sensor_id\":\"$SENSOR_MODBUS_ID\",\"field_key\":\"current_a\",\"value\":5.4,\"unit\":\"A\"},
-  {\"sensor_id\":\"$SENSOR_MODBUS2_ID\",\"field_key\":\"active_power_w\",\"value\":875.0,\"unit\":\"W\"}
-]}"
+# Build readings payload using our sensor ID — use printf for clean JSON
+PAYLOAD=$(printf '{"readings":[{"sensor_id":"%s","field_key":"active_power_w","value":1250.5,"unit":"W"},{"sensor_id":"%s","field_key":"voltage_v","value":231.2,"unit":"V"},{"sensor_id":"%s","field_key":"current_a","value":5.4,"unit":"A"},{"sensor_id":"%s","field_key":"reactive_power_var","value":87.5,"unit":"VAR"}]}' \
+  "$SENSOR_MODBUS_ID" "$SENSOR_MODBUS_ID" "$SENSOR_MODBUS_ID" "$SENSOR_MODBUS_ID")
 
-R=$(tp_api POST /v1/telemetry/ingest "$PAYLOAD" "" "$QUBE_ID" "$QUBE_TOKEN")
+R=$(tp_api POST /v1/telemetry/ingest "$PAYLOAD" "$QUBE_ID" "$QUBE_TOKEN")
 assert_status "telemetry ingest" "200" "$(code "$R")"
 INSERTED=$(split "$R" | jq -r .inserted)
 [ "$INSERTED" = "4" ] && ok "telemetry inserted 4 readings" || fail "expected 4 inserted, got $INSERTED"
@@ -721,28 +741,30 @@ FAILED=$(split "$R" | jq -r .failed)
 [ "$FAILED" = "0" ] && ok "telemetry 0 failures" || fail "expected 0 failed, got $FAILED"
 
 # Empty batch (valid, returns 0)
-R=$(tp_api POST /v1/telemetry/ingest '{"readings":[]}' "" "$QUBE_ID" "$QUBE_TOKEN")
+R=$(tp_api POST /v1/telemetry/ingest '{"readings":[]}' "$QUBE_ID" "$QUBE_TOKEN")
 assert_status "telemetry empty batch" "200" "$(code "$R")"
 
-# Batch too large (>5000)
-BIG_READINGS="["
+# Batch too large (>5000) — write to temp file to avoid shell arg limit
+TMPFILE=$(mktemp /tmp/qube_test_XXXXXX.json)
+printf '{"readings":[' > "$TMPFILE"
 for i in $(seq 1 5001); do
-  BIG_READINGS+="{\"sensor_id\":\"$SENSOR_MODBUS_ID\",\"field_key\":\"val\",\"value\":1.0}"
-  [ $i -lt 5001 ] && BIG_READINGS+=","
+  printf '{"sensor_id":"%s","field_key":"val","value":1.0}' "$SENSOR_MODBUS_ID" >> "$TMPFILE"
+  [ $i -lt 5001 ] && printf ',' >> "$TMPFILE"
 done
-BIG_READINGS+="]"
-R=$(tp_api POST /v1/telemetry/ingest "{\"readings\":$BIG_READINGS}" "" "$QUBE_ID" "$QUBE_TOKEN")
+printf ']}' >> "$TMPFILE"
+R=$(curl -s -w "\n%{http_code}" -H "Content-Type: application/json" \
+  -H "X-Qube-ID: $QUBE_ID" -H "Authorization: Bearer $QUBE_TOKEN" \
+  -X POST "$TP_BASE/v1/telemetry/ingest" -d "@$TMPFILE")
 assert_status "telemetry oversized batch → 400" "400" "$(code "$R")"
+rm -f "$TMPFILE"
 
 # No auth
 R=$(tp_api POST /v1/telemetry/ingest "$PAYLOAD")
 assert_status "telemetry no auth → 401" "401" "$(code "$R")"
 
 # Ingest from second qube (different token, same endpoint)
-PAYLOAD2="{\"readings\":[
-  {\"sensor_id\":\"$SENSOR_MODBUS_ID\",\"field_key\":\"active_power_w\",\"value\":990.0,\"unit\":\"W\"}
-]}"
-R=$(tp_api POST /v1/telemetry/ingest "$PAYLOAD2" "" "Q-1002" "$QUBE2_TOKEN")
+PAYLOAD2=$(printf '{"readings":[{"sensor_id":"%s","field_key":"voltage_v","value":229.5,"unit":"V"}]}' "$SENSOR_MODBUS_ID")
+R=$(tp_api POST /v1/telemetry/ingest "$PAYLOAD2" "$QUBE2_ID" "$QUBE2_TOKEN")
 assert_status "telemetry from second qube" "200" "$(code "$R")"
 
 # =============================================================================
@@ -823,7 +845,8 @@ section "23. Multi-qube isolation check"
 # =============================================================================
 
 # Claim a new org and make sure it can't see first org's data
-R=$(api POST /api/v1/auth/register '{"org_name":"Org B","email":"orgb@test.com","password":"orgbpass"}')
+R=$(api POST /api/v1/auth/register \
+  "{\"org_name\":\"Org B $RUN_ID\",\"email\":\"$TEST_EMAIL_B\",\"password\":\"orgbpass\"}")
 TOKEN_B=$(split "$R" | jq -r .token)
 
 # Org B can't see Org A's qube

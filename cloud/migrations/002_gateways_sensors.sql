@@ -69,7 +69,7 @@ CREATE TABLE service_csv_rows (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     service_id  UUID NOT NULL REFERENCES services(id) ON DELETE CASCADE,
     sensor_id   UUID REFERENCES sensors(id) ON DELETE CASCADE,
-    csv_type    TEXT NOT NULL CHECK (csv_type IN ('registers', 'devices', 'topics', 'oids')),
+    csv_type    TEXT NOT NULL CHECK (csv_type IN ('registers', 'devices', 'topics', 'oids', 'nodes')),
     row_data    JSONB NOT NULL DEFAULT '{}',
     row_order   INT NOT NULL DEFAULT 0
 );

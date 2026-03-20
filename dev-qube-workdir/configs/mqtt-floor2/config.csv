@@ -1,0 +1,18 @@
+- Topic: "factory/floor2/temp_01"
+  Table: "Measurements"
+  Mapping:
+    - Device: ["FIXED", "Temp_Sensor_1"]
+      Reading: ["FIXED", "value"]
+      Value: ["FIELD", "value"]
+      Output: ["FIXED", "influxdb"]
+      Tags: ["FIXED", "floor=2"]
+    - Device: ["FIXED", "Temp_Sensor_1"]
+      Reading: ["FIXED", "temperature"]
+      Value: ["FIELD", "temperature"]
+      Output: ["FIXED", "influxdb"]
+      Tags: ["FIXED", "floor=2"]
+    - Device: ["FIXED", "Temp_Sensor_1"]
+      Reading: ["FIXED", "humidity"]
+      Value: ["FIELD", "humidity"]
+      Output: ["FIXED", "influxdb"]
+      Tags: ["FIXED", "floor=2"]

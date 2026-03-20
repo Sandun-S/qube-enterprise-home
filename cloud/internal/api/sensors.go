@@ -114,7 +114,7 @@ func createSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var svcID string
 		err = pool.QueryRow(ctx, `SELECT id FROM services WHERE gateway_id=$1`, gwID).Scan(&svcID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "service not found for gateway")
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("service not found for gateway %s", gwID))
 			return
 		}
 
@@ -136,7 +136,7 @@ func createSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			 VALUES ($1,$2,$3,$4,$5) RETURNING id`,
 			gwID, req.Name, req.TemplateID, apBytes, tagsBytes,
 		).Scan(&sensorID); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create sensor")
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to create sensor: %v", err))
 			return
 		}
 
@@ -146,7 +146,7 @@ func createSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			req.AddressParams, req.TagsJSON, gwCfgRaw, gwHost, gwPort,
 		)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "csv generation failed: "+err.Error())
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("csv generation failed [%s]: %v", tmplProtocol, err))
 			return
 		}
 
@@ -160,7 +160,7 @@ func createSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 				 VALUES ($1,$2,$3,$4,$5)`,
 				svcID, sensorID, csvType, rowBytes, maxOrder+i+1,
 			); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to insert csv row")
+				writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to insert csv row: %v", err))
 				return
 			}
 		}

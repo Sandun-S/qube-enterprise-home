@@ -129,19 +129,18 @@ services:
     networks: [qube_dev]
     profiles: [seed]
     depends_on: [influxdb]
-    entrypoint: |
-      sh -c "
+    entrypoint:
+      - sh
+      - -c
+      - |
         sleep 3
         echo 'Seeding test data into InfluxDB...'
-        influx -host influxdb -port 8086 -database edgex -execute '
-          CREATE DATABASE edgex
-        ' 2>/dev/null || true
-        curl -s -X POST 'http://influxdb:8086/write?db=edgex&precision=s' \
-          --data-binary 'Measurements,device=Main_Meter,reading=active_power_w value=1250.5
-          Measurements,device=Main_Meter,reading=voltage_v value=231.2
-          Measurements,device=Main_Meter,reading=current_a value=5.4
-          Measurements,device=Main_Meter,reading=energy_kwh value=12045.3
-          Measurements,device=Panel_B_Meter,reading=active_power_w value=875.0
-          Measurements,device=Panel_B_Meter,reading=voltage_v value=229.8'
+        curl -s -X POST 'http://influxdb:8086/query' --data-urlencode 'q=CREATE DATABASE "qube-db"' || true
+        curl -s -X POST 'http://influxdb:8086/write?db=qube-db&precision=s' --data-binary \
+          'Measurements,device=Main_Meter,reading=active_power_w value=1250.5
+        Measurements,device=Main_Meter,reading=voltage_v value=231.2
+        Measurements,device=Main_Meter,reading=current_a value=5.4
+        Measurements,device=Main_Meter,reading=energy_kwh value=12045.3
+        Measurements,device=Panel_B_Meter,reading=active_power_w value=875.0
+        Measurements,device=Panel_B_Meter,reading=voltage_v value=229.8'
         echo 'Done! Check enterprise-influx-to-sql logs.'
-      "
