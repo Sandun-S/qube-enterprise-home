@@ -1,0 +1,24 @@
+# enterprise-influx-to-sql/configs.yml
+# Used by the Enterprise influx-to-sql service running on the Qube.
+# Most values can be overridden via environment variables.
+
+Service:
+  PollInterval: 60         # seconds between each transfer run
+  LookbackMins: 5          # query InfluxDB for last N minutes each run
+  SensorMapPath: "/config/sensor_map.json"  # written by conf-agent from TP-API sync
+  Site: "enterprise"
+
+# InfluxDB v1 — matches the existing core-switch output
+InfluxDB:
+  URL: "http://127.0.0.1:8086"   # override via INFLUX_URL
+  DB: "edgex"                     # override via INFLUX_DB — must match core-switch DB
+  User: "root"
+  Pass: "root"
+  Tables:
+    - "Measurements"             # must match Table field sent by gateways to coreswitch
+
+# Enterprise TP-API (cloud-side)
+TPAPI:
+  URL: "http://CLOUD_IP:8081"    # override via TPAPI_URL
+  QubeID: "Q-1001"               # override via QUBE_ID
+  QubeToken: ""                  # override via QUBE_TOKEN (set after claiming)

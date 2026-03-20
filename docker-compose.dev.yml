@@ -1,0 +1,147 @@
+# docker-compose.dev.yml — Qube Enterprise Local Dev Stack
+# Run: docker compose -f docker-compose.dev.yml up -d
+#
+# INFLUXDB v1 — matches real Qube Lite core-switch which writes to InfluxDB v1
+# line protocol: {Table},device={Equipment},reading={Reading} value={Value}
+#
+# Ports: 8080=Cloud API, 8081=TP-API, 5432=Postgres, 8086=InfluxDB v1, 1883=MQTT, 8888=Test UI
+
+version: "3.8"
+
+networks:
+  qube_dev:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  influxdb_data:
+  mosquitto_data:
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [qube_dev]
+    ports: ["5432:5432"]
+    environment:
+      POSTGRES_USER: qubeadmin
+      POSTGRES_PASSWORD: qubepass
+      POSTGRES_DB: qubedb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./cloud/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - ./cloud/migrations/002_gateways_sensors.sql:/docker-entrypoint-initdb.d/002_gateways_sensors.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U qubeadmin -d qubedb"]
+      interval: 5s
+      retries: 10
+
+  cloud-api:
+    build: {context: ./cloud, dockerfile: Dockerfile}
+    restart: unless-stopped
+    networks: [qube_dev]
+    ports: ["8080:8080", "8081:8081"]
+    environment:
+      DATABASE_URL: postgres://qubeadmin:qubepass@postgres:5432/qubedb?sslmode=disable
+      JWT_SECRET: dev-jwt-secret-change-in-production
+    depends_on:
+      postgres: {condition: service_healthy}
+
+  # InfluxDB v1 — matches real Qube Lite core-switch (NOT v2)
+  influxdb:
+    image: influxdb:1.8
+    restart: unless-stopped
+    networks: [qube_dev]
+    ports: ["8086:8086"]
+    volumes: [influxdb_data:/var/lib/influxdb]
+    environment:
+      INFLUXDB_DB: edgex
+      INFLUXDB_ADMIN_ENABLED: "true"
+      INFLUXDB_HTTP_AUTH_ENABLED: "false"
+
+  mosquitto:
+    image: eclipse-mosquitto:2.0
+    restart: unless-stopped
+    networks: [qube_dev]
+    ports: ["1883:1883"]
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - ./test/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  conf-agent:
+    build: {context: ./conf-agent, dockerfile: Dockerfile}
+    restart: unless-stopped
+    networks: [qube_dev]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./dev-qube-workdir:/opt/qube
+      - ./test/mit.txt:/boot/mit.txt:ro   # simulates /boot/mit.txt on real Qube
+    environment:
+      TPAPI_URL: http://cloud-api:8081
+      WORK_DIR: /opt/qube
+      POLL_INTERVAL: "30"
+      # QUBE_ID and QUBE_TOKEN are NOT set here in production mode.
+      # The agent reads /boot/mit.txt and self-registers automatically.
+      # For dev without mit.txt, set QUBE_ID + QUBE_TOKEN manually:
+      # QUBE_ID: Q-1001
+      # QUBE_TOKEN: ""
+    depends_on: [cloud-api]
+
+  enterprise-influx-to-sql:
+    build: {context: ./enterprise-influx-to-sql, dockerfile: Dockerfile}
+    restart: unless-stopped
+    networks: [qube_dev]
+    volumes: [./dev-qube-workdir:/config]
+    environment:
+      TPAPI_URL: http://cloud-api:8081
+      QUBE_ID: Q-1001
+      QUBE_TOKEN: ""
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_DB: edgex
+      SENSOR_MAP_PATH: /config/sensor_map.json
+    depends_on: [cloud-api, influxdb]
+
+  test-ui:
+    image: nginx:alpine
+    restart: unless-stopped
+    networks: [qube_dev]
+    ports: ["8888:80"]
+    volumes: [./test-ui:/usr/share/nginx/html:ro]
+
+  modbus-sim:
+    image: oitc/modbus-server:latest
+    networks: [qube_dev]
+    ports: ["5020:5020"]
+    profiles: [simulators]
+
+  snmp-sim:
+    image: tandrup/snmpsim:latest
+    networks: [qube_dev]
+    ports: ["161:161/udp"]
+    profiles: [simulators]
+
+  # ── InfluxDB data seeder (run once to test the pipeline) ──────────────────
+  # Injects fake sensor readings into InfluxDB matching the sensor_map.json format
+  # Run: docker compose -f docker-compose.dev.yml run --rm influx-seeder
+  influx-seeder:
+    image: influxdb:1.8
+    networks: [qube_dev]
+    profiles: [seed]
+    depends_on: [influxdb]
+    entrypoint: |
+      sh -c "
+        sleep 3
+        echo 'Seeding test data into InfluxDB...'
+        influx -host influxdb -port 8086 -database edgex -execute '
+          CREATE DATABASE edgex
+        ' 2>/dev/null || true
+        curl -s -X POST 'http://influxdb:8086/write?db=edgex&precision=s' \
+          --data-binary 'Measurements,device=Main_Meter,reading=active_power_w value=1250.5
+          Measurements,device=Main_Meter,reading=voltage_v value=231.2
+          Measurements,device=Main_Meter,reading=current_a value=5.4
+          Measurements,device=Main_Meter,reading=energy_kwh value=12045.3
+          Measurements,device=Panel_B_Meter,reading=active_power_w value=875.0
+          Measurements,device=Panel_B_Meter,reading=voltage_v value=229.8'
+        echo 'Done! Check enterprise-influx-to-sql logs.'
+      "

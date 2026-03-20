@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Qube Enterprise Dev Console</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh}
+header{background:#1a1d2e;border-bottom:1px solid #2d3748;padding:12px 20px;display:flex;align-items:center;gap:10px}
+header h1{font-size:15px;font-weight:600;color:#7c85ff}
+.status{margin-left:auto;font-size:11px;color:#718096}
+.layout{display:grid;grid-template-columns:190px 1fr;min-height:calc(100vh - 45px)}
+nav{background:#13151f;border-right:1px solid #2d3748;padding:12px 0}
+nav .group{padding:8px 16px 4px;font-size:10px;color:#4a5568;text-transform:uppercase;letter-spacing:.06em}
+nav button{display:block;width:100%;text-align:left;padding:8px 16px;background:none;border:none;color:#a0aec0;cursor:pointer;font-size:12px;transition:all .15s}
+nav button:hover{background:#1a1d2e;color:#e2e8f0}
+nav button.active{background:#1e2235;color:#7c85ff;border-left:2px solid #7c85ff}
+main{padding:20px;overflow-y:auto}
+.page{display:none}.page.active{display:block}
+.card{background:#1a1d2e;border:1px solid #2d3748;border-radius:8px;padding:16px;margin-bottom:14px}
+.card h2{font-size:13px;font-weight:600;color:#7c85ff;margin-bottom:14px;padding-bottom:8px;border-bottom:1px solid #2d3748;display:flex;align-items:center;justify-content:space-between}
+label{display:block;font-size:11px;color:#718096;margin-bottom:3px;margin-top:10px}
+input,select,textarea{width:100%;padding:7px 9px;background:#0f1117;border:1px solid #2d3748;border-radius:5px;color:#e2e8f0;font-size:12px;outline:none}
+input:focus,select:focus{border-color:#7c85ff}
+textarea{height:80px;resize:vertical;font-family:monospace;font-size:11px}
+.btn{padding:7px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:500}
+.btn:hover{opacity:.85}
+.btn-primary{background:#7c85ff;color:#fff}
+.btn-danger{background:#e53e3e;color:#fff}
+.btn-ghost{background:#2d3748;color:#e2e8f0}
+.btn-sm{padding:4px 9px;font-size:11px}
+.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}
+.field{flex:1;min-width:140px}
+pre{background:#0a0c12;border:1px solid #2d3748;border-radius:5px;padding:10px;font-size:10px;overflow-x:auto;color:#a0aec0;max-height:350px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;margin-top:8px}
+.badge{display:inline-block;padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600}
+.badge-green{background:#1a3a2a;color:#48bb78}
+.badge-grey{background:#2d3748;color:#718096}
+.badge-red{background:#3a1a1a;color:#fc8181}
+.badge-blue{background:#1a2a4a;color:#63b3ed}
+.badge-purple{background:#2d2050;color:#b794f4}
+.item-card{background:#13151f;border:1px solid #2d3748;border-radius:7px;padding:12px;margin-bottom:8px;display:flex;gap:12px;align-items:center}
+.item-id{font-size:12px;font-weight:700;color:#7c85ff;min-width:70px}
+.item-info{flex:1}
+.item-info small{color:#718096;font-size:10px;display:block;margin-top:2px}
+.actions{display:flex;gap:5px;flex-shrink:0}
+.msg{padding:8px 12px;border-radius:5px;font-size:11px;margin-top:8px}
+.msg-ok{background:#1a3a2a;color:#48bb78;border:1px solid #2f855a}
+.msg-err{background:#3a1a1a;color:#fc8181;border:1px solid #c53030}
+.token-box{font-family:monospace;font-size:10px;background:#0f1117;border:1px solid #7c85ff;border-radius:5px;padding:7px 9px;color:#7c85ff;word-break:break-all;margin-top:6px}
+.proto-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600;background:#1a2a4a;color:#63b3ed}
+table{width:100%;border-collapse:collapse;font-size:11px}
+th{text-align:left;padding:6px 8px;background:#0f1117;color:#718096;border-bottom:1px solid #2d3748}
+td{padding:6px 8px;border-bottom:1px solid #1a1d2e;color:#a0aec0}
+tr:hover td{background:#1a1d2e}
+</style>
+</head>
+<body>
+<header>
+  <h1>Qube Enterprise — Dev Console v2</h1>
+  <div class="status">API: <span id="api-url">http://localhost:8080</span> &nbsp;|&nbsp; <span id="auth-status" style="color:#718096">not logged in</span></div>
+</header>
+<div class="layout">
+<nav>
+  <div class="group">Config</div>
+  <button class="active" onclick="go('setup')">Setup</button>
+  <div class="group">Auth</div>
+  <button onclick="go('register')">Register / Login</button>
+  <div class="group">Qubes</div>
+  <button onclick="go('qubes')">My Qubes</button>
+  <button onclick="go('claim')">Claim Qube</button>
+  <div class="group">Gateways</div>
+  <button onclick="go('gateways')">View Gateways</button>
+  <button onclick="go('gw-add')">Add Gateway</button>
+  <div class="group">Sensors</div>
+  <button onclick="go('sensors')">View Sensors</button>
+  <button onclick="go('sensor-add')">Add Sensor</button>
+  <div class="group">Templates</div>
+  <button onclick="go('templates')">Templates</button>
+  <button onclick="go('tmpl-add')">Create Template</button>
+  <div class="group">Commands</div>
+  <button onclick="go('commands')">Send Command</button>
+  <div class="group">Data</div>
+  <button onclick="go('telemetry')">Telemetry</button>
+  <div class="group">Raw API</div>
+  <button onclick="go('raw')">Raw Request</button>
+</nav>
+<main>
+
+<div id="page-setup" class="page active">
+  <div class="card">
+    <h2>Setup</h2>
+    <label>Cloud API Base URL</label>
+    <input id="cfg-url" value="http://localhost:8080">
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="saveConfig()">Save &amp; Test</button></div>
+    <div id="setup-msg"></div>
+  </div>
+  <div class="card">
+    <h2>Quick Start Guide</h2>
+    <p style="font-size:12px;color:#718096;line-height:1.8">
+      1. Set Cloud API URL → Save &amp; Test.<br>
+      2. <b>Register / Login</b> — create your org (or run <code>docker compose -f docker-compose.dev.yml up -d</code>).<br>
+      3. <b>Claim Qube</b> — enter <code>Q-1001</code>, copy the token shown.<br>
+      4. Set <code>QUBE_TOKEN</code> in docker-compose.dev.yml for conf-agent and enterprise-influx-to-sql, then <code>docker compose up -d</code>.<br>
+      5. <b>Templates</b> → migration 002 seeds Schneider PM5100, Generic MQTT, APC UPS.<br>
+      6. <b>Add Gateway</b> → select qube + protocol + host.<br>
+      7. <b>Add Sensor</b> → select gateway + template + address params → CSV auto-generated.<br>
+      8. Conf-agent syncs within 30s, docker compose updates on the Qube.<br>
+      9. When data flows through core-switch → InfluxDB → enterprise-influx-to-sql → TP-API → Postgres.<br>
+      10. <b>Telemetry</b> → paste sensor UUID → query readings.
+    </p>
+  </div>
+</div>
+
+<div id="page-register" class="page">
+  <div class="card">
+    <h2>Register Organisation</h2>
+    <label>Organisation name</label><input id="reg-org" placeholder="Acme IoT">
+    <label>Admin email</label><input id="reg-email" type="email" placeholder="admin@example.com">
+    <label>Password</label><input id="reg-pw" type="password">
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="doRegister()">Register</button></div>
+    <div id="reg-msg"></div>
+  </div>
+  <div class="card">
+    <h2>Login</h2>
+    <label>Email</label><input id="login-email" type="email">
+    <label>Password</label><input id="login-pw" type="password">
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="doLogin()">Login</button></div>
+    <div id="login-msg"></div>
+  </div>
+</div>
+
+<div id="page-qubes" class="page">
+  <div class="card">
+    <h2>My Qubes <button class="btn btn-ghost btn-sm" onclick="loadQubes()">Refresh</button></h2>
+    <div id="qubes-list"><p style="color:#718096;font-size:12px">Click Refresh.</p></div>
+  </div>
+</div>
+
+<div id="page-claim" class="page">
+  <div class="card">
+    <h2>Claim a Qube</h2>
+    <p style="font-size:11px;color:#718096;margin-bottom:8px">Pre-registered: Q-1001, Q-1002, Q-1003, Q-1004, Q-1005</p>
+    <label>Qube ID</label><input id="claim-id" placeholder="Q-1001">
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="doClaim()">Claim</button></div>
+    <div id="claim-msg"></div>
+    <div id="claim-token"></div>
+  </div>
+</div>
+
+<div id="page-gateways" class="page">
+  <div class="card">
+    <h2>Gateways
+      <div style="display:flex;gap:6px">
+        <select id="gw-qube-filter" style="width:130px" onchange="loadGateways()"><option value="">-- qube --</option></select>
+        <button class="btn btn-ghost btn-sm" onclick="loadGateways()">Load</button>
+      </div>
+    </h2>
+    <div id="gateways-list"><p style="color:#718096;font-size:12px">Select a Qube.</p></div>
+  </div>
+</div>
+
+<div id="page-gw-add" class="page">
+  <div class="card">
+    <h2>Add Gateway</h2>
+    <div class="row">
+      <div class="field"><label>Qube</label><select id="gwadd-qube"></select></div>
+      <div class="field"><label>Protocol</label>
+        <select id="gwadd-proto" onchange="updateGwFields()">
+          <option value="modbus_tcp">Modbus TCP</option>
+          <option value="mqtt">MQTT</option>
+          <option value="opcua">OPC-UA</option>
+          <option value="snmp">SNMP</option>
+        </select>
+      </div>
+    </div>
+    <label>Gateway name</label><input id="gwadd-name" placeholder="Panel_A">
+    <div id="gwadd-fields">
+      <label>Host / IP</label><input id="gwadd-host" placeholder="192.168.1.100">
+      <label>Port</label><input id="gwadd-port" value="502">
+    </div>
+    <label>Extra config JSON (optional)</label><textarea id="gwadd-cfg">{}</textarea>
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="doAddGateway()">Add Gateway</button></div>
+    <div id="gwadd-msg"></div>
+  </div>
+</div>
+
+<div id="page-sensors" class="page">
+  <div class="card">
+    <h2>Sensors
+      <div style="display:flex;gap:6px">
+        <select id="sensor-qube-filter" style="width:130px" onchange="loadSensors()"><option value="">-- qube --</option></select>
+        <button class="btn btn-ghost btn-sm" onclick="loadSensors()">Load</button>
+      </div>
+    </h2>
+    <div id="sensors-list"><p style="color:#718096;font-size:12px">Select a Qube.</p></div>
+  </div>
+</div>
+
+<div id="page-sensor-add" class="page">
+  <div class="card">
+    <h2>Add Sensor</h2>
+    <div class="row">
+      <div class="field"><label>Qube</label><select id="sadd-qube" onchange="loadGatewaysForSensor()"></select></div>
+      <div class="field"><label>Gateway</label><select id="sadd-gw" onchange="loadTemplatesForSensor()"></select></div>
+    </div>
+    <label>Template (filtered by gateway protocol)</label>
+    <select id="sadd-tmpl" onchange="updateSensorParams()"></select>
+    <label>Sensor name</label><input id="sadd-name" placeholder="Main_Meter">
+    <label>Address params (JSON)</label><textarea id="sadd-params">{"unit_id": 1}</textarea>
+    <label>Tags (JSON)</label><textarea id="sadd-tags">{"location": "panel_a"}</textarea>
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="doAddSensor()">Add Sensor</button></div>
+    <div id="sadd-msg"></div>
+  </div>
+</div>
+
+<div id="page-templates" class="page">
+  <div class="card">
+    <h2>Templates <button class="btn btn-ghost btn-sm" onclick="loadTemplates()">Load</button></h2>
+    <div id="templates-list"><p style="color:#718096;font-size:12px">Click Load.</p></div>
+  </div>
+</div>
+
+<div id="page-tmpl-add" class="page">
+  <div class="card">
+    <h2>Create Org Template</h2>
+    <label>Name</label><input id="tadd-name" placeholder="My Power Meter">
+    <label>Protocol</label>
+    <select id="tadd-proto">
+      <option value="modbus_tcp">Modbus TCP</option>
+      <option value="mqtt">MQTT</option>
+      <option value="opcua">OPC-UA</option>
+      <option value="snmp">SNMP</option>
+    </select>
+    <label>Description</label><input id="tadd-desc">
+    <label>config_json</label>
+    <textarea id="tadd-cfg" style="height:110px">{"registers":[{"address":100,"register_type":"holding","data_type":"int16","count":1,"scale":1.0,"field_key":"value","unit":""}]}</textarea>
+    <label>influx_fields_json</label>
+    <textarea id="tadd-fields">{"value":{"display_label":"Value","unit":""}}</textarea>
+    <label>ui_mapping_json (optional)</label>
+    <textarea id="tadd-ui">{}</textarea>
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="doCreateTemplate()">Create</button></div>
+    <div id="tadd-msg"></div>
+  </div>
+</div>
+
+<div id="page-commands" class="page">
+  <div class="card">
+    <h2>Send Command</h2>
+    <div class="row">
+      <div class="field"><label>Qube ID</label><input id="cmd-qube" placeholder="Q-1001"></div>
+      <div class="field"><label>Command</label>
+        <select id="cmd-type" onchange="updateCmdPayload()">
+          <option value="ping">ping</option>
+          <option value="reload_config">reload_config</option>
+          <option value="list_containers">list_containers</option>
+          <option value="restart_service">restart_service</option>
+          <option value="get_logs">get_logs</option>
+          <option value="restart_qube">restart_qube</option>
+        </select>
+      </div>
+    </div>
+    <label>Payload JSON</label><input id="cmd-payload" value='{"target":"8.8.8.8"}'>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="sendCommand()">Send</button>
+      <button class="btn btn-ghost" onclick="pollResult()">Poll Result</button>
+    </div>
+    <div id="cmd-msg"></div>
+    <div id="cmd-result"></div>
+  </div>
+</div>
+
+<div id="page-telemetry" class="page">
+  <div class="card">
+    <h2>Telemetry Query</h2>
+    <div class="row">
+      <div class="field"><label>Sensor ID (UUID)</label><input id="tel-sensor" placeholder="paste uuid"></div>
+      <div class="field"><label>Field key (optional)</label><input id="tel-field" placeholder="active_power_w"></div>
+    </div>
+    <div class="row">
+      <div class="field"><label>From (ISO)</label><input id="tel-from" placeholder="2024-01-01T00:00:00Z"></div>
+      <div class="field"><label>To (blank=now)</label><input id="tel-to"></div>
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button class="btn btn-primary" onclick="queryReadings()">Query Readings</button>
+      <button class="btn btn-ghost" onclick="queryLatest()">Latest Values</button>
+    </div>
+    <div id="tel-result"></div>
+  </div>
+</div>
+
+<div id="page-raw" class="page">
+  <div class="card">
+    <h2>Raw Request</h2>
+    <div class="row">
+      <div class="field" style="max-width:70px"><label>Method</label>
+        <select id="raw-method"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select>
+      </div>
+      <div class="field"><label>Path</label><input id="raw-path" value="/health"></div>
+    </div>
+    <label>Body JSON</label><input id="raw-body">
+    <div style="margin-top:10px"><button class="btn btn-primary" onclick="doRaw()">Send</button></div>
+    <pre id="raw-response">—</pre>
+  </div>
+</div>
+
+</main>
+</div>
+<script>
+let BASE='http://localhost:8080',TOKEN='',lastCmdID='',myQubes=[];
+function go(id){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('nav button').forEach(b=>b.classList.remove('active'));document.getElementById('page-'+id).classList.add('active');event.target.classList.add('active');if(id==='gateways'||id==='sensors')populateQubeFilters();if(id==='gw-add')populateQubeSelects(['gwadd-qube']);if(id==='sensor-add'){populateQubeSelects(['sadd-qube']);if(myQubes.length)loadGatewaysForSensor();}if(id==='templates')loadTemplates();}
+function saveConfig(){BASE=document.getElementById('cfg-url').value.replace(/\/$/,'');api('GET','/health').then(r=>msg('setup-msg',r.ok?'ok':'err',r.ok?'Connected: '+JSON.stringify(r.data):'Cannot reach API'));}
+async function api(method,path,body){try{const opts={method,headers:{'Content-Type':'application/json'}};if(TOKEN)opts.headers['Authorization']='Bearer '+TOKEN;if(body)opts.body=JSON.stringify(body);const res=await fetch(BASE+path,opts);const data=await res.json();return{ok:res.ok,status:res.status,data};}catch(e){return{ok:false,status:0,data:{error:e.message}};}}
+async function doRegister(){const r=await api('POST','/api/v1/auth/register',{org_name:v('reg-org'),email:v('reg-email'),password:v('reg-pw')});if(r.ok){TOKEN=r.data.token;setAuth(r.data);msg('reg-msg','ok','Org created!');loadMyQubes();}else msg('reg-msg','err',r.data.error||'Failed');}
+async function doLogin(){const r=await api('POST','/api/v1/auth/login',{email:v('login-email'),password:v('login-pw')});if(r.ok){TOKEN=r.data.token;setAuth(r.data);msg('login-msg','ok','Logged in ('+r.data.role+')');loadMyQubes();}else msg('login-msg','err',r.data.error||'Failed');}
+function setAuth(d){document.getElementById('auth-status').textContent='✓ logged in ('+(d.role||'admin')+')';document.getElementById('auth-status').style.color='#48bb78';}
+async function loadMyQubes(){const r=await api('GET','/api/v1/qubes');myQubes=r.ok?r.data:[];}
+async function loadQubes(){const r=await api('GET','/api/v1/qubes');const el=document.getElementById('qubes-list');if(!r.ok){el.innerHTML=`<p style="color:#fc8181">${r.data.error}</p>`;return;}myQubes=r.data;if(!r.data.length){el.innerHTML='<p style="color:#718096;font-size:12px">No Qubes.</p>';return;}el.innerHTML=r.data.map(q=>`<div class="item-card"><div class="item-id">${q.id}</div><div class="item-info"><span class="badge ${q.status==='online'?'badge-green':q.status==='offline'?'badge-red':'badge-grey'}">${q.status}</span> <span style="font-size:11px;color:#a0aec0">${q.location_label||'no location'}</span><small>hash: ${q.config_hash?q.config_hash.slice(0,10)+'...':'n/a'} | ${q.last_seen?new Date(q.last_seen).toLocaleTimeString():'never'}</small></div><div class="actions"><button class="btn btn-ghost btn-sm" onclick="quickCmd('${q.id}','ping',{target:'8.8.8.8'})">Ping</button><button class="btn btn-ghost btn-sm" onclick="quickCmd('${q.id}','reload_config',{})">Reload</button></div></div>`).join('');}
+async function doClaim(){const id=v('claim-id');const r=await api('POST','/api/v1/qubes/claim',{qube_id:id});if(r.ok){msg('claim-msg','ok',r.data.message);document.getElementById('claim-token').innerHTML=`<div style="margin-top:8px"><div style="font-size:10px;color:#718096">Copy to docker-compose.dev.yml QUBE_TOKEN env and /opt/qube/.env:</div><div class="token-box">QUBE_TOKEN=${r.data.auth_token}</div></div>`;loadMyQubes();}else msg('claim-msg','err',r.data.error||'Failed');}
+function populateQubeFilters(){['gw-qube-filter','sensor-qube-filter'].forEach(id=>{const sel=document.getElementById(id);if(!sel)return;const cur=sel.value;sel.innerHTML='<option value="">-- qube --</option>'+myQubes.map(q=>`<option value="${q.id}" ${q.id===cur?'selected':''}>${q.id}</option>`).join('');});}
+function populateQubeSelects(ids){ids.forEach(id=>{const sel=document.getElementById(id);if(!sel)return;sel.innerHTML=myQubes.map(q=>`<option value="${q.id}">${q.id}</option>`).join('');});}
+async function loadGateways(){const qid=document.getElementById('gw-qube-filter').value;if(!qid)return;const r=await api('GET',`/api/v1/qubes/${qid}/gateways`);const el=document.getElementById('gateways-list');if(!r.ok){el.innerHTML=`<p style="color:#fc8181">${r.data.error}</p>`;return;}if(!r.data.length){el.innerHTML='<p style="color:#718096;font-size:12px">No gateways.</p>';return;}el.innerHTML=r.data.map(g=>`<div class="item-card"><div class="item-id" style="font-size:10px">${g.id.slice(0,8)}...</div><div class="item-info"><b style="font-size:12px;color:#e2e8f0">${g.name}</b> <span class="proto-badge">${g.protocol}</span> <span class="badge badge-green">${g.sensor_count} sensors</span><small>${g.host||'no host'}${g.port?':'+g.port:''}</small></div><div class="actions"><button class="btn btn-danger btn-sm" onclick="deleteGateway('${g.id}','${qid}')">Del</button></div></div>`).join('');}
+function updateGwFields(){const p=v('gwadd-proto');const m={modbus_tcp:'<label>Host / IP</label><input id="gwadd-host" placeholder="192.168.1.100"><label>Port</label><input id="gwadd-port" value="502">',mqtt:'<label>Broker URL</label><input id="gwadd-host" placeholder="tcp://broker:1883"><label>Port</label><input id="gwadd-port" value="1883">',opcua:'<label>Endpoint URL</label><input id="gwadd-host" placeholder="opc.tcp://device:4840"><label>Port</label><input id="gwadd-port" value="4840">',snmp:'<label>Host / IP</label><input id="gwadd-host" placeholder="192.168.1.200"><label>Port</label><input id="gwadd-port" value="161">'};document.getElementById('gwadd-fields').innerHTML=m[p]||'';}
+async function doAddGateway(){const qid=v('gwadd-qube');const host=document.getElementById('gwadd-host')?.value||'';const port=parseInt(document.getElementById('gwadd-port')?.value||'0');let cfg={};try{cfg=JSON.parse(v('gwadd-cfg')||'{}');}catch(e){}const r=await api('POST',`/api/v1/qubes/${qid}/gateways`,{name:v('gwadd-name'),protocol:v('gwadd-proto'),host,port,config_json:cfg});if(r.ok)msg('gwadd-msg','ok',`Gateway created: ${r.data.gateway_id} — deploys in 30s`);else msg('gwadd-msg','err',r.data.error||'Failed');}
+async function deleteGateway(id,qid){if(!confirm('Delete gateway + all sensors?'))return;await api('DELETE',`/api/v1/gateways/${id}`);loadGateways();}
+async function loadSensors(){const qid=document.getElementById('sensor-qube-filter').value;if(!qid)return;const r=await api('GET',`/api/v1/qubes/${qid}/sensors`);const el=document.getElementById('sensors-list');if(!r.ok){el.innerHTML=`<p style="color:#fc8181">${r.data.error}</p>`;return;}if(!r.data.length){el.innerHTML='<p style="color:#718096;font-size:12px">No sensors.</p>';return;}el.innerHTML=r.data.map(s=>`<div class="item-card"><div class="item-id" style="font-size:10px">${s.id.slice(0,8)}...</div><div class="item-info"><b style="font-size:12px;color:#e2e8f0">${s.name}</b> <span class="proto-badge">${s.protocol}</span> <span class="badge badge-purple">${s.template_name}</span><small>via ${s.gateway_name}</small></div><div class="actions"><button class="btn btn-ghost btn-sm" onclick="sensorLatest('${s.id}','${s.name}')">Latest</button><button class="btn btn-danger btn-sm" onclick="deleteSensor('${s.id}','${qid}')">Del</button></div></div>`).join('');}
+async function loadGatewaysForSensor(){const qid=v('sadd-qube');if(!qid)return;const r=await api('GET',`/api/v1/qubes/${qid}/gateways`);const sel=document.getElementById('sadd-gw');sel.innerHTML=r.ok?r.data.map(g=>`<option value="${g.id}" data-proto="${g.protocol}">${g.name} (${g.protocol})</option>`).join(''):'';loadTemplatesForSensor();}
+async function loadTemplatesForSensor(){const sel=document.getElementById('sadd-gw');const proto=sel.options[sel.selectedIndex]?.dataset.proto;const r=await api('GET','/api/v1/templates');const tsel=document.getElementById('sadd-tmpl');if(!r.ok)return;const f=proto?r.data.filter(t=>t.protocol===proto):r.data;tsel.innerHTML=f.map(t=>`<option value="${t.id}">${t.name} ${t.is_global?'(global)':'(org)'}</option>`).join('');updateSensorParams();}
+function updateSensorParams(){const gwSel=document.getElementById('sadd-gw');const proto=gwSel.options[gwSel.selectedIndex]?.dataset.proto;const d={modbus_tcp:'{"unit_id":1,"register_offset":0}',mqtt:'{"topic_suffix":"sensor_001"}',opcua:'{"node_id":"ns=2;i=1001"}',snmp:'{"community":"public"}'};document.getElementById('sadd-params').value=d[proto]||'{}';}
+async function doAddSensor(){const gwID=v('sadd-gw');let ap={},tags={};try{ap=JSON.parse(v('sadd-params')||'{}');}catch(e){}try{tags=JSON.parse(v('sadd-tags')||'{}');}catch(e){}const r=await api('POST',`/api/v1/gateways/${gwID}/sensors`,{name:v('sadd-name'),template_id:v('sadd-tmpl'),address_params:ap,tags_json:tags});if(r.ok)msg('sadd-msg','ok',`Sensor created! ${r.data.csv_rows} CSV rows. Deploys in 30s.`);else msg('sadd-msg','err',r.data.error||'Failed');}
+async function deleteSensor(id,qid){if(!confirm('Delete sensor?'))return;await api('DELETE',`/api/v1/sensors/${id}`);loadSensors();}
+async function sensorLatest(id,name){const r=await api('GET',`/api/v1/data/sensors/${id}/latest`);if(!r.ok){alert(r.data.error);return;}const f=r.data.fields||[];alert('Latest for '+name+':\n'+(f.length?f.map(x=>`  ${x.field_key}: ${x.value} ${x.unit||''}`).join('\n'):'(no data yet — waiting for enterprise-influx-to-sql to run)'));}
+async function loadTemplates(){const r=await api('GET','/api/v1/templates');const el=document.getElementById('templates-list');if(!r.ok){el.innerHTML=`<p style="color:#fc8181">${r.data.error}</p>`;return;}if(!r.data.length){el.innerHTML='<p style="color:#718096;font-size:12px">No templates. Run migration 002 to seed global templates.</p>';return;}el.innerHTML='<table><thead><tr><th>Name</th><th>Protocol</th><th>Scope</th><th>Description</th><th></th></tr></thead><tbody>'+r.data.map(t=>`<tr><td><b style="color:#e2e8f0">${t.name}</b></td><td><span class="proto-badge">${t.protocol}</span></td><td><span class="badge ${t.is_global?'badge-blue':'badge-purple'}">${t.is_global?'global':'org'}</span></td><td>${t.description||''}</td><td>${!t.is_global?`<button class="btn btn-danger btn-sm" onclick="deleteTemplate('${t.id}')">Del</button>`:''}</td></tr>`).join('')+'</tbody></table>';}
+async function doCreateTemplate(){let cfg={},fields={},ui={};try{cfg=JSON.parse(v('tadd-cfg')||'{}');}catch(e){}try{fields=JSON.parse(v('tadd-fields')||'{}');}catch(e){}try{ui=JSON.parse(v('tadd-ui')||'{}');}catch(e){}const r=await api('POST','/api/v1/templates',{name:v('tadd-name'),protocol:v('tadd-proto'),description:v('tadd-desc'),config_json:cfg,influx_fields_json:fields,ui_mapping_json:ui});if(r.ok){msg('tadd-msg','ok','Template created!');loadTemplates();}else msg('tadd-msg','err',r.data.error||'Failed');}
+async function deleteTemplate(id){if(!confirm('Delete template?'))return;await api('DELETE',`/api/v1/templates/${id}`);loadTemplates();}
+function updateCmdPayload(){const p={ping:'{"target":"8.8.8.8"}',reload_config:'{}',list_containers:'{}',restart_service:'{"service":"coreswitch"}',get_logs:'{"service":"coreswitch","lines":50}',restart_qube:'{}'};document.getElementById('cmd-payload').value=p[v('cmd-type')]||'{}';}
+async function sendCommand(){const qid=v('cmd-qube');const cmd=v('cmd-type');let payload={};try{payload=JSON.parse(v('cmd-payload')||'{}');}catch(e){}const r=await api('POST',`/api/v1/qubes/${qid}/commands`,{command:cmd,payload});if(r.ok){lastCmdID=r.data.command_id;msg('cmd-msg','ok','Queued: '+lastCmdID+' — polling...');document.getElementById('cmd-result').innerHTML='';setTimeout(pollResult,3000);}else msg('cmd-msg','err',r.data.error||'Failed');}
+async function pollResult(){if(!lastCmdID){msg('cmd-msg','err','No command');return;}const r=await api('GET',`/api/v1/commands/${lastCmdID}`);document.getElementById('cmd-result').innerHTML=`<pre>${JSON.stringify(r.data,null,2)}</pre>`;if(r.data.status==='pending'){msg('cmd-msg','ok','Pending — retry in 3s...');setTimeout(pollResult,3000);}else msg('cmd-msg',r.data.status==='executed'?'ok':'err','Command '+r.data.status);}
+async function quickCmd(qid,command,payload){const r=await api('POST',`/api/v1/qubes/${qid}/commands`,{command,payload});if(r.ok){lastCmdID=r.data.command_id;document.getElementById('cmd-qube').value=qid;document.getElementById('cmd-type').value=command;go('commands');msg('cmd-msg','ok','Sent '+command+' — polling...');setTimeout(pollResult,3000);}}
+async function queryReadings(){const sid=v('tel-sensor');if(!sid){alert('sensor_id required');return;}let path=`/api/v1/data/readings?sensor_id=${encodeURIComponent(sid)}`;const f=v('tel-field');const fr=v('tel-from');const to=v('tel-to');if(f)path+=`&field=${encodeURIComponent(f)}`;if(fr)path+=`&from=${encodeURIComponent(fr)}`;if(to)path+=`&to=${encodeURIComponent(to)}`;const r=await api('GET',path);document.getElementById('tel-result').innerHTML=`<pre>${JSON.stringify(r.data,null,2)}</pre>`;}
+async function queryLatest(){const sid=v('tel-sensor');if(!sid){alert('sensor_id required');return;}const r=await api('GET',`/api/v1/data/sensors/${sid}/latest`);document.getElementById('tel-result').innerHTML=`<pre>${JSON.stringify(r.data,null,2)}</pre>`;}
+async function doRaw(){const method=v('raw-method');const path=v('raw-path');let body;try{body=JSON.parse(v('raw-body')||'null');}catch(e){}const r=await api(method,path,body||undefined);document.getElementById('raw-response').textContent=`HTTP ${r.status}\n\n${JSON.stringify(r.data,null,2)}`;}
+function msg(id,type,text){document.getElementById(id).innerHTML=`<div class="msg msg-${type==='ok'?'ok':'err'}">${text}</div>`;}
+function v(id){return document.getElementById(id)?.value||'';}
+updateGwFields();
+</script>
+</body>
+</html>

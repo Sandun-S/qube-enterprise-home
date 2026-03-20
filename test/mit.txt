@@ -1,0 +1,5 @@
+deviceid: Q-1001
+devicename: Q-1001
+devicetype: rasp4_v2
+register: TEST-Q1001-REG
+maintain: TEST-Q1001-MNT
