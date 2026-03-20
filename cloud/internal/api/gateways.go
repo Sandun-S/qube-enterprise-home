@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -113,10 +115,14 @@ func createGatewayHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		cfgBytes, _ := json.Marshal(req.ConfigJSON)
-		if cfgBytes == nil { cfgBytes = []byte("{}") }
+		if cfgBytes == nil {
+			cfgBytes = []byte("{}")
+		}
 
 		defaultImage, defaultPort := protocolImageMap(req.Protocol)
-		if req.Port == 0 { req.Port = defaultPort }
+		if req.Port == 0 {
+			req.Port = defaultPort
+		}
 
 		ctx := context.Background()
 		tx, err := pool.Begin(ctx)
@@ -218,8 +224,12 @@ func sanitizeServiceName(name string) string {
 	}
 	// Trim leading/trailing dashes
 	result := string(out)
-	for len(result) > 0 && result[0] == '-' { result = result[1:] }
-	for len(result) > 0 && result[len(result)-1] == '-' { result = result[:len(result)-1] }
+	for len(result) > 0 && result[0] == '-' {
+		result = result[1:]
+	}
+	for len(result) > 0 && result[len(result)-1] == '-' {
+		result = result[:len(result)-1]
+	}
 	return result
 }
 
@@ -228,19 +238,30 @@ func buildEnvJSON(protocol, host string, port int, configJSON any, serviceName s
 	env := map[string]any{
 		"SERVICE_NAME": serviceName,
 	}
-	if host != "" { env["TARGET_HOST"] = host }
-	if port != 0  { env["TARGET_PORT"] = port }
+	if host != "" {
+		env["TARGET_HOST"] = host
+	}
+	if port != 0 {
+		env["TARGET_PORT"] = port
+	}
 
 	if m, ok := configJSON.(map[string]any); ok {
 		for k, v := range m {
 			switch k {
-			case "broker_url":        env["MQTT_BROKER_URL"] = v
-			case "base_topic":        env["MQTT_BASE_TOPIC"] = v
-			case "username":          env["MQTT_USERNAME"] = v
-			case "unit_id":           env["MODBUS_UNIT_ID"] = v
-			case "poll_interval_ms":  env["POLL_INTERVAL_MS"] = v
-			case "community":         env["SNMP_COMMUNITY"] = v
-			case "version":           env["SNMP_VERSION"] = v
+			case "broker_url":
+				env["MQTT_BROKER_URL"] = v
+			case "base_topic":
+				env["MQTT_BASE_TOPIC"] = v
+			case "username":
+				env["MQTT_USERNAME"] = v
+			case "unit_id":
+				env["MODBUS_UNIT_ID"] = v
+			case "poll_interval_ms":
+				env["POLL_INTERVAL_MS"] = v
+			case "community":
+				env["SNMP_COMMUNITY"] = v
+			case "version":
+				env["SNMP_VERSION"] = v
 			}
 		}
 	}
@@ -308,20 +329,24 @@ func updateGatewayHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		i := 1
 		if req.Host != nil {
 			setParts = append(setParts, fmt.Sprintf("host=$%d", i))
-			args = append(args, *req.Host); i++
+			args = append(args, *req.Host)
+			i++
 		}
 		if req.Port != nil {
 			setParts = append(setParts, fmt.Sprintf("port=$%d", i))
-			args = append(args, *req.Port); i++
+			args = append(args, *req.Port)
+			i++
 		}
 		if req.ConfigJSON != nil {
 			b, _ := json.Marshal(req.ConfigJSON)
 			setParts = append(setParts, fmt.Sprintf("config_json=$%d", i))
-			args = append(args, b); i++
+			args = append(args, b)
+			i++
 		}
 		if req.Status != nil && (*req.Status == "active" || *req.Status == "disabled") {
 			setParts = append(setParts, fmt.Sprintf("status=$%d", i))
-			args = append(args, *req.Status); i++
+			args = append(args, *req.Status)
+			i++
 		}
 		if len(setParts) == 0 {
 			writeError(w, http.StatusBadRequest, "nothing to update")
@@ -329,7 +354,7 @@ func updateGatewayHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		query := fmt.Sprintf("UPDATE gateways SET %s WHERE id=$%d",
-			joinStrings(setParts, ", "), i)
+			strings.Join(setParts, ", "), i)
 		args = append(args, gwID)
 		if _, err := pool.Exec(context.Background(), query, args...); err != nil {
 			writeError(w, http.StatusInternalServerError, "update failed")

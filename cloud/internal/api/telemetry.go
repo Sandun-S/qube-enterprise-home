@@ -136,7 +136,7 @@ func latestReadingHandler(pool *pgxpool.Pool) http.HandlerFunc {
 }
 
 // GET /api/v1/qubes/:id/sensors — all sensors across all gateways for a qube
-func listAllSensorsForQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
+func listAllSensorsForQubeTelemetryHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		qubeID := chi.URLParam(r, "id")
