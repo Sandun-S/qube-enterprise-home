@@ -59,6 +59,22 @@ CREATE TABLE qube_commands (
 CREATE INDEX idx_qube_commands_pending ON qube_commands(qube_id, status)
     WHERE status = 'pending';
 
+
+
+-- ===================== SCHEMA UPDATE: register_key + maintain_key =====================
+-- Matches the real Qube Lite device provisioning (image-install.sh generates these)
+-- register_key = what customer enters to claim the device (was "reg_number" in MySQL)
+-- maintain_key = IoT team maintenance access (was "mntn_key" in MySQL)
+
+ALTER TABLE qubes
+  ADD COLUMN IF NOT EXISTS register_key  TEXT UNIQUE,
+  ADD COLUMN IF NOT EXISTS maintain_key  TEXT,
+  ADD COLUMN IF NOT EXISTS device_type   TEXT NOT NULL DEFAULT 'arm64';
+
+CREATE INDEX IF NOT EXISTS idx_qubes_register_key ON qubes(register_key);
+
+
+
 -- ===================== PRE-REGISTERED QUBES =====================
 -- Factory-provisioned devices. Not yet claimed by any org.
 INSERT INTO qubes (id, register_key, maintain_key, device_type) VALUES
@@ -92,17 +108,17 @@ INSERT INTO users (org_id, email, password_hash, role) VALUES
    'superadmin')
   ON CONFLICT DO NOTHING;
 
--- ===================== SCHEMA UPDATE: register_key + maintain_key =====================
--- Matches the real Qube Lite device provisioning (image-install.sh generates these)
--- register_key = what customer enters to claim the device (was "reg_number" in MySQL)
--- maintain_key = IoT team maintenance access (was "mntn_key" in MySQL)
+-- -- ===================== SCHEMA UPDATE: register_key + maintain_key =====================
+-- -- Matches the real Qube Lite device provisioning (image-install.sh generates these)
+-- -- register_key = what customer enters to claim the device (was "reg_number" in MySQL)
+-- -- maintain_key = IoT team maintenance access (was "mntn_key" in MySQL)
 
-ALTER TABLE qubes
-  ADD COLUMN IF NOT EXISTS register_key  TEXT UNIQUE,
-  ADD COLUMN IF NOT EXISTS maintain_key  TEXT,
-  ADD COLUMN IF NOT EXISTS device_type   TEXT NOT NULL DEFAULT 'arm64';
+-- ALTER TABLE qubes
+--   ADD COLUMN IF NOT EXISTS register_key  TEXT UNIQUE,
+--   ADD COLUMN IF NOT EXISTS maintain_key  TEXT,
+--   ADD COLUMN IF NOT EXISTS device_type   TEXT NOT NULL DEFAULT 'arm64';
 
-CREATE INDEX IF NOT EXISTS idx_qubes_register_key ON qubes(register_key);
+-- CREATE INDEX IF NOT EXISTS idx_qubes_register_key ON qubes(register_key);
 
 -- Update pre-registered test qubes with dummy keys for local dev/testing
 UPDATE qubes SET
