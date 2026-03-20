@@ -6,9 +6,9 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
 Write-Host "==> Launching cloud-vm..." -ForegroundColor Cyan
-multipass launch 22.04 --name cloud-vm --cpus 2 --memory 4G --disk 20G
+multipass launch 22.04 --name cloud-vm --cpus 2 --memory 2G --disk 10G
 Write-Host "==> Launching qube-vm..." -ForegroundColor Cyan
-multipass launch 22.04 --name qube-vm  --cpus 2 --memory 2G --disk 15G
+multipass launch 22.04 --name qube-vm  --cpus 2 --memory 2G --disk 10G
 
 # Get IPs
 $CLOUD_IP = (multipass info cloud-vm --format json | ConvertFrom-Json).info.'cloud-vm'.ipv4[0]
