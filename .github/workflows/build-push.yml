@@ -2,105 +2,90 @@ name: Build and Push Qube Enterprise Images
 
 on:
   push:
-    branches: [main, develop]
-    tags:    ['v*']
+    branches: [main]
   pull_request:
     branches: [main]
 
 env:
   REGISTRY: ghcr.io
-  # Change to your GitHub username/org:
-  # REGISTRY: registry.gitlab.com/iot-team4/product  (for GitLab)
+  OWNER: sandun-s   # your GitHub username (lowercase)
 
 jobs:
-  # ── Cloud API (amd64 only — runs on cloud server) ───────────────────────────
-  build-cloud-api:
-    name: Build cloud-api (amd64)
+  # ── Cloud API — amd64 only (runs on cloud server) ───────────────────────────
+  cloud-api:
+    name: cloud-api (amd64)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build and push cloud-api
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v5
         with:
           context:   ./cloud
           platforms: linux/amd64
-          push:      ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+          push:      ${{ github.ref == 'refs/heads/main' }}
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/enterprise-cloud-api:amd64.latest
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/enterprise-cloud-api:amd64.${{ github.sha }}
-          cache-from: type=gha
-          cache-to:   type=gha,mode=max
+            ghcr.io/${{ env.OWNER }}/enterprise-cloud-api:amd64.latest
+          cache-from: type=gha,scope=cloud-api
+          cache-to:   type=gha,mode=max,scope=cloud-api
 
-  # ── ARM64 images (run on Qube devices) ──────────────────────────────────────
-  # Option A: Cross-compile on amd64 runner (fast, no arm hardware needed)
-  # Option B: Native arm64 runner (if you have a self-hosted arm64 runner)
-  build-arm64-images:
-    name: Build arm64 images (cross-compile)
+  # ── ARM64 images — run on Qube devices ──────────────────────────────────────
+  arm64-images:
+    name: ${{ matrix.name }} (arm64)
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     strategy:
+      fail-fast: false
       matrix:
         include:
-          - service: enterprise-conf-agent
+          - name: enterprise-conf-agent
             context: ./conf-agent
-          - service: enterprise-influx-to-sql
+          - name: enterprise-influx-to-sql
             context: ./enterprise-influx-to-sql
-          - service: mqtt-gateway
+          - name: mqtt-gateway
             context: ./mqtt-gateway
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Log in to registry
-        uses: docker/login-action@v3
+      - uses: docker/login-action@v3
         with:
-          registry: ${{ env.REGISTRY }}
+          registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up QEMU (for arm64 cross-compile)
-        uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Build and push ${{ matrix.service }}
-        uses: docker/build-push-action@v5
+      - uses: docker/build-push-action@v5
         with:
           context:   ${{ matrix.context }}
           platforms: linux/arm64
-          push:      ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/') }}
+          push:      ${{ github.ref == 'refs/heads/main' }}
           tags: |
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.service }}:arm64.latest
-            ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ matrix.service }}:arm64.${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.service }}
-          cache-to:   type=gha,mode=max,scope=${{ matrix.service }}
+            ghcr.io/${{ env.OWNER }}/${{ matrix.name }}:arm64.latest
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to:   type=gha,mode=max,scope=${{ matrix.name }}
 
-  # ── Run API tests after images are built ────────────────────────────────────
+  # ── API test suite ────────────────────────────────────────────────────────────
   test:
-    name: API test suite
+    name: API tests
     runs-on: ubuntu-latest
-    needs: [build-cloud-api]
+    needs: [cloud-api]
 
     services:
       postgres:
@@ -118,47 +103,48 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+          cache-dependency-path: cloud/go.sum
+
       - name: Run migrations
         run: |
-          sudo apt-get install -y postgresql-client
+          sudo apt-get install -y postgresql-client -qq
           for f in cloud/migrations/*.sql; do
             PGPASSWORD=qubepass psql -h localhost -U qubeadmin -d qubedb -f "$f"
           done
 
-      - name: Build cloud-api locally for test
+      - name: Build cloud-api
         run: |
-          cd cloud
-          go build -o /tmp/cloud-api ./cmd/server
-        env:
-          CGO_ENABLED: 0
-          GOOS: linux
+          cd cloud && go mod tidy
+          CGO_ENABLED=0 go build -o /tmp/cloud-api ./cmd/server
 
       - name: Start cloud-api
         run: |
           DATABASE_URL="postgres://qubeadmin:qubepass@localhost:5432/qubedb?sslmode=disable" \
-          JWT_SECRET="ci-test-secret" \
+          JWT_SECRET="ci-test-secret-123" \
           API_PORT=8080 TP_PORT=8081 \
           /tmp/cloud-api &
           sleep 5
-          curl -s http://localhost:8080/health
+          curl -sf http://localhost:8080/health
 
-      - name: Run API test suite
+      - name: Run full API test suite
         run: |
           chmod +x test/test_api.sh
           ./test/test_api.sh
 
-  # ── Deploy to cloud VM after successful tests ────────────────────────────────
-  deploy-cloud:
+  # ── Deploy cloud-api to Azure VM ─────────────────────────────────────────────
+  deploy:
     name: Deploy to cloud VM
     runs-on: ubuntu-latest
-    needs: [build-cloud-api, test]
+    needs: [cloud-api, test]
     if: github.ref == 'refs/heads/main'
-    environment: production
+    # Add environment "production" in GitHub repo settings for approval gate
+    # environment: production
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy cloud-api to production VM
+      - name: Deploy to cloud VM via SSH
         uses: appleboy/ssh-action@v1
         with:
           host:     ${{ secrets.CLOUD_VM_HOST }}
@@ -166,8 +152,10 @@ jobs:
           key:      ${{ secrets.CLOUD_VM_SSH_KEY }}
           script: |
             cd /opt/qube-enterprise
+            # Login to ghcr.io on the VM
+            echo "${{ secrets.GITHUB_TOKEN }}" | \
+              docker login ghcr.io -u ${{ github.actor }} --password-stdin
             docker compose pull cloud-api
             docker compose up -d cloud-api
             sleep 5
-            curl -s http://localhost:8080/health
-            echo "Deploy complete"
+            curl -sf http://localhost:8080/health && echo "Deploy OK"

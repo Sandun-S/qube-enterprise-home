@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,20 +13,29 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// protocolImageMap maps protocol → default Docker image (real GitLab registry images)
+// protocolImageMap maps protocol → default Docker image.
+// Registry is set via QUBE_IMAGE_REGISTRY env var (default: ghcr.io/sandun-s).
+// modbus/opc-ua/snmp gateways are existing Qube Lite images.
+// mqtt-gateway and enterprise images are new Enterprise images.
 func protocolImageMap(protocol string) (image string, port int) {
+	reg := imageRegistry()
 	switch protocol {
 	case "modbus_tcp":
-		return "registry.gitlab.com/iot-team4/product/modbus-gateway:arm64.latest", 502
+		return reg + "/modbus-gateway:arm64.latest", 502
 	case "opcua":
-		return "registry.gitlab.com/iot-team4/product/opc-ua-gateway:arm64.latest", 4840
+		return reg + "/opc-ua-gateway:arm64.latest", 4840
 	case "snmp":
-		return "registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest", 161
+		return reg + "/snmp-gateway:arm64.latest", 161
 	case "mqtt":
-		return "registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest", 1883
+		return reg + "/mqtt-gateway:arm64.latest", 1883
 	default:
 		return "busybox:latest", 0
 	}
+}
+
+func imageRegistry() string {
+	if r := os.Getenv("QUBE_IMAGE_REGISTRY"); r != "" { return r }
+	return "ghcr.io/sandun-s"
 }
 
 // GET /api/v1/qubes/:id/gateways

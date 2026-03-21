@@ -3,6 +3,7 @@ package tpapi
 import (
 	"bytes"
 	"context"
+	"os"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -515,19 +516,32 @@ services:
 	return b.String()
 }
 
+// defaultImageForProtocol returns the Docker image for a gateway protocol.
+// Override the registry at startup via QUBE_IMAGE_REGISTRY env var.
+// Default: ghcr.io/sandun-s (change to your registry in production)
 func defaultImageForProtocol(protocol string) string {
+	reg := imageRegistry()
 	switch protocol {
 	case "modbus_tcp":
-		return "registry.gitlab.com/iot-team4/product/modbus-gateway:arm64.latest"
+		return reg + "/modbus-gateway:arm64.latest"
 	case "opcua":
-		return "registry.gitlab.com/iot-team4/product/opc-ua-gateway:arm64.latest"
+		return reg + "/opc-ua-gateway:arm64.latest"
 	case "snmp":
-		return "registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest"
+		return reg + "/snmp-gateway:arm64.latest"
 	case "mqtt":
-		return "registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest"
+		return reg + "/mqtt-gateway:arm64.latest"
 	default:
 		return "busybox:latest"
 	}
+}
+
+func imageRegistry() string {
+	if r := os.Getenv("QUBE_IMAGE_REGISTRY"); r != "" {
+		return r
+	}
+	// Default: your GitHub container registry
+	// Change this to your production registry
+	return "ghcr.io/sandun-s"
 }
 
 // ─── Device Self-Registration ─────────────────────────────────────────────────

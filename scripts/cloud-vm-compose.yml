@@ -1,0 +1,51 @@
+version: "3.8"
+# Qube Enterprise — Cloud VM Production Compose
+# Deploy: docker compose up -d
+# Update: docker compose pull && docker compose up -d
+#
+# Set these before running:
+#   export DB_PASS=<strong-password>
+#   export JWT_SECRET=$(openssl rand -hex 32)
+#   docker login ghcr.io -u <github-username> -p <github-token>
+
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       qubedb
+      POSTGRES_USER:     qubeadmin
+      POSTGRES_PASSWORD: ${DB_PASS:-qubepass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "127.0.0.1:5432:5432"   # localhost only — not exposed externally
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "qubeadmin", "-d", "qubedb"]
+      interval: 5s
+      retries: 20
+
+  cloud-api:
+    image: ghcr.io/sandun-s/enterprise-cloud-api:amd64.latest
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"   # Cloud Management API — frontend + IoT team
+      - "8081:8081"   # TP-API — Qube devices only
+    environment:
+      DATABASE_URL:          postgres://qubeadmin:${DB_PASS:-qubepass}@postgres:5432/qubedb?sslmode=disable
+      JWT_SECRET:            ${JWT_SECRET:-change-this-in-production}
+      API_PORT:              "8080"
+      TP_PORT:               "8081"
+      QUBE_IMAGE_REGISTRY:   "ghcr.io/sandun-s"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50mb"
+        max-file: "10"
+
+volumes:
+  postgres_data:

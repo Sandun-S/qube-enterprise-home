@@ -45,6 +45,7 @@ services:
     environment:
       DATABASE_URL: postgres://qubeadmin:qubepass@postgres:5432/qubedb?sslmode=disable
       JWT_SECRET: dev-jwt-secret-change-in-production
+      QUBE_IMAGE_REGISTRY: "ghcr.io/sandun-s"  # change to your registry
     depends_on:
       postgres: {condition: service_healthy}
 
