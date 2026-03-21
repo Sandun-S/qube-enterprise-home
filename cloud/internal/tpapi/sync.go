@@ -524,7 +524,7 @@ func defaultImageForProtocol(protocol string) string {
 	case "snmp":
 		return "registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest"
 	case "mqtt":
-		return "registry.gitlab.com/iot-team4/product/mqtt-reader:arm64.latest"
+		return "registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest"
 	default:
 		return "busybox:latest"
 	}

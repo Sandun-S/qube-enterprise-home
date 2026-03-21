@@ -22,7 +22,7 @@ func protocolImageMap(protocol string) (image string, port int) {
 	case "snmp":
 		return "registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest", 161
 	case "mqtt":
-		return "registry.gitlab.com/iot-team4/product/mqtt-reader:arm64.latest", 1883
+		return "registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest", 1883
 	default:
 		return "busybox:latest", 0
 	}

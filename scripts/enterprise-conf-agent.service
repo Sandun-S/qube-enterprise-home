@@ -1,0 +1,30 @@
+[Unit]
+Description=Qube Enterprise Conf-Agent
+Documentation=https://gitlab.com/iot-team4/product/enterprise-conf-agent
+# Must start AFTER docker swarm is up and qube-net overlay exists
+# The Qube Lite conf-agent.service runs first and starts the base stack
+After=network-online.target docker.service conf-agent.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/qube
+
+# Load token saved by previous run (after first successful claim)
+EnvironmentFile=-/opt/qube/.env
+
+ExecStart=/usr/local/bin/enterprise-conf-agent
+
+# Restart forever — if not yet claimed, agent polls until customer registers
+Restart=always
+RestartSec=10
+
+# Logs go to journald — view with: journalctl -u enterprise-conf-agent -f
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=enterprise-conf-agent
+
+[Install]
+WantedBy=multi-user.target

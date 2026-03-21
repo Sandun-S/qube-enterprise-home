@@ -1,97 +1,101 @@
-#!/usr/bin/env bash
-# setup-cloud.sh — runs inside cloud-vm
-set -euo pipefail
+#!/bin/bash
+# setup-cloud.sh — Qube Enterprise Cloud VM Setup
+# Works for Multipass VM test and production cloud VM.
+# Usage: chmod +x setup-cloud.sh && sudo ./setup-cloud.sh
+set -e
 
-echo "==> Updating apt..."
-sudo apt-get update -qq
+REGISTRY="registry.gitlab.com/iot-team4/product/enterprise-cloud-api"
+IMAGE_TAG="${IMAGE_TAG:-amd64.latest}"
+DB_PASS="${DB_PASS:-qubepass}"
+DB_NAME="${DB_NAME:-qubedb}"
+DB_USER="${DB_USER:-qubeadmin}"
+WORK_DIR="/opt/qube-enterprise"
+JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
+CLOUD_IP=$(hostname -I | awk '{print $1}')
 
-echo "==> Installing dependencies..."
-sudo apt-get install -y -qq curl git postgresql postgresql-contrib python3
+echo "== Qube Enterprise — Cloud VM Setup =="
+echo "   IP: $CLOUD_IP   Work: $WORK_DIR"
 
-echo "==> Installing Go 1.22..."
-curl -fsSL https://go.dev/dl/go1.22.4.linux-amd64.tar.gz -o /tmp/go.tar.gz
-sudo rm -rf /usr/local/go
-sudo tar -C /usr/local -xzf /tmp/go.tar.gz
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /home/ubuntu/.bashrc
-echo 'export PATH=$PATH:/usr/local/go/bin' >> /home/ubuntu/.profile
-export PATH=$PATH:/usr/local/go/bin
+# Install Docker
+if ! command -v docker &>/dev/null; then
+  apt-get update -qq
+  apt-get install -y ca-certificates curl gnupg
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+    | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+  chmod a+r /etc/apt/keyrings/docker.gpg
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] \
+    https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" \
+    | tee /etc/apt/sources.list.d/docker.list >/dev/null
+  apt-get update -qq
+  apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+fi
 
-echo "==> Configuring PostgreSQL..."
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
+mkdir -p "$WORK_DIR"
+cd "$WORK_DIR"
 
-sudo -u postgres psql <<'PSQL'
-CREATE USER qubeadmin WITH PASSWORD 'qubepass';
-CREATE DATABASE qubedb OWNER qubeadmin;
-GRANT ALL PRIVILEGES ON DATABASE qubedb TO qubeadmin;
-PSQL
+cat > docker-compose.yml << COMPOSE
+version: "3.8"
+services:
+  postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       $DB_NAME
+      POSTGRES_USER:     $DB_USER
+      POSTGRES_PASSWORD: $DB_PASS
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "$DB_USER", "-d", "$DB_NAME"]
+      interval: 5s
+      retries: 20
 
-# Allow local connections with password
-PG_HBA=$(sudo -u postgres psql -t -P format=unaligned -c "SHOW hba_file;")
-echo "host qubedb qubeadmin 0.0.0.0/0 md5" | sudo tee -a "$PG_HBA"
-sudo sed -i "s/#listen_addresses = 'localhost'/listen_addresses = '*'/" \
-    /etc/postgresql/*/main/postgresql.conf
-sudo systemctl restart postgresql
+  cloud-api:
+    image: $REGISTRY:$IMAGE_TAG
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    environment:
+      DATABASE_URL: postgres://$DB_USER:$DB_PASS@postgres:5432/$DB_NAME?sslmode=disable
+      JWT_SECRET:   $JWT_SECRET
+      API_PORT:     8080
+      TP_PORT:      8081
 
-echo "==> Running database migrations..."
-PGPASSWORD=qubepass psql -h 127.0.0.1 -U qubeadmin -d qubedb \
-    -f /home/ubuntu/qube-enterprise/cloud/migrations/001_init.sql
-PGPASSWORD=qubepass psql -h 127.0.0.1 -U qubeadmin -d qubedb \
-    -f /home/ubuntu/qube-enterprise/cloud/migrations/002_gateways_sensors.sql
-PGPASSWORD=qubepass psql -h 127.0.0.1 -U qubeadmin -d qubedb \
-    -f /home/ubuntu/qube-enterprise/cloud/migrations/003_device_catalog.sql
+volumes:
+  postgres_data:
+COMPOSE
 
-echo "==> Building Cloud API server..."
-cd /home/ubuntu/qube-enterprise/cloud
-go mod download
-go build -o /usr/local/bin/qube-cloud ./cmd/server
+if [ ! -d "migrations" ]; then
+  echo "ERROR: copy migrations first: cp -r /repo/cloud/migrations $WORK_DIR/"
+  exit 1
+fi
 
-echo "==> Creating systemd service for Cloud API..."
-sudo tee /etc/systemd/system/qube-cloud.service > /dev/null <<'SERVICE'
-[Unit]
-Description=Qube Enterprise Cloud API
-After=network.target postgresql.service
+cat > .env << ENV
+JWT_SECRET=$JWT_SECRET
+DB_PASS=$DB_PASS
+CLOUD_IP=$CLOUD_IP
+ENV
+echo "JWT_SECRET: $JWT_SECRET" > cloud-credentials.txt
+echo "Superadmin: iotteam@internal.local / iotteam2024" >> cloud-credentials.txt
 
-[Service]
-User=ubuntu
-Environment=DATABASE_URL=postgres://qubeadmin:qubepass@127.0.0.1:5432/qubedb?sslmode=disable
-Environment=JWT_SECRET=dev-jwt-secret-change-in-production
-ExecStart=/usr/local/bin/qube-cloud
-Restart=on-failure
-RestartSec=5s
-StandardOutput=journal
-StandardError=journal
+docker compose pull cloud-api 2>/dev/null || true
+docker compose up -d
 
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-sudo systemctl daemon-reload
-sudo systemctl enable qube-cloud
-sudo systemctl start qube-cloud
-
-echo "==> Serving Test UI on port 9000..."
-sudo tee /etc/systemd/system/qube-ui.service > /dev/null <<'SERVICE'
-[Unit]
-Description=Qube Test UI
-After=network.target
-
-[Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/qube-enterprise/test-ui
-ExecStart=python3 -m http.server 9000
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-SERVICE
-
-sudo systemctl daemon-reload
-sudo systemctl enable qube-ui
-sudo systemctl start qube-ui
+echo "Waiting for API..."
+until curl -s http://localhost:8080/health | grep -q "ok"; do sleep 2; done
 
 echo ""
-echo "✓ cloud-vm provisioned."
-echo "  Cloud API: http://$(hostname -I | awk '{print $1}'):8080"
-echo "  TP-API:    http://$(hostname -I | awk '{print $1}'):8081"
-echo "  Test UI:   http://$(hostname -I | awk '{print $1}'):9000"
+echo "== Cloud API running =="
+echo "   Cloud API: http://$CLOUD_IP:8080"
+echo "   TP-API:    http://$CLOUD_IP:8081"
+echo "   Superadmin: iotteam@internal.local / iotteam2024"
+echo "   Credentials saved to: $WORK_DIR/cloud-credentials.txt"
