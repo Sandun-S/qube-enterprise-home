@@ -221,3 +221,43 @@ INSERT INTO sensor_templates (name, protocol, description, is_global, config_jso
     "humidity":    {"display_label": "Humidity",    "unit": "%"}
   }'
 );
+
+-- ===================== REGISTRY CONFIGURATION =====================
+-- Stores Docker image registry settings per installation.
+-- Managed via API: GET/PUT /api/v1/admin/registry
+-- Superadmin only. Controls which registry Qubes pull images from.
+--
+-- Modes:
+--   github  — single repo (ghcr.io/sandun-s/qube-enterprise-home)
+--   gitlab  — separate repos (registry.gitlab.com/iot-team4/product)
+--   custom  — full control, one entry per image
+
+CREATE TABLE registry_config (
+    key         TEXT PRIMARY KEY,   -- e.g. "mode", "base_url", "conf_agent", "influx_sql"
+    value       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Default: GitHub single-repo mode (works immediately after first push)
+INSERT INTO registry_config (key, value, description) VALUES
+    ('mode',        'github',  'Registry mode: github | gitlab | custom'),
+    ('github_base', 'ghcr.io/sandun-s/qube-enterprise-home',
+                               'GitHub GHCR base URL (single-repo mode)'),
+    ('gitlab_base', 'registry.gitlab.com/iot-team4/product',
+                               'GitLab registry base URL (separate-repo mode)'),
+    -- Per-image overrides (used in gitlab/custom mode)
+    -- In github mode these are ignored — image = github_base + "/" + short_name
+    -- In gitlab mode: use these full image paths (gitlab has enterprise- prefix)
+    ('img_conf_agent',  'registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest',
+                        'Full image for enterprise-conf-agent'),
+    ('img_influx_sql',  'registry.gitlab.com/iot-team4/product/enterprise-influx-to-sql:arm64.latest',
+                        'Full image for enterprise-influx-to-sql'),
+    ('img_mqtt_gw',     'registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest',
+                        'Full image for mqtt-gateway'),
+    ('img_modbus',      'registry.gitlab.com/iot-team4/product/modbus-gateway:arm64.latest',
+                        'Full image for modbus-gateway (existing Qube Lite image)'),
+    ('img_opcua',       'registry.gitlab.com/iot-team4/product/opc-ua-gateway:arm64.latest',
+                        'Full image for opc-ua-gateway (existing Qube Lite image)'),
+    ('img_snmp',        'registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest',
+                        'Full image for snmp-gateway (existing Qube Lite image)');

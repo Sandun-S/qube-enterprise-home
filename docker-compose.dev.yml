@@ -45,7 +45,15 @@ services:
     environment:
       DATABASE_URL: postgres://qubeadmin:qubepass@postgres:5432/qubedb?sslmode=disable
       JWT_SECRET: dev-jwt-secret-change-in-production
-      QUBE_IMAGE_REGISTRY: "ghcr.io/sandun-s"  # change to your registry
+      QUBE_IMAGE_REGISTRY: "ghcr.io/sandun-s/qube-enterprise-home"
+      # GitLab mode — uncomment these instead:
+      # QUBE_IMAGE_REGISTRY: "registry.gitlab.com/iot-team4/product"
+      # QUBE_IMG_CONF_AGENT: "registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest"
+      # QUBE_IMG_INFLUX_SQL: "registry.gitlab.com/iot-team4/product/enterprise-influx-to-sql:arm64.latest"
+      # QUBE_IMG_MQTT_GW:    "registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest"
+      # QUBE_IMG_MODBUS:     "registry.gitlab.com/iot-team4/product/modbus-gateway:arm64.latest"
+      # QUBE_IMG_OPCUA:      "registry.gitlab.com/iot-team4/product/opc-ua-gateway:arm64.latest"
+      # QUBE_IMG_SNMP:       "registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest"
     depends_on:
       postgres: {condition: service_healthy}
 

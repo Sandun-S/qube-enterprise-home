@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"os"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,29 +12,18 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// protocolImageMap maps protocol → default Docker image.
-// Registry is set via QUBE_IMAGE_REGISTRY env var (default: ghcr.io/sandun-s).
-// modbus/opc-ua/snmp gateways are existing Qube Lite images.
-// mqtt-gateway and enterprise images are new Enterprise images.
-func protocolImageMap(protocol string) (image string, port int) {
-	reg := imageRegistry()
+// protocolImageMap returns the Docker image and default port for a gateway protocol.
+// Image is looked up from registry_config table in Postgres (managed via API).
+// Switch between GitHub and GitLab with:
+//   PUT /api/v1/admin/registry {"mode":"github"} or {"mode":"gitlab"}
+func protocolImageMap(pool *pgxpool.Pool, protocol string) (image string, port int) {
 	switch protocol {
-	case "modbus_tcp":
-		return reg + "/modbus-gateway:arm64.latest", 502
-	case "opcua":
-		return reg + "/opc-ua-gateway:arm64.latest", 4840
-	case "snmp":
-		return reg + "/snmp-gateway:arm64.latest", 161
-	case "mqtt":
-		return reg + "/mqtt-gateway:arm64.latest", 1883
-	default:
-		return "busybox:latest", 0
+	case "modbus_tcp": return ImageForProtocol(pool, "modbus_tcp"), 502
+	case "opcua":      return ImageForProtocol(pool, "opcua"), 4840
+	case "snmp":       return ImageForProtocol(pool, "snmp"), 161
+	case "mqtt":       return ImageForProtocol(pool, "mqtt"), 1883
+	default:           return "busybox:latest", 0
 	}
-}
-
-func imageRegistry() string {
-	if r := os.Getenv("QUBE_IMAGE_REGISTRY"); r != "" { return r }
-	return "ghcr.io/sandun-s"
 }
 
 // GET /api/v1/qubes/:id/gateways
@@ -127,7 +115,7 @@ func createGatewayHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		cfgBytes, _ := json.Marshal(req.ConfigJSON)
 		if cfgBytes == nil { cfgBytes = []byte("{}") }
 
-		defaultImage, defaultPort := protocolImageMap(req.Protocol)
+		defaultImage, defaultPort := protocolImageMap(pool, req.Protocol)
 		if req.Port == 0 { req.Port = defaultPort }
 
 		ctx := context.Background()

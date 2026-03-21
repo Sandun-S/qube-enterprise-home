@@ -75,6 +75,13 @@ func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
 			r.Use(requireRole("admin", "superadmin"))
 			r.Post("/api/v1/qubes/claim", claimQubeHandler(pool))
 		})
+
+		// Superadmin only — registry configuration
+		r.Group(func(r chi.Router) {
+			r.Use(requireRole("superadmin"))
+			r.Get("/api/v1/admin/registry", getRegistryHandler(pool))
+			r.Put("/api/v1/admin/registry", updateRegistryHandler(pool))
+		})
 	})
 
 	return r

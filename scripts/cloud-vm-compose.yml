@@ -27,7 +27,7 @@ services:
       retries: 20
 
   cloud-api:
-    image: ghcr.io/sandun-s/enterprise-cloud-api:amd64.latest
+    image: ${CLOUD_API_IMAGE:-ghcr.io/sandun-s/qube-enterprise-home/cloud-api:amd64.latest}
     restart: unless-stopped
     depends_on:
       postgres:
@@ -40,7 +40,16 @@ services:
       JWT_SECRET:            ${JWT_SECRET:-change-this-in-production}
       API_PORT:              "8080"
       TP_PORT:               "8081"
-      QUBE_IMAGE_REGISTRY:   "ghcr.io/sandun-s"
+      QUBE_IMAGE_REGISTRY:   ${QUBE_IMAGE_REGISTRY:-ghcr.io/sandun-s/qube-enterprise-home}
+      # Per-image overrides for GitLab separate-repo mode.
+      # Leave unset when using GitHub single-repo (images auto-named from QUBE_IMAGE_REGISTRY).
+      # Uncomment and set for GitLab production:
+      # QUBE_IMG_CONF_AGENT:  registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest
+      # QUBE_IMG_INFLUX_SQL:  registry.gitlab.com/iot-team4/product/enterprise-influx-to-sql:arm64.latest
+      # QUBE_IMG_MQTT_GW:     registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest
+      # QUBE_IMG_MODBUS:      registry.gitlab.com/iot-team4/product/modbus-gateway:arm64.latest
+      # QUBE_IMG_OPCUA:       registry.gitlab.com/iot-team4/product/opc-ua-gateway:arm64.latest
+      # QUBE_IMG_SNMP:        registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest
     logging:
       driver: "json-file"
       options:

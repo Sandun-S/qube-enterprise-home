@@ -136,7 +136,7 @@ func syncConfigHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		composeYML := buildFullComposeYML(qubeID, location, services)
+		composeYML := buildFullComposeYML(pool, qubeID, location, services)
 		envFiles := map[string]string{}
 
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -410,7 +410,7 @@ func strVal(v any, def string) string {
 // then runs: docker stack deploy -c /opt/qube/docker-compose.yml qube
 // Resulting service names: qube_<service-name> (same as real Qube Lite)
 
-func buildFullComposeYML(qubeID, location string, services []svcMeta) string {
+func buildFullComposeYML(pool *pgxpool.Pool, qubeID, location string, services []svcMeta) string {
 	var b bytes.Buffer
 	loc := location
 	if loc == "" { loc = "unset" }
@@ -429,7 +429,7 @@ services:
 
   # ── Enterprise Conf-Agent ──────────────────────────────────────────────────
   enterprise-conf-agent:
-    image: registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest
+    image: %s
     hostname: enterprise-conf-agent
     networks:
       - qube-net
@@ -450,7 +450,7 @@ services:
 
   # ── Enterprise Influx-to-SQL ───────────────────────────────────────────────
   enterprise-influx-to-sql:
-    image: registry.gitlab.com/iot-team4/product/enterprise-influx-to-sql:arm64.latest
+    image: %s
     hostname: enterprise-influx-to-sql
     networks:
       - qube-net
@@ -475,14 +475,14 @@ services:
       restart_policy:
         condition: any
 
-`, qubeID, loc, qubeID, qubeID)
+`, qubeID, loc, imageForService(pool, "conf_agent"), qubeID, imageForService(pool, "influx_sql"), qubeID, qubeID)
 
 	// One service block per gateway — each gateway = one container
 	// Multiple gateways of same protocol = multiple separate containers with different names
 	// e.g. two Modbus gateways → qube_panel-a-modbus and qube_panel-b-modbus
 	for _, svc := range services {
 		image := svc.Image
-		if image == "" { image = defaultImageForProtocol(svc.Protocol) }
+		if image == "" { image = defaultImageForProtocol(pool, svc.Protocol) }
 
 		fmt.Fprintf(&b, "  # Gateway: %s (%s) → %s\n", svc.GwName, svc.Protocol, svc.Host)
 		fmt.Fprintf(&b, "  %s:\n", svc.Name)
@@ -519,30 +519,74 @@ services:
 // defaultImageForProtocol returns the Docker image for a gateway protocol.
 // Override the registry at startup via QUBE_IMAGE_REGISTRY env var.
 // Default: ghcr.io/sandun-s (change to your registry in production)
-func defaultImageForProtocol(protocol string) string {
-	reg := imageRegistry()
-	switch protocol {
-	case "modbus_tcp":
-		return reg + "/modbus-gateway:arm64.latest"
-	case "opcua":
-		return reg + "/opc-ua-gateway:arm64.latest"
-	case "snmp":
-		return reg + "/snmp-gateway:arm64.latest"
-	case "mqtt":
-		return reg + "/mqtt-gateway:arm64.latest"
-	default:
-		return "busybox:latest"
+func defaultImageForProtocol(pool *pgxpool.Pool, protocol string) string {
+	// Map protocol to registry_config service key
+	keyMap := map[string]string{
+		"modbus_tcp": "modbus",
+		"opcua":      "opcua",
+		"snmp":       "snmp",
+		"mqtt":       "mqtt_gw",
 	}
+	if key, ok := keyMap[protocol]; ok {
+		return imageForService(pool, key)
+	}
+	return "busybox:latest"
 }
 
-func imageRegistry() string {
-	if r := os.Getenv("QUBE_IMAGE_REGISTRY"); r != "" {
-		return r
+// imageForService resolves a Docker image from registry_config table.
+// Switch with: PUT /api/v1/admin/registry {"mode":"github"} or {"mode":"gitlab"}
+func imageForService(pool *pgxpool.Pool, serviceKey string) string {
+	// Try DB lookup first
+	rows, err := pool.Query(context.Background(),
+		`SELECT key, value FROM registry_config`)
+	if err == nil {
+		defer rows.Close()
+		cfg := map[string]string{}
+		for rows.Next() {
+			var k, v string; rows.Scan(&k, &v)
+			cfg[k] = v
+		}
+		mode := cfg["mode"]
+		switch mode {
+		case "github":
+			base := cfg["github_base"]
+			if base == "" { base = "ghcr.io/sandun-s/qube-enterprise-home" }
+			shortNames := map[string]string{
+				"conf_agent": "conf-agent",
+				"influx_sql": "influx-to-sql",
+			}
+			if name, ok := shortNames[serviceKey]; ok {
+				return base + "/" + name + ":arm64.latest"
+			}
+			return base + "/" + serviceKey + ":arm64.latest"
+		case "gitlab", "custom":
+			imgKey := "img_" + serviceKey
+			if v, ok := cfg[imgKey]; ok && v != "" { return v }
+			base := cfg["gitlab_base"]
+			if base == "" { base = "registry.gitlab.com/iot-team4/product" }
+			prefixMap := map[string]string{
+				"conf_agent": "enterprise-conf-agent",
+				"influx_sql": "enterprise-influx-to-sql",
+			}
+			if name, ok := prefixMap[serviceKey]; ok {
+				return base + "/" + name + ":arm64.latest"
+			}
+			return base + "/" + serviceKey + ":arm64.latest"
+		}
 	}
-	// Default: your GitHub container registry
-	// Change this to your production registry
-	return "ghcr.io/sandun-s"
+	// Fallback: env var
+	reg := os.Getenv("QUBE_IMAGE_REGISTRY")
+	if reg == "" { reg = "ghcr.io/sandun-s/qube-enterprise-home" }
+	shortNames := map[string]string{
+		"conf_agent": "conf-agent",
+		"influx_sql": "influx-to-sql",
+	}
+	if name, ok := shortNames[serviceKey]; ok {
+		return reg + "/" + name + ":arm64.latest"
+	}
+	return reg + "/" + serviceKey + ":arm64.latest"
 }
+
 
 // ─── Device Self-Registration ─────────────────────────────────────────────────
 // POST /v1/device/register — called by conf-agent on startup using /boot/mit.txt credentials

@@ -1284,3 +1284,43 @@ curl -s -H "X-Qube-ID: Q-1001" -H "Authorization: Bearer $QUBE_TOKEN" \
   $TPBASE/v1/sync/state | jq .hash
 # Both hashes must be identical
 ```
+
+---
+
+## 24. Registry Configuration (superadmin only)
+
+```bash
+SUPER_TOKEN=$(curl -s -X POST $BASE/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"iotteam@internal.local","password":"iotteam2024"}' | jq -r .token)
+
+# Check current registry settings
+curl -s -H "Authorization: Bearer $SUPER_TOKEN" \
+  $BASE/api/v1/admin/registry | jq .
+# Expected: mode, github_base, gitlab_base, images, resolved
+
+# Switch to GitHub single-repo mode (testing)
+curl -s -X PUT -H "Authorization: Bearer $SUPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home"}' \
+  $BASE/api/v1/admin/registry | jq .
+# Expected: resolved.conf_agent = "ghcr.io/sandun-s/qube-enterprise-home/conf-agent:arm64.latest"
+
+# Switch to GitLab separate-repo mode (production)
+curl -s -X PUT -H "Authorization: Bearer $SUPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"gitlab","gitlab_base":"registry.gitlab.com/iot-team4/product"}' \
+  $BASE/api/v1/admin/registry | jq .
+# Expected: resolved.conf_agent = "registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest"
+
+# Override a single image (custom mode useful for testing a new image)
+curl -s -X PUT -H "Authorization: Bearer $SUPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"custom","img_modbus":"my-registry.com/my-modbus:v2.1.0"}' \
+  $BASE/api/v1/admin/registry | jq .
+
+# Non-superadmin cannot access registry config
+curl -s -X GET -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/admin/registry
+# Expected: 403 Forbidden
+```

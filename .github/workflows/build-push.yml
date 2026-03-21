@@ -1,4 +1,4 @@
-name: Build and Push Qube Enterprise Images
+name: Build and Push — Qube Enterprise
 
 on:
   push:
@@ -6,12 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# github.repository = "Sandun-S/qube-enterprise-home"
+# We lowercase it for Docker tags using ${{ env.REPO }}
 env:
   REGISTRY: ghcr.io
-  OWNER: sandun-s   # your GitHub username (lowercase)
 
 jobs:
-  # ── Cloud API — amd64 only (runs on cloud server) ───────────────────────────
+  # ── Cloud API — amd64 (runs on cloud server) ────────────────────────────────
   cloud-api:
     name: cloud-api (amd64)
     runs-on: ubuntu-latest
@@ -21,6 +22,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Lowercase repo name
+        run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -29,13 +33,15 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # Single repo — image name includes the service: ghcr.io/sandun-s/qube-enterprise-home/cloud-api
       - uses: docker/build-push-action@v5
         with:
           context:   ./cloud
           platforms: linux/amd64
           push:      ${{ github.ref == 'refs/heads/main' }}
           tags: |
-            ghcr.io/${{ env.OWNER }}/enterprise-cloud-api:amd64.latest
+            ghcr.io/${{ env.REPO }}/cloud-api:amd64.latest
+            ghcr.io/${{ env.REPO }}/cloud-api:amd64.${{ github.sha }}
           cache-from: type=gha,scope=cloud-api
           cache-to:   type=gha,mode=max,scope=cloud-api
 
@@ -50,14 +56,17 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: enterprise-conf-agent
+          - name: conf-agent
             context: ./conf-agent
-          - name: enterprise-influx-to-sql
+          - name: influx-to-sql
             context: ./enterprise-influx-to-sql
           - name: mqtt-gateway
             context: ./mqtt-gateway
     steps:
       - uses: actions/checkout@v4
+
+      - name: Lowercase repo name
+        run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
       - uses: docker/login-action@v3
         with:
@@ -71,13 +80,15 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # Images: ghcr.io/sandun-s/qube-enterprise-home/conf-agent:arm64.latest
       - uses: docker/build-push-action@v5
         with:
           context:   ${{ matrix.context }}
           platforms: linux/arm64
           push:      ${{ github.ref == 'refs/heads/main' }}
           tags: |
-            ghcr.io/${{ env.OWNER }}/${{ matrix.name }}:arm64.latest
+            ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.latest
+            ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.${{ github.sha }}
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to:   type=gha,mode=max,scope=${{ matrix.name }}
 
@@ -86,7 +97,6 @@ jobs:
     name: API tests
     runs-on: ubuntu-latest
     needs: [cloud-api]
-
     services:
       postgres:
         image: postgres:15
@@ -99,7 +109,6 @@ jobs:
           --health-cmd pg_isready
           --health-interval 3s
           --health-retries 20
-
     steps:
       - uses: actions/checkout@v4
 
@@ -116,45 +125,42 @@ jobs:
           done
 
       - name: Build cloud-api
-        run: |
-          cd cloud && go mod tidy
-          CGO_ENABLED=0 go build -o /tmp/cloud-api ./cmd/server
+        run: cd cloud && go mod tidy && CGO_ENABLED=0 go build -o /tmp/cloud-api ./cmd/server
 
       - name: Start cloud-api
         run: |
           DATABASE_URL="postgres://qubeadmin:qubepass@localhost:5432/qubedb?sslmode=disable" \
-          JWT_SECRET="ci-test-secret-123" \
-          API_PORT=8080 TP_PORT=8081 \
+          JWT_SECRET="ci-test-secret" API_PORT=8080 TP_PORT=8081 \
           /tmp/cloud-api &
           sleep 5
           curl -sf http://localhost:8080/health
 
       - name: Run full API test suite
-        run: |
-          chmod +x test/test_api.sh
-          ./test/test_api.sh
+        run: chmod +x test/test_api.sh && ./test/test_api.sh
 
-  # ── Deploy cloud-api to Azure VM ─────────────────────────────────────────────
+  # ── Deploy to Azure VM ───────────────────────────────────────────────────────
   deploy:
     name: Deploy to cloud VM
     runs-on: ubuntu-latest
     needs: [cloud-api, test]
     if: github.ref == 'refs/heads/main'
-    # Add environment "production" in GitHub repo settings for approval gate
-    # environment: production
-
     steps:
-      - name: Deploy to cloud VM via SSH
+      - name: Lowercase repo name
+        run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         with:
           host:     ${{ secrets.CLOUD_VM_HOST }}
           username: ${{ secrets.CLOUD_VM_USER }}
           key:      ${{ secrets.CLOUD_VM_SSH_KEY }}
           script: |
-            cd /opt/qube-enterprise
-            # Login to ghcr.io on the VM
             echo "${{ secrets.GITHUB_TOKEN }}" | \
               docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            cd /opt/qube-enterprise
+            # Update image tag in compose to use this repo's image
+            export CLOUD_IMAGE="ghcr.io/${{ env.REPO }}/cloud-api:amd64.latest"
+            sed -i "s|image: .*cloud-api.*|image: ${CLOUD_IMAGE}|" docker-compose.yml
             docker compose pull cloud-api
             docker compose up -d cloud-api
             sleep 5
