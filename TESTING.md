@@ -97,7 +97,120 @@ curl -s -H "Authorization: Bearer invalidtoken123" \
 
 ---
 
+## 1b. User Management
+
+> **Why this matters:** `register` always creates an admin user. To give teammates different access levels (editor for engineers who manage sensors, viewer for people who only read dashboards), use these endpoints. The org_id in their JWT automatically restricts them to your org's data.
+
+### 1b.1 Get my own profile
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/users/me | jq .
+# Expected: {user_id, org_id, email, role:"admin", org_name}
+# Use this to verify what permissions your token has
+```
+
+### 1b.2 List all users in the org (admin only)
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/users | jq .
+# Expected: array of {id, email, role, created_at}
+# Only shows users in YOUR org — org isolation enforced by JWT
+```
+
+### 1b.3 Invite a viewer (read-only dashboard user)
+```bash
+VIEWER_ID=$(curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"viewer@acme.com","password":"viewpass123","role":"viewer"}' | jq -r .user_id)
+echo "VIEWER_ID=$VIEWER_ID"
+# Expected: 201 {user_id, email, role:"viewer"}
+
+# Login as viewer
+VIEWER_TOKEN=$(curl -s -X POST $BASE/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"viewer@acme.com","password":"viewpass123"}' | jq -r .token)
+```
+
+### 1b.4 Invite an editor (can manage gateways/sensors, cannot claim qubes)
+```bash
+EDITOR_TOKEN=$(curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"engineer@acme.com","password":"engpass123","role":"editor"}' \
+  | jq -r .user_id)
+
+# Login as editor
+EDITOR_TOKEN=$(curl -s -X POST $BASE/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"engineer@acme.com","password":"engpass123"}' | jq -r .token)
+```
+
+### 1b.5 Viewer cannot claim a qube (forbidden)
+```bash
+curl -s -X POST $BASE/api/v1/qubes/claim \
+  -H "Authorization: Bearer $VIEWER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"register_key":"TEST-Q1003-REG"}' | jq .
+# Expected: 403 — claim requires admin role
+```
+
+### 1b.6 Viewer cannot add a gateway (forbidden)
+```bash
+curl -s -X POST "$BASE/api/v1/qubes/Q-1001/gateways" \
+  -H "Authorization: Bearer $VIEWER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Test","protocol":"modbus_tcp","host":"192.168.1.1","port":502}' | jq .
+# Expected: 403 — editor or admin required
+```
+
+### 1b.7 Editor can add sensors but cannot claim qubes
+```bash
+# Editor CAN create gateways and sensors
+curl -s -X POST "$BASE/api/v1/qubes/Q-1001/gateways" \
+  -H "Authorization: Bearer $EDITOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Panel_C","protocol":"modbus_tcp","host":"192.168.1.102","port":502}' | jq .
+# Expected: 201
+
+# Editor CANNOT claim qubes
+curl -s -X POST $BASE/api/v1/qubes/claim \
+  -H "Authorization: Bearer $EDITOR_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"register_key":"TEST-Q1004-REG"}' | jq .
+# Expected: 403
+```
+
+### 1b.8 Promote viewer to editor
+```bash
+curl -s -X PATCH "$BASE/api/v1/users/$VIEWER_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role":"editor"}' | jq .
+# Expected: 200 {user_id, role:"editor"}
+```
+
+### 1b.9 Cannot change own role
+```bash
+MY_ID=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/users/me | jq -r .user_id)
+curl -s -X PATCH "$BASE/api/v1/users/$MY_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -d '{"role":"viewer"}' | jq .
+# Expected: 400 {error:"cannot change your own role"}
+```
+
+### 1b.10 Remove a user from the org
+```bash
+curl -s -X DELETE "$BASE/api/v1/users/$VIEWER_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# Expected: 200 {deleted: user_id}
+```
+
+---
+
 ## 2. Qubes
+
+> A **Qube** is a physical edge device (Raspberry Pi/ARM). The claim flow is how a customer takes ownership: they enter the `register_key` (printed on the device or in the device data file) and the Qube is linked to their org. After claiming, the device auto-registers via TP-API within 30s. Use `location_label` to group multiple Qubes at the same physical site — frontend uses this to show "Floor A has 3 Qubes".
 
 ### 2.1 List qubes — empty
 ```bash
@@ -196,6 +309,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ## 3. Commands
 
+> **Commands** let you remotely control a Qube from the cloud. You POST a command, it enters a queue, and within 30s the Qube's conf-agent polls for it, executes it, and reports back. This is the only way to interact with a Qube without SSH. Useful commands: `ping` (network test), `restart_service` (restart a gateway container), `list_containers` (see what's running), `reload_config` (force a config resync), `get_logs` (retrieve container logs).
+
 ### 3.1 Send ping command
 ```bash
 CMD_ID=$(curl -s -X POST $BASE/api/v1/qubes/Q-1001/commands \
@@ -268,6 +383,8 @@ curl -s -X POST $BASE/api/v1/qubes/Q-1003/commands \
 ---
 
 ## 4. Templates (device catalog)
+
+> **Templates** are the device catalog — a template describes one type of device (e.g. "Schneider PM5100") with all its registers/OIDs/nodes. `is_global=true` means the IoT team owns it and all orgs can use it. `is_global=false` means your org created it for a custom device. When you add a sensor to a gateway, you pick a template — the template's register map becomes the CSV file on the Qube. Adding a new protocol type like BACnet would mean adding a new template with that protocol and extending the gateway image for it.
 
 ### 4.1 List all templates — global only at first
 ```bash
@@ -503,6 +620,8 @@ curl -s -X DELETE $BASE/api/v1/templates/$TMPL_ID \
 
 ## 5. Gateways
 
+> A **gateway** is a Docker container on the Qube that talks to one physical device or broker. Protocol determines which container image runs. Creating a gateway also creates a `service` record (the Docker service definition). Two gateways of the same protocol on the same Qube = two separate containers with different config files — e.g. `panel-a` polls 192.168.1.100 and `panel-b` polls 192.168.1.101, both running `modbus-gateway` image.
+
 ```bash
 # Save template IDs for use in sensor tests
 MODBUS_TMPL=$(curl -s -H "Authorization: Bearer $TOKEN" \
@@ -656,6 +775,8 @@ curl -s -X DELETE $BASE/api/v1/gateways/00000000-0000-0000-0000-000000000000 \
 ---
 
 ## 6. Sensors
+
+> A **sensor** is an instance of a template attached to a gateway. Creating a sensor auto-generates `service_csv_rows` in Postgres — one row per register/node/OID from the template. These rows become the `config.csv` file on the Qube. `address_params` lets you customise per-sensor (e.g. Modbus unit ID, OPC-UA node override). `tags_json` adds metadata that flows through to InfluxDB tags and Postgres readings.
 
 ### 6.1 List sensors — empty gateway
 ```bash

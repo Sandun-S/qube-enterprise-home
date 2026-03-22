@@ -138,6 +138,7 @@ SUPER_TOKEN=$(split "$R" | jq -r .token)
 assert_field "superadmin token" "$SUPER_TOKEN"
 
 # =============================================================================
+# =============================================================================
 section "4. Protected routes — no token"
 # =============================================================================
 
@@ -216,6 +217,80 @@ R=$(api POST /api/v1/auth/register \
 VIEWER_TOKEN=$(split "$R" | jq -r .token)
 # Create viewer user — for now just test that viewer token can't claim
 # (viewer token belongs to a different org, so it won't find Q-1003 in that org)
+
+# =============================================================================
+section "6b. User Management — invite and roles"
+# =============================================================================
+
+# Invite a viewer to our org
+R=$(api POST /api/v1/users \
+  "{\"email\":\"invited_viewer_${RUN_ID}@test.com\",\"password\":\"viewpass123\",\"role\":\"viewer\"}" \
+  "$TOKEN")
+assert_status "invite viewer" "201" "$(code "$R")"
+INVITED_VIEWER_ID=$(split "$R" | jq -r .user_id)
+assert_field "invited viewer id" "$INVITED_VIEWER_ID"
+INVITED_VIEWER_ROLE=$(split "$R" | jq -r .role)
+[ "$INVITED_VIEWER_ROLE" = "viewer" ] && ok "invited user has viewer role" \
+  || fail "expected viewer role, got $INVITED_VIEWER_ROLE"
+
+# Invite an editor to our org
+R=$(api POST /api/v1/users \
+  "{\"email\":\"invited_editor_${RUN_ID}@test.com\",\"password\":\"editpass123\",\"role\":\"editor\"}" \
+  "$TOKEN")
+assert_status "invite editor" "201" "$(code "$R")"
+INVITED_EDITOR_ID=$(split "$R" | jq -r .user_id)
+
+# List users — should see admin + viewer + editor
+R=$(api GET /api/v1/users "" "$TOKEN")
+assert_status "list users" "200" "$(code "$R")"
+USER_COUNT=$(split "$R" | jq '. | length')
+[ "$USER_COUNT" -ge "3" ] && ok "list users has $USER_COUNT users" \
+  || fail "expected 3+ users, got $USER_COUNT"
+
+# Get my own profile
+R=$(api GET /api/v1/users/me "" "$TOKEN")
+assert_status "get my profile" "200" "$(code "$R")"
+MY_ROLE=$(split "$R" | jq -r .role)
+[ "$MY_ROLE" = "admin" ] && ok "my role is admin" || fail "expected admin, got $MY_ROLE"
+MY_USER_ID=$(split "$R" | jq -r .user_id)
+
+# Login as the invited viewer
+INVITED_VIEWER_TOKEN=$(split "$(api POST /api/v1/auth/login \
+  "{\"email\":\"invited_viewer_${RUN_ID}@test.com\",\"password\":\"viewpass123\"}")" | jq -r .token)
+assert_field "invited viewer can login" "$INVITED_VIEWER_TOKEN"
+
+# Invited viewer can see qubes in same org
+R=$(api GET /api/v1/qubes "" "$INVITED_VIEWER_TOKEN")
+assert_status "viewer can list qubes" "200" "$(code "$R")"
+
+# Invited viewer cannot claim a qube (needs admin)
+R=$(api POST /api/v1/qubes/claim '{"register_key":"TEST-Q1005-REG"}' "$INVITED_VIEWER_TOKEN")
+assert_status "viewer cannot claim → 403" "403" "$(code "$R")"
+
+# Invited viewer cannot add a gateway (needs editor+)
+R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
+  '{"name":"X","protocol":"modbus_tcp","host":"1.2.3.4","port":502}' "$INVITED_VIEWER_TOKEN")
+assert_status "viewer cannot create gateway → 403" "403" "$(code "$R")"
+
+# Promote viewer to editor
+R=$(api PATCH "/api/v1/users/$INVITED_VIEWER_ID" '{"role":"editor"}' "$TOKEN")
+assert_status "promote viewer to editor" "200" "$(code "$R")"
+NEW_ROLE=$(split "$R" | jq -r .role)
+[ "$NEW_ROLE" = "editor" ] && ok "user promoted to editor" || fail "expected editor, got $NEW_ROLE"
+
+# Cannot change own role
+R=$(api PATCH "/api/v1/users/$MY_USER_ID" '{"role":"viewer"}' "$TOKEN")
+assert_status "cannot change own role → 400" "400" "$(code "$R")"
+
+# Remove editor from org
+R=$(api DELETE "/api/v1/users/$INVITED_EDITOR_ID" "" "$TOKEN")
+assert_status "remove user from org" "200" "$(code "$R")"
+
+# Duplicate email invite
+R=$(api POST /api/v1/users \
+  "{\"email\":\"invited_viewer_${RUN_ID}@test.com\",\"password\":\"pass\",\"role\":\"viewer\"}" \
+  "$TOKEN")
+assert_status "duplicate email invite → 409" "409" "$(code "$R")"
 
 # =============================================================================
 section "7. Qubes — get and update"

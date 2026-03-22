@@ -70,9 +70,16 @@ func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
 		r.Get("/api/v1/data/readings", readingsHandler(pool))
 		r.Get("/api/v1/data/sensors/{id}/latest", latestReadingHandler(pool))
 
-		// Admin only
+		// All authenticated users
+		r.Get("/api/v1/users/me", getMeHandler(pool))
+
+		// Admin+ only
 		r.Group(func(r chi.Router) {
 			r.Use(requireRole("admin", "superadmin"))
+			r.Get("/api/v1/users", listUsersHandler(pool))
+			r.Post("/api/v1/users", inviteUserHandler(pool))
+			r.Patch("/api/v1/users/{user_id}", updateUserRoleHandler(pool))
+			r.Delete("/api/v1/users/{user_id}", removeUserHandler(pool))
 			r.Post("/api/v1/qubes/claim", claimQubeHandler(pool))
 		})
 

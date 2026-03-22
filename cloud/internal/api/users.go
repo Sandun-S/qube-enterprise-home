@@ -1,0 +1,192 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// GET /api/v1/users — list all users in the org (admin+)
+func listUsersHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		ctx := context.Background()
+
+		rows, err := pool.Query(ctx,
+			`SELECT id, email, role, created_at FROM users
+			 WHERE org_id = $1 ORDER BY created_at`,
+			orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		defer rows.Close()
+
+		type userRow struct {
+			ID        string `json:"id"`
+			Email     string `json:"email"`
+			Role      string `json:"role"`
+			CreatedAt string `json:"created_at"`
+		}
+		users := []userRow{}
+		for rows.Next() {
+			var u userRow
+			rows.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt)
+			users = append(users, u)
+		}
+		writeJSON(w, http.StatusOK, users)
+	}
+}
+
+// POST /api/v1/users — invite a new user to the org (admin+)
+// Body: {"email":"...", "password":"...", "role":"viewer|editor|admin"}
+func inviteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		ctx := context.Background()
+
+		var req struct {
+			Email    string `json:"email"`
+			Password string `json:"password"`
+			Role     string `json:"role"` // viewer | editor | admin
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+			req.Email == "" || req.Password == "" {
+			writeError(w, http.StatusBadRequest, "email and password are required")
+			return
+		}
+
+		// Default role to viewer if not specified or invalid
+		validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
+		if !validRoles[req.Role] {
+			req.Role = "viewer"
+		}
+
+		var userID string
+		err := pool.QueryRow(ctx,
+			`INSERT INTO users (org_id, email, password_hash, role)
+			 VALUES ($1, $2, crypt($3, gen_salt('bf',12)), $4)
+			 RETURNING id`,
+			orgID, req.Email, req.Password, req.Role,
+		).Scan(&userID)
+		if err != nil {
+			// Most likely a unique constraint on email
+			writeError(w, http.StatusConflict, "email already exists in this or another org")
+			return
+		}
+
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"user_id": userID,
+			"email":   req.Email,
+			"role":    req.Role,
+		})
+	}
+}
+
+// PATCH /api/v1/users/:user_id — update role (admin only, cannot change own role)
+// Body: {"role":"viewer|editor|admin"}
+func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		callerID, _ := r.Context().Value(ctxUserID).(string)
+		targetID := chi.URLParam(r, "user_id")
+		ctx := context.Background()
+
+		if callerID == targetID {
+			writeError(w, http.StatusBadRequest, "cannot change your own role")
+			return
+		}
+
+		var req struct {
+			Role string `json:"role"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+
+		validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
+		if !validRoles[req.Role] {
+			writeError(w, http.StatusBadRequest, "role must be viewer, editor, or admin")
+			return
+		}
+
+		result, err := pool.Exec(ctx,
+			`UPDATE users SET role = $1
+			 WHERE id = $2 AND org_id = $3 AND role != 'superadmin'`,
+			req.Role, targetID, orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		if result.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "user not found in your org")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{
+			"user_id": targetID,
+			"role":    req.Role,
+		})
+	}
+}
+
+// DELETE /api/v1/users/:user_id — remove user from org (admin only)
+func removeUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		callerID, _ := r.Context().Value(ctxUserID).(string)
+		targetID := chi.URLParam(r, "user_id")
+		ctx := context.Background()
+
+		if callerID == targetID {
+			writeError(w, http.StatusBadRequest, "cannot remove yourself")
+			return
+		}
+
+		result, err := pool.Exec(ctx,
+			`DELETE FROM users WHERE id = $1 AND org_id = $2 AND role != 'superadmin'`,
+			targetID, orgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		if result.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "user not found")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"deleted": targetID})
+	}
+}
+
+// GET /api/v1/users/me — get own profile
+func getMeHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID, _ := r.Context().Value(ctxUserID).(string)
+		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		ctx := context.Background()
+
+		var email, role, orgName string
+		err := pool.QueryRow(ctx,
+			`SELECT u.email, u.role, o.name
+			 FROM users u JOIN organisations o ON o.id = u.org_id
+			 WHERE u.id = $1`,
+			userID).Scan(&email, &role, &orgName)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{
+			"user_id":  userID,
+			"org_id":   orgID,
+			"email":    email,
+			"role":     role,
+			"org_name": orgName,
+		})
+	}
+}
