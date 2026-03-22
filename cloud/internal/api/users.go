@@ -4,10 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func getEnvOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
 
 // GET /api/v1/users — list all users in the org (admin+)
 func listUsersHandler(pool *pgxpool.Pool) http.HandlerFunc {
@@ -54,9 +62,15 @@ func inviteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			Role     string `json:"role"` // viewer | editor | admin
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
-			req.Email == "" || req.Password == "" {
-			writeError(w, http.StatusBadRequest, "email and password are required")
+			req.Email == "" {
+			writeError(w, http.StatusBadRequest, "email is required")
 			return
+		}
+
+		// Track whether a temp password was used
+		usedTempPassword := req.Password == ""
+		if req.Password == "" {
+			req.Password = getEnvOrDefault("DEFAULT_USER_PASSWORD", "Qube@2024")
 		}
 
 		// Default role to viewer if not specified or invalid
@@ -78,11 +92,19 @@ func inviteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		writeJSON(w, http.StatusCreated, map[string]any{
-			"user_id": userID,
-			"email":   req.Email,
-			"role":    req.Role,
-		})
+		resp := map[string]any{
+			"user_id":          userID,
+			"email":            req.Email,
+			"role":             req.Role,
+			"org_id":           orgID,
+			"is_temp_password": usedTempPassword,
+		}
+		// Only return the password in the response if it was auto-generated
+		// If the caller provided their own password, don't echo it back
+		if usedTempPassword {
+			resp["temp_password"] = req.Password
+		}
+		writeJSON(w, http.StatusCreated, resp)
 	}
 }
 

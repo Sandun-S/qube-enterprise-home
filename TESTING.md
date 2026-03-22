@@ -99,14 +99,40 @@ curl -s -H "Authorization: Bearer invalidtoken123" \
 
 ## 1b. User Management
 
-> **Why this matters:** `register` always creates an admin user. To give teammates different access levels (editor for engineers who manage sensors, viewer for people who only read dashboards), use these endpoints. The org_id in their JWT automatically restricts them to your org's data.
+> **Key design points:**
+> - `POST /api/v1/auth/register` always creates an **admin** user and a new org. Use that to onboard a new customer.
+> - To add teammates to an existing org, use `POST /api/v1/users` — **password is optional**, org is **auto-assigned from the calling admin's JWT** (you cannot add users to a different org by mistake).
+> - If no password is given, a default temp password is used (`Qube@2024` or whatever `DEFAULT_USER_PASSWORD` env var is set to on the server). The response includes `is_temp_password: true` and `temp_password` so the admin can share it.
+> - If a password IS given, it is used directly — `is_temp_password: false` and the password is not echoed back.
+> - All users in an org automatically see all Qubes claimed by that org — no per-Qube user setup needed.
+
+---
+
+### Endpoints
+
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| `GET` | `/api/v1/users/me` | Any JWT | Get your own profile (role, org, email) |
+| `GET` | `/api/v1/users` | Admin+ | List all users in your org |
+| `POST` | `/api/v1/users` | Admin+ | Invite a new user to your org |
+| `PATCH` | `/api/v1/users/:id` | Admin+ | Change a user's role |
+| `DELETE` | `/api/v1/users/:id` | Admin+ | Remove a user from your org |
+
+---
 
 ### 1b.1 Get my own profile
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   $BASE/api/v1/users/me | jq .
-# Expected: {user_id, org_id, email, role:"admin", org_name}
-# Use this to verify what permissions your token has
+# Expected:
+# {
+#   "user_id": "uuid",
+#   "org_id":  "uuid",
+#   "email":   "admin@acme.com",
+#   "role":    "admin",
+#   "org_name": "Acme Corp"
+# }
+# Use this to verify what permissions your current token has
 ```
 
 ### 1b.2 List all users in the org (admin only)
@@ -114,59 +140,103 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 curl -s -H "Authorization: Bearer $TOKEN" \
   $BASE/api/v1/users | jq .
 # Expected: array of {id, email, role, created_at}
-# Only shows users in YOUR org — org isolation enforced by JWT
+# Only shows users in YOUR org — completely isolated from other orgs
 ```
 
-### 1b.3 Invite a viewer (read-only dashboard user)
+### 1b.3 Invite a viewer — no password (temp password generated)
 ```bash
-VIEWER_ID=$(curl -s -X POST $BASE/api/v1/users \
+R=$(curl -s -X POST $BASE/api/v1/users \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"email":"viewer@acme.com","password":"viewpass123","role":"viewer"}' | jq -r .user_id)
-echo "VIEWER_ID=$VIEWER_ID"
-# Expected: 201 {user_id, email, role:"viewer"}
+  -d '{"email":"viewer@acme.com","role":"viewer"}')
+echo $R | jq .
+# Expected:
+# {
+#   "user_id":          "uuid",
+#   "email":            "viewer@acme.com",
+#   "role":             "viewer",
+#   "org_id":           "uuid",       ← auto-assigned from admin's JWT
+#   "is_temp_password": true,         ← tells frontend to prompt password change
+#   "temp_password":    "Qube@2024"   ← admin shares this with the new user
+# }
 
-# Login as viewer
+VIEWER_ID=$(echo $R | jq -r .user_id)
+VIEWER_TEMP_PASS=$(echo $R | jq -r .temp_password)
+
+# Viewer logs in with the temp password
 VIEWER_TOKEN=$(curl -s -X POST $BASE/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"viewer@acme.com","password":"viewpass123"}' | jq -r .token)
+  -d "{\"email\":\"viewer@acme.com\",\"password\":\"$VIEWER_TEMP_PASS\"}" | jq -r .token)
 ```
 
-### 1b.4 Invite an editor (can manage gateways/sensors, cannot claim qubes)
+### 1b.4 Invite an editor — with explicit password
 ```bash
-EDITOR_TOKEN=$(curl -s -X POST $BASE/api/v1/users \
+R=$(curl -s -X POST $BASE/api/v1/users \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"email":"engineer@acme.com","password":"engpass123","role":"editor"}' \
-  | jq -r .user_id)
+  -d '{"email":"engineer@acme.com","role":"editor","password":"MySecurePass123"}')
+echo $R | jq .
+# Expected:
+# {
+#   "user_id":          "uuid",
+#   "email":            "engineer@acme.com",
+#   "role":             "editor",
+#   "org_id":           "uuid",
+#   "is_temp_password": false    ← password was provided, not temp
+#   // temp_password NOT in response — caller already knows the password
+# }
+
+EDITOR_ID=$(echo $R | jq -r .user_id)
 
 # Login as editor
 EDITOR_TOKEN=$(curl -s -X POST $BASE/api/v1/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"engineer@acme.com","password":"engpass123"}' | jq -r .token)
+  -d '{"email":"engineer@acme.com","password":"MySecurePass123"}' | jq -r .token)
 ```
 
-### 1b.5 Viewer cannot claim a qube (forbidden)
+### 1b.5 Invite a second admin to the org
+```bash
+curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"manager@acme.com","role":"admin","password":"ManagerPass123"}' | jq .
+# Expected: 201 — second admin can also claim qubes and manage users
+# Note: only superadmin can create superadmin accounts
+```
+
+### 1b.6 Viewer cannot claim a qube (forbidden)
 ```bash
 curl -s -X POST $BASE/api/v1/qubes/claim \
   -H "Authorization: Bearer $VIEWER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"register_key":"TEST-Q1003-REG"}' | jq .
-# Expected: 403 — claim requires admin role
+# Expected: 403 {"error":"forbidden"} — claim requires admin role
 ```
 
-### 1b.6 Viewer cannot add a gateway (forbidden)
+### 1b.7 Viewer cannot add a gateway (forbidden)
 ```bash
 curl -s -X POST "$BASE/api/v1/qubes/Q-1001/gateways" \
   -H "Authorization: Bearer $VIEWER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"name":"Test","protocol":"modbus_tcp","host":"192.168.1.1","port":502}' | jq .
-# Expected: 403 — editor or admin required
+# Expected: 403 — editor or admin role required
 ```
 
-### 1b.7 Editor can add sensors but cannot claim qubes
+### 1b.8 Viewer can read data (allowed)
 ```bash
-# Editor CAN create gateways and sensors
+# Viewer CAN see qubes, sensors, and telemetry data
+curl -s -H "Authorization: Bearer $VIEWER_TOKEN" \
+  $BASE/api/v1/qubes | jq .
+# Expected: 200 — same qubes the admin sees (same org)
+
+curl -s -H "Authorization: Bearer $VIEWER_TOKEN" \
+  "$BASE/api/v1/data/sensors/$SENSOR_MODBUS_ID/latest" | jq .
+# Expected: 200 — can read sensor readings
+```
+
+### 1b.9 Editor can add gateways and sensors (allowed)
+```bash
+# Editor CAN create gateways
 curl -s -X POST "$BASE/api/v1/qubes/Q-1001/gateways" \
   -H "Authorization: Bearer $EDITOR_TOKEN" \
   -H "Content-Type: application/json" \
@@ -181,30 +251,73 @@ curl -s -X POST $BASE/api/v1/qubes/claim \
 # Expected: 403
 ```
 
-### 1b.8 Promote viewer to editor
+### 1b.10 Promote viewer to editor
 ```bash
 curl -s -X PATCH "$BASE/api/v1/users/$VIEWER_ID" \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"role":"editor"}' | jq .
-# Expected: 200 {user_id, role:"editor"}
+# Expected: 200 {"user_id":"...","role":"editor"}
 ```
 
-### 1b.9 Cannot change own role
+### 1b.11 Cannot change own role
 ```bash
-MY_ID=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE/api/v1/users/me | jq -r .user_id)
+MY_ID=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/users/me | jq -r .user_id)
 curl -s -X PATCH "$BASE/api/v1/users/$MY_ID" \
   -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
   -d '{"role":"viewer"}' | jq .
-# Expected: 400 {error:"cannot change your own role"}
+# Expected: 400 {"error":"cannot change your own role"}
 ```
 
-### 1b.10 Remove a user from the org
+### 1b.12 Invalid role value
 ```bash
-curl -s -X DELETE "$BASE/api/v1/users/$VIEWER_ID" \
-  -H "Authorization: Bearer $TOKEN" | jq .
-# Expected: 200 {deleted: user_id}
+curl -s -X PATCH "$BASE/api/v1/users/$VIEWER_ID" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role":"superuser"}' | jq .
+# Expected: 400 {"error":"role must be viewer, editor, or admin"}
 ```
+
+### 1b.13 Duplicate email invite
+```bash
+curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"viewer@acme.com","role":"viewer"}' | jq .
+# Expected: 409 {"error":"email already exists in this or another org"}
+```
+
+### 1b.14 Remove a user from the org
+```bash
+curl -s -X DELETE "$BASE/api/v1/users/$EDITOR_ID" \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# Expected: 200 {"deleted":"uuid"}
+
+# Removed user can no longer login
+curl -s -X POST $BASE/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"engineer@acme.com","password":"MySecurePass123"}' | jq .
+# Expected: 401
+```
+
+### 1b.15 Non-admin cannot manage users
+```bash
+# Viewer trying to invite another user
+curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $VIEWER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"another@acme.com","role":"viewer"}' | jq .
+# Expected: 403
+
+# Viewer trying to list users
+curl -s -H "Authorization: Bearer $VIEWER_TOKEN" \
+  $BASE/api/v1/users | jq .
+# Expected: 403
+```
+
+> **Server config:** Change the default temp password by setting `DEFAULT_USER_PASSWORD=YourDefault@2024` in the cloud-api environment (docker-compose or Azure VM).
 
 ---
 
