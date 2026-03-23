@@ -27,51 +27,60 @@ func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(jwtMiddleware(jwtSecret))
 
-		// Qubes
+		// Qubes — read (all authenticated)
 		r.Get("/api/v1/qubes", listQubesHandler(pool))
 		r.Get("/api/v1/qubes/{id}", getQubeHandler(pool))
-		r.Put("/api/v1/qubes/{id}", updateQubeHandler(pool))
-		r.Post("/api/v1/qubes/{id}/commands", sendCommandHandler(pool))
-		r.Get("/api/v1/commands/{id}", getCommandHandler(pool))
 		r.Get("/api/v1/qubes/{id}/sensors", listAllSensorsForQubeHandler(pool))
 		r.Get("/api/v1/qubes/{id}/gateways", listGatewaysHandler(pool))
 
-		// Gateways
-		r.Post("/api/v1/qubes/{id}/gateways", createGatewayHandler(pool))
-		r.Delete("/api/v1/gateways/{gateway_id}", deleteGatewayHandler(pool))
-
-		// Sensors
+		// Gateways — read (all authenticated)
 		r.Get("/api/v1/gateways/{gateway_id}/sensors", listSensorsHandler(pool))
-		r.Post("/api/v1/gateways/{gateway_id}/sensors", createSensorHandler(pool))
-		r.Delete("/api/v1/sensors/{sensor_id}", deleteSensorHandler(pool))
 
-		// Sensor register rows — view and fix individual CSV rows
+		// Sensor rows — read (all authenticated)
 		r.Get("/api/v1/sensors/{sensor_id}/rows", listSensorRowsHandler(pool))
-		r.Post("/api/v1/sensors/{sensor_id}/rows", addSensorRowHandler(pool))
-		r.Put("/api/v1/sensors/{sensor_id}/rows/{row_id}", updateSensorRowHandler(pool))
-		r.Delete("/api/v1/sensors/{sensor_id}/rows/{row_id}", deleteSensorRowHandler(pool))
 
-		// Templates — catalog browsing (all authenticated users)
+		// Templates — read (all authenticated)
 		r.Get("/api/v1/templates", listTemplatesHandler(pool))
 		r.Get("/api/v1/templates/{id}", getTemplateHandler(pool))
 		r.Get("/api/v1/templates/{id}/preview", previewTemplateHandler(pool))
 
-		// Templates — org-scoped create/update/delete (admin + editor)
-		r.Group(func(r chi.Router) {
-			r.Use(requireRole("admin", "editor", "superadmin"))
-			r.Post("/api/v1/templates", createTemplateHandler(pool))
-			r.Put("/api/v1/templates/{id}", updateTemplateHandler(pool))
-			r.Delete("/api/v1/templates/{id}", deleteTemplateHandler(pool))
-			// Patch individual registers — IoT team internal use
-			r.Patch("/api/v1/templates/{id}/registers", patchTemplateRegistersHandler(pool))
-		})
-
-		// Telemetry
+		// Telemetry — read (all authenticated)
 		r.Get("/api/v1/data/readings", readingsHandler(pool))
 		r.Get("/api/v1/data/sensors/{id}/latest", latestReadingHandler(pool))
 
+		// Commands — read (all authenticated)
+		r.Get("/api/v1/commands/{id}", getCommandHandler(pool))
+
 		// All authenticated users
 		r.Get("/api/v1/users/me", getMeHandler(pool))
+
+		// Editor+ — write operations (editor, admin, superadmin)
+		r.Group(func(r chi.Router) {
+			r.Use(requireRole("admin", "editor", "superadmin"))
+
+			// Qubes — update, commands
+			r.Put("/api/v1/qubes/{id}", updateQubeHandler(pool))
+			r.Post("/api/v1/qubes/{id}/commands", sendCommandHandler(pool))
+
+			// Gateways — create/delete
+			r.Post("/api/v1/qubes/{id}/gateways", createGatewayHandler(pool))
+			r.Delete("/api/v1/gateways/{gateway_id}", deleteGatewayHandler(pool))
+
+			// Sensors — create/delete
+			r.Post("/api/v1/gateways/{gateway_id}/sensors", createSensorHandler(pool))
+			r.Delete("/api/v1/sensors/{sensor_id}", deleteSensorHandler(pool))
+
+			// Sensor rows — write
+			r.Post("/api/v1/sensors/{sensor_id}/rows", addSensorRowHandler(pool))
+			r.Put("/api/v1/sensors/{sensor_id}/rows/{row_id}", updateSensorRowHandler(pool))
+			r.Delete("/api/v1/sensors/{sensor_id}/rows/{row_id}", deleteSensorRowHandler(pool))
+
+			// Templates — create/update/delete
+			r.Post("/api/v1/templates", createTemplateHandler(pool))
+			r.Put("/api/v1/templates/{id}", updateTemplateHandler(pool))
+			r.Delete("/api/v1/templates/{id}", deleteTemplateHandler(pool))
+			r.Patch("/api/v1/templates/{id}/registers", patchTemplateRegistersHandler(pool))
+		})
 
 		// Admin+ only
 		r.Group(func(r chi.Router) {

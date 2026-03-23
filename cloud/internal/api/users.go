@@ -20,13 +20,17 @@ func getEnvOrDefault(key, def string) string {
 // GET /api/v1/users — list all users in the org (admin+)
 func listUsersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		// Use userID (not orgID) to look up org — avoids any context type issues
+		// userID is always a string UUID that works correctly
+		userID, _ := r.Context().Value(ctxUserID).(string)
 		ctx := context.Background()
 
 		rows, err := pool.Query(ctx,
-			`SELECT id, email, role, created_at FROM users
-			 WHERE org_id = $1 ORDER BY created_at`,
-			orgID)
+			`SELECT u2.id::text, u2.email, u2.role, u2.created_at::text
+			 FROM users u2
+			 WHERE u2.org_id = (SELECT org_id FROM users WHERE id = $1::uuid)
+			 ORDER BY u2.created_at`,
+			userID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
@@ -42,7 +46,9 @@ func listUsersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		users := []userRow{}
 		for rows.Next() {
 			var u userRow
-			rows.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt)
+			if err := rows.Scan(&u.ID, &u.Email, &u.Role, &u.CreatedAt); err != nil {
+				continue // skip malformed rows
+			}
 			users = append(users, u)
 		}
 		writeJSON(w, http.StatusOK, users)
@@ -53,7 +59,8 @@ func listUsersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 // Body: {"email":"...", "password":"...", "role":"viewer|editor|admin"}
 func inviteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		callerID, _ := r.Context().Value(ctxUserID).(string)
+		orgID, _ := r.Context().Value(ctxOrgID).(string) // for response only
 		ctx := context.Background()
 
 		var req struct {
@@ -82,9 +89,13 @@ func inviteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var userID string
 		err := pool.QueryRow(ctx,
 			`INSERT INTO users (org_id, email, password_hash, role)
-			 VALUES ($1, $2, crypt($3, gen_salt('bf',12)), $4)
-			 RETURNING id`,
-			orgID, req.Email, req.Password, req.Role,
+			 VALUES (
+			   (SELECT org_id FROM users WHERE id = $1::uuid),
+			   $2, crypt($3, gen_salt('bf',12)), $4
+			 )
+			 RETURNING id::text`,
+			callerID,
+			req.Email, req.Password, req.Role,
 		).Scan(&userID)
 		if err != nil {
 			// Most likely a unique constraint on email
@@ -112,7 +123,6 @@ func inviteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 // Body: {"role":"viewer|editor|admin"}
 func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		callerID, _ := r.Context().Value(ctxUserID).(string)
 		targetID := chi.URLParam(r, "user_id")
 		ctx := context.Background()
@@ -138,8 +148,10 @@ func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 		result, err := pool.Exec(ctx,
 			`UPDATE users SET role = $1
-			 WHERE id = $2 AND org_id = $3 AND role != 'superadmin'`,
-			req.Role, targetID, orgID)
+			 WHERE id::text = $2
+			   AND org_id = (SELECT org_id FROM users WHERE id = $3::uuid)
+			   AND role != 'superadmin'`,
+			req.Role, targetID, callerID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
@@ -159,7 +171,6 @@ func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
 // DELETE /api/v1/users/:user_id — remove user from org (admin only)
 func removeUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		callerID, _ := r.Context().Value(ctxUserID).(string)
 		targetID := chi.URLParam(r, "user_id")
 		ctx := context.Background()
@@ -170,8 +181,11 @@ func removeUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		result, err := pool.Exec(ctx,
-			`DELETE FROM users WHERE id = $1 AND org_id = $2 AND role != 'superadmin'`,
-			targetID, orgID)
+			`DELETE FROM users
+			 WHERE id::text = $1
+			   AND org_id = (SELECT org_id FROM users WHERE id = $2::uuid)
+			   AND role != 'superadmin'`,
+			targetID, callerID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
@@ -196,7 +210,7 @@ func getMeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		err := pool.QueryRow(ctx,
 			`SELECT u.email, u.role, o.name
 			 FROM users u JOIN organisations o ON o.id = u.org_id
-			 WHERE u.id = $1`,
+			 WHERE u.id::text = $1`,
 			userID).Scan(&email, &role, &orgName)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")

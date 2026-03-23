@@ -11,7 +11,7 @@ services:
 
   # ── Enterprise Conf-Agent ──────────────────────────────────────────────────
   enterprise-conf-agent:
-    image: registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest
+    image: ghcr.io/sandun-s/qube-enterprise-home/conf-agent:arm64.latest
     hostname: enterprise-conf-agent
     networks:
       - qube-net
@@ -32,7 +32,7 @@ services:
 
   # ── Enterprise Influx-to-SQL ───────────────────────────────────────────────
   enterprise-influx-to-sql:
-    image: registry.gitlab.com/iot-team4/product/enterprise-influx-to-sql:arm64.latest
+    image: ghcr.io/sandun-s/qube-enterprise-home/influx-to-sql:arm64.latest
     hostname: enterprise-influx-to-sql
     networks:
       - qube-net
@@ -57,9 +57,30 @@ services:
       restart_policy:
         condition: any
 
+%!(EXTRA string=Q-1001)  # Gateway: X (modbus_tcp) → 1.2.3.4
+  x:
+    image: ghcr.io/sandun-s/qube-enterprise-home/modbus-gateway:arm64.latest
+    hostname: x
+    networks:
+      - qube-net
+    volumes:
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+      - /opt/qube/configs/x/configs.yml:/app/configs.yml:ro
+      - /opt/qube/configs/x/config.csv:/app/config.csv:ro
+    logging:
+      driver: "local"
+      options:
+        max-size: "10mb"
+        max-file: "20"
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any
+
   # Gateway: Panel_A (modbus_tcp) → 192.168.1.100
   panel-a:
-    image: registry.gitlab.com/iot-team4/product/modbus-gateway:arm64.latest
+    image: ghcr.io/sandun-s/qube-enterprise-home/modbus-gateway:arm64.latest
     hostname: panel-a
     networks:
       - qube-net
@@ -80,7 +101,7 @@ services:
 
   # Gateway: PlantOPC (opcua) → opc.tcp://192.168.1.18:52520/OPCUA/Server
   plantopc:
-    image: registry.gitlab.com/iot-team4/product/opc-ua-gateway:arm64.latest
+    image: ghcr.io/sandun-s/qube-enterprise-home/opc-ua-gateway:arm64.latest
     hostname: plantopc
     networks:
       - qube-net
@@ -101,7 +122,7 @@ services:
 
   # Gateway: UPS_Room1 (snmp) → 192.168.1.200
   ups-room1:
-    image: registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest
+    image: ghcr.io/sandun-s/qube-enterprise-home/snmp-gateway:arm64.latest
     hostname: ups-room1
     networks:
       - qube-net
@@ -123,7 +144,7 @@ services:
 
   # Gateway: MQTT_Floor2 (mqtt) → 192.168.1.10
   mqtt-floor2:
-    image: registry.gitlab.com/iot-team4/product/mqtt-reader:arm64.latest
+    image: ghcr.io/sandun-s/qube-enterprise-home/mqtt-gateway:arm64.latest
     hostname: mqtt-floor2
     networks:
       - qube-net

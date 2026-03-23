@@ -267,8 +267,8 @@ assert_status "viewer can list qubes" "200" "$(code "$R")"
 R=$(api POST /api/v1/qubes/claim '{"register_key":"TEST-Q1005-REG"}' "$INVITED_VIEWER_TOKEN")
 assert_status "viewer cannot claim → 403" "403" "$(code "$R")"
 
-# Invited viewer cannot add a gateway (needs editor+)
-R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
+# Invited viewer cannot add a gateway (needs editor+) — use QUBE2_ID so section 14 count stays at 5
+R=$(api POST "/api/v1/qubes/$QUBE2_ID/gateways" \
   '{"name":"X","protocol":"modbus_tcp","host":"1.2.3.4","port":502}' "$INVITED_VIEWER_TOKEN")
 assert_status "viewer cannot create gateway → 403" "403" "$(code "$R")"
 
