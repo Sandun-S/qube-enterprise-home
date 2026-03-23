@@ -3,3 +3,7 @@ test,active_power_w,holding,3000,float32,influxdb,Measurements,location=
 test,voltage_ll_v,holding,3028,float32,influxdb,Measurements,location=
 test,current_a,holding,3054,float32,influxdb,Measurements,location=
 test,energy_kwh,holding,3204,float32,influxdb,Measurements,location=
+test 2,active_power_w,holding,3000,float32,influxdb,Measurements,location=
+test 2,voltage_ll_v,holding,3028,float32,influxdb,Measurements,location=
+test 2,current_a,holding,3054,float32,influxdb,Measurements,location=
+test 2,energy_kwh,holding,3204,float32,influxdb,Measurements,location=

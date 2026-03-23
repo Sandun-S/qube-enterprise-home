@@ -1,6 +1,10 @@
 {
-  "test.active_power_w": "0d9fb4b8-3bf7-449b-bc8b-f9fd2fe63249",
-  "test.current_a": "0d9fb4b8-3bf7-449b-bc8b-f9fd2fe63249",
-  "test.energy_kwh": "0d9fb4b8-3bf7-449b-bc8b-f9fd2fe63249",
-  "test.voltage_ll_v": "0d9fb4b8-3bf7-449b-bc8b-f9fd2fe63249"
+  "test 2.active_power_w": "cf75757d-a153-4e2d-b574-fbb75da0f1b0",
+  "test 2.current_a": "cf75757d-a153-4e2d-b574-fbb75da0f1b0",
+  "test 2.energy_kwh": "cf75757d-a153-4e2d-b574-fbb75da0f1b0",
+  "test 2.voltage_ll_v": "cf75757d-a153-4e2d-b574-fbb75da0f1b0",
+  "test.active_power_w": "7b946db8-7f3f-4a1a-8d91-09f3fda8ea0d",
+  "test.current_a": "7b946db8-7f3f-4a1a-8d91-09f3fda8ea0d",
+  "test.energy_kwh": "7b946db8-7f3f-4a1a-8d91-09f3fda8ea0d",
+  "test.voltage_ll_v": "7b946db8-7f3f-4a1a-8d91-09f3fda8ea0d"
 }

@@ -5,66 +5,94 @@
 <title>Qube Enterprise</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#0f1117;color:#e2e8f0;min-height:100vh;font-size:13px}
-header{background:#1a1d2e;border-bottom:1px solid #2d3748;padding:10px 20px;display:flex;align-items:center;gap:12px}
+body{font-family:system-ui,sans-serif;background:#0f1117;color:#e2e8f0;font-size:13px;line-height:1.5}
+header{background:#1a1d2e;border-bottom:1px solid #2d3748;padding:10px 20px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10}
 header h1{font-size:14px;font-weight:600;color:#7c85ff}
 .tabs{display:flex;gap:2px;margin-left:auto}
-.tab{padding:5px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;background:none;color:#718096;transition:.15s}
-.tab.active{background:#13151f;color:#7c85ff;border:1px solid #2d3748}
-.tab:hover:not(.active){color:#e2e8f0}
-.view{display:none;padding:20px;max-width:940px;margin:0 auto}
+.tab{padding:5px 16px;border-radius:5px;border:1px solid transparent;cursor:pointer;font-size:12px;background:none;color:#718096}
+.tab.active{background:#1e2235;color:#7c85ff;border-color:#2d3748}
+.tab:hover:not(.active){color:#e2e8f0;background:#13151f}
+.view{display:none;padding:24px;max-width:960px;margin:0 auto}
 .view.active{display:block}
-.card{background:#1a1d2e;border:1px solid #2d3748;border-radius:8px;padding:16px;margin-bottom:14px}
-.card h2{font-size:12px;font-weight:600;color:#7c85ff;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid #2d3748;display:flex;align-items:center;justify-content:space-between}
-label{display:block;font-size:11px;color:#718096;margin:8px 0 3px}
-input,select,textarea{width:100%;padding:7px 9px;background:#0f1117;border:1px solid #2d3748;border-radius:5px;color:#e2e8f0;font-size:12px;outline:none}
-input:focus,select:focus,textarea:focus{border-color:#7c85ff}
+.card{background:#1a1d2e;border:1px solid #2d3748;border-radius:10px;padding:20px;margin-bottom:16px}
+.card-title{font-size:13px;font-weight:600;color:#7c85ff;margin-bottom:16px;padding-bottom:10px;border-bottom:1px solid #2d3748;display:flex;align-items:center;justify-content:space-between}
+label{display:block;font-size:11px;color:#718096;margin:10px 0 4px;font-weight:500}
+input,select,textarea{width:100%;padding:8px 10px;background:#0f1117;border:1px solid #2d3748;border-radius:6px;color:#e2e8f0;font-size:12px;outline:none;transition:.15s}
+input:focus,select:focus,textarea:focus{border-color:#7c85ff;background:#13151f}
+input::placeholder{color:#4a5568}
 textarea{font-family:monospace;font-size:11px;resize:vertical}
-.btn{padding:6px 14px;border-radius:5px;border:none;cursor:pointer;font-size:12px;font-weight:500}
-.btn:hover{opacity:.85}
-.btn-p{background:#7c85ff;color:#fff}.btn-g{background:#2d3748;color:#e2e8f0}
-.btn-d{background:#c53030;color:#fff}.btn-s{padding:4px 9px;font-size:11px}
-.btn-green{background:#2f855a;color:#fff}
-.row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.f{flex:1;min-width:120px}
-pre{background:#0a0c12;border:1px solid #2d3748;border-radius:5px;padding:10px;font-size:10px;overflow:auto;color:#a0aec0;max-height:260px;white-space:pre-wrap;word-break:break-all;margin-top:8px}
-.ok{background:#1a3a2a;color:#48bb78;border:1px solid #2f855a;padding:8px 12px;border-radius:5px;font-size:11px;margin-top:6px}
-.err{background:#3a1a1a;color:#fc8181;border:1px solid #c53030;padding:8px 12px;border-radius:5px;font-size:11px;margin-top:6px}
-.badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
-.b-blue{background:#1a2a4a;color:#63b3ed}.b-green{background:#1a3a2a;color:#48bb78}
-.b-grey{background:#2d3748;color:#718096}.b-purple{background:#2d2050;color:#b794f4}
-.b-yellow{background:#3a2a0a;color:#ecc94b}.b-teal{background:#0a2a2a;color:#4fd1c5}
-.item{background:#13151f;border:1px solid #2d3748;border-radius:6px;padding:10px 12px;margin-bottom:6px}
-.item-row{display:flex;gap:10px;align-items:center}
-.item-id{font-size:10px;font-weight:700;color:#7c85ff;min-width:80px;word-break:break-all}
-.item-info{flex:1}.item-info small{color:#718096;font-size:10px;display:block;margin-top:2px}
-.actions{display:flex;gap:4px;flex-shrink:0}
-.hint{background:#1a2a3a;border:1px solid #2d4a6a;border-radius:5px;padding:8px;font-size:10px;color:#90cdf4;margin:8px 0;line-height:1.7}
-.hint b{color:#c3dffe}
-.split{display:grid;grid-template-columns:300px 1fr;gap:14px}
-.flow-bar{display:flex;gap:0;margin-bottom:16px;border:1px solid #2d3748;border-radius:6px;overflow:hidden}
-.flow-step{flex:1;padding:8px 4px;text-align:center;font-size:10px;color:#718096;background:#13151f;border-right:1px solid #2d3748;cursor:default}
-.flow-step:last-child{border-right:none}
-.flow-step.done{background:#1a3a2a;color:#48bb78}
-.flow-step.current{background:#1e2235;color:#7c85ff;font-weight:600}
-.tmpl-card{background:#13151f;border:1px solid #2d3748;border-radius:6px;padding:10px;margin-bottom:6px;cursor:pointer;transition:.15s}
-.tmpl-card:hover{border-color:#718096}
+.btn{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:.15s}
+.btn:active{transform:scale(.97)}
+.btn-p{background:#7c85ff;color:#fff}.btn-p:hover{background:#6b74ee}
+.btn-g{background:#2d3748;color:#e2e8f0}.btn-g:hover{background:#374151}
+.btn-d{background:#9b2c2c;color:#fff}.btn-d:hover{background:#c53030}
+.btn-green{background:#276749;color:#fff}.btn-green:hover{background:#2f855a}
+.btn-sm{padding:4px 10px;font-size:11px;border-radius:5px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+.col{flex:1;min-width:140px}
+.ok{background:#1a3a2a;color:#68d391;border:1px solid #276749;padding:10px 14px;border-radius:6px;font-size:12px;margin-top:8px;line-height:1.6}
+.err{background:#2d1515;color:#fc8181;border:1px solid #9b2c2c;padding:10px 14px;border-radius:6px;font-size:12px;margin-top:8px}
+.badge{display:inline-flex;align-items:center;padding:2px 10px;border-radius:20px;font-size:10px;font-weight:600;gap:4px}
+.b-blue{background:#1a2a4a;color:#63b3ed}
+.b-green{background:#1a3a2a;color:#68d391}
+.b-grey{background:#2d3748;color:#718096}
+.b-purple{background:#2d2050;color:#b794f4}
+.b-teal{background:#0a2a2a;color:#4fd1c5}
+.b-yellow{background:#2a1f0a;color:#ecc94b}
+.b-red{background:#2d1515;color:#fc8181}
+.item{background:#13151f;border:1px solid #2d3748;border-radius:8px;padding:12px 14px;margin-bottom:8px;display:flex;gap:12px;align-items:flex-start}
+.item-body{flex:1}
+.item-name{font-size:12px;font-weight:600;color:#e2e8f0;margin-bottom:4px}
+.item-meta{font-size:10px;color:#718096;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.item-actions{display:flex;gap:6px;flex-shrink:0;align-items:center}
+pre{background:#0a0c12;border:1px solid #2d3748;border-radius:6px;padding:12px;font-size:10px;overflow:auto;color:#a0aec0;max-height:280px;white-space:pre-wrap;word-break:break-all;margin-top:8px;line-height:1.6}
+.hint{background:#0f1e2e;border:1px solid #1a3a5a;border-radius:6px;padding:10px 14px;font-size:11px;color:#90cdf4;margin:10px 0;line-height:1.8}
+.hint b{color:#bee3f8}
+.split2{display:grid;grid-template-columns:320px 1fr;gap:16px}
+.split2-left{min-width:0}
+.split2-right{min-width:0}
+.flow-bar{display:flex;border:1px solid #2d3748;border-radius:8px;overflow:hidden;margin-bottom:20px}
+.fs{flex:1;padding:10px 6px;text-align:center;font-size:11px;color:#4a5568;background:#13151f;border-right:1px solid #2d3748;cursor:default;line-height:1.3}
+.fs:last-child{border-right:none}
+.fs.done{background:#1a3a2a;color:#68d391}
+.fs.active{background:#1e2235;color:#7c85ff;font-weight:600}
+.fs .fs-num{font-size:16px;font-weight:700;display:block;margin-bottom:2px}
+.tmpl-card{background:#13151f;border:1px solid #2d3748;border-radius:8px;padding:12px;margin-bottom:8px;cursor:pointer;transition:.15s;display:flex;gap:10px;align-items:flex-start}
+.tmpl-card:hover{border-color:#4a5568;background:#161923}
 .tmpl-card.selected{border-color:#7c85ff;background:#1e2235}
-.reg-table{width:100%;font-size:10px;border-collapse:collapse}
-.reg-table th{text-align:left;padding:4px 6px;background:#0a0c12;color:#718096;border-bottom:1px solid #2d3748}
-.reg-table td{padding:5px 6px;border-bottom:1px solid #13151f;color:#a0aec0}
+.tmpl-card-body{flex:1}
+.tmpl-card-name{font-size:12px;font-weight:600;color:#e2e8f0;margin-bottom:4px}
+.tmpl-card-desc{font-size:10px;color:#718096;line-height:1.5}
+.tmpl-check{width:18px;height:18px;border-radius:50%;border:2px solid #2d3748;flex-shrink:0;margin-top:1px;display:flex;align-items:center;justify-content:center;font-size:10px}
+.tmpl-card.selected .tmpl-check{background:#7c85ff;border-color:#7c85ff;color:#fff}
+.reg-table{width:100%;border-collapse:collapse;font-size:11px;margin-top:6px}
+.reg-table th{text-align:left;padding:6px 8px;background:#0a0c12;color:#718096;border-bottom:1px solid #2d3748;font-weight:500}
+.reg-table td{padding:6px 8px;border-bottom:1px solid #13151f;color:#a0aec0;vertical-align:middle}
 .reg-table tr:last-child td{border-bottom:none}
-.inline-expand{margin-top:8px;border-top:1px solid #2d3748;padding-top:8px;display:none}
-.inline-expand.open{display:block}
-.json-key{color:#7c85ff}.json-str{color:#48bb78}.json-num{color:#ecc94b}.json-bool{color:#fc8181}
-.json-view{background:#0a0c12;border:1px solid #2d3748;border-radius:5px;padding:10px;font-family:monospace;font-size:10px;line-height:1.6;overflow:auto;max-height:200px}
-.proto-badge{display:inline-block;padding:2px 8px;border-radius:10px;font-size:10px;font-weight:600}
+.reg-table .field-name{color:#e2e8f0;font-weight:500}
+.section-label{font-size:10px;font-weight:600;color:#718096;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px}
+.divider{border:none;border-top:1px solid #2d3748;margin:16px 0}
+.json-view{background:#0a0c12;border:1px solid #2d3748;border-radius:6px;padding:10px;font-family:monospace;font-size:10px;line-height:1.7;overflow:auto;max-height:200px}
+.jk{color:#7c85ff}.js{color:#68d391}.jn{color:#ecc94b}.jb{color:#fc8181}
+.step-card{display:none}.step-card.active{display:block}
+.proto-dot{width:8px;height:8px;border-radius:50%;display:inline-block;margin-right:4px}
+.dot-modbus{background:#63b3ed}.dot-mqtt{background:#68d391}.dot-opcua{background:#b794f4}.dot-snmp{background:#ecc94b}.dot-default{background:#718096}
+.sensor-uuid{font-family:monospace;font-size:10px;background:#0a0c12;padding:2px 6px;border-radius:4px;color:#7c85ff;border:1px solid #2d3748}
+.empty-state{text-align:center;padding:32px;color:#4a5568;font-size:12px}
+.empty-icon{font-size:32px;margin-bottom:8px;display:block}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.expand-panel{margin-top:10px;padding-top:10px;border-top:1px solid #2d3748;display:none}
+.expand-panel.open{display:block}
+.tabs-sm{display:flex;border-bottom:1px solid #2d3748;margin-bottom:12px}
+.tab-sm{padding:6px 14px;font-size:11px;color:#718096;border:none;background:none;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab-sm.active{color:#7c85ff;border-bottom-color:#7c85ff}
 </style>
 </head>
 <body>
 <header>
   <h1>⬡ Qube Enterprise</h1>
-  <span id="auth-label" style="font-size:11px;color:#718096">not logged in</span>
-  <div class="tabs" style="margin-left:auto">
+  <span id="auth-label" style="font-size:11px;color:#4a5568">not logged in</span>
+  <div class="tabs">
     <button class="tab active" onclick="switchView('customer',this)">Customer</button>
     <button class="tab" onclick="switchView('superadmin',this)">Superadmin</button>
     <button class="tab" onclick="switchView('config',this)">Config</button>
@@ -74,243 +102,331 @@ pre{background:#0a0c12;border:1px solid #2d3748;border-radius:5px;padding:10px;f
 <!-- CONFIG -->
 <div id="view-config" class="view">
   <div class="card">
-    <h2>API Connection</h2>
+    <div class="card-title">Connection</div>
     <label>Cloud API Base URL</label>
-    <input id="cfg-url" value="http://localhost:8080">
-    <div style="margin-top:10px"><button class="btn btn-p" onclick="testConn()">Test Connection</button></div>
+    <input id="cfg-url" value="http://localhost:8080" placeholder="http://your-cloud-ip:8080">
+    <div style="margin-top:12px;display:flex;gap:8px">
+      <button class="btn btn-p" onclick="testConn()">Test Connection</button>
+    </div>
     <div id="cfg-msg"></div>
   </div>
 </div>
 
-<!-- CUSTOMER VIEW -->
+<!-- ══════════════════════════════════════════ CUSTOMER ══════════════════════════════════════════ -->
 <div id="view-customer" class="view active">
   <div class="flow-bar">
-    <div class="flow-step current" id="fs-1">1 · Login</div>
-    <div class="flow-step" id="fs-2">2 · Claim Qube</div>
-    <div class="flow-step" id="fs-3">3 · Pick Device</div>
-    <div class="flow-step" id="fs-4">4 · Configure</div>
-    <div class="flow-step" id="fs-5">5 · Done</div>
+    <div class="fs active" id="fs-1"><span class="fs-num">1</span>Login</div>
+    <div class="fs" id="fs-2"><span class="fs-num">2</span>Claim Qube</div>
+    <div class="fs" id="fs-3"><span class="fs-num">3</span>Select Device</div>
+    <div class="fs" id="fs-4"><span class="fs-num">4</span>Configure</div>
+    <div class="fs" id="fs-5"><span class="fs-num">5</span>Done</div>
   </div>
 
-  <div id="cust-step-1" class="card">
-    <h2>Login to your organisation</h2>
-    <div class="row">
-      <div class="f"><label>Email</label><input id="c-email" placeholder="admin@factory.com"></div>
-      <div class="f"><label>Password</label><input id="c-pw" type="password"></div>
-    </div>
-    <div style="margin-top:10px;display:flex;gap:8px">
-      <button class="btn btn-p" onclick="custLogin()">Login</button>
-      <button class="btn btn-g" onclick="custRegister()">Register new org</button>
-    </div>
-    <div id="c-login-msg"></div>
-    <div class="hint" style="margin-top:10px">
-      <b>First time?</b> Click Register new org — enter org name when prompted.<br>
-      <b>Dev:</b> use <code>TEST-Q1001-REG</code> through <code>TEST-Q1020-REG</code> to claim qubes.
-    </div>
-  </div>
-
-  <div id="cust-step-2" class="card" style="display:none">
-    <h2>Claim your Qube device</h2>
-    <div id="claimed-qubes-list" style="margin-bottom:10px"></div>
-    <label>Register key <span style="color:#718096;font-size:10px">— from the box or /boot/mit.txt on the device</span></label>
-    <div class="row">
-      <div class="f"><input id="c-regkey" placeholder="e.g. TEST-Q1001-REG"></div>
-      <button class="btn btn-p" onclick="custClaim()">Claim</button>
-    </div>
-    <div id="c-claim-msg"></div>
-    <div style="margin-top:10px"><button class="btn btn-g" onclick="showStep(3)">Skip → already claimed →</button></div>
-  </div>
-
-  <div id="cust-step-3" class="card" style="display:none">
-    <h2>Select device from catalog</h2>
-    <div class="row" style="margin-bottom:10px">
-      <div class="f">
-        <label>Protocol</label>
-        <select id="c-proto-filter" onchange="filterTemplates()">
-          <option value="">All protocols</option>
-        </select>
-      </div>
-      <div class="f">
-        <label>Search device name</label>
-        <input id="c-tmpl-search" oninput="filterTemplates()" placeholder="e.g. Schneider, UPS...">
-      </div>
-    </div>
-    <div id="c-catalog"></div>
-  </div>
-
-  <div id="cust-step-4" class="card" style="display:none">
-    <h2>Configure and add to Qube</h2>
-    <div class="split">
-      <div>
-        <div style="font-size:11px;color:#718096;margin-bottom:6px">Selected device</div>
-        <div id="c-selected-tmpl-info"></div>
-        <div id="c-tmpl-registers" style="margin-top:8px"></div>
-      </div>
-      <div>
-        <label>Which Qube</label>
-        <select id="c-target-qube"></select>
-        <label>Gateway name <span style="color:#718096;font-size:10px">— your label for this connection</span></label>
-        <input id="c-gw-name" placeholder="e.g. Panel_A, UPS_Room1">
-        <div id="c-proto-fields"></div>
-        <label>Sensor name</label>
-        <input id="c-sensor-name" placeholder="e.g. Main_Meter, UPS_Battery">
-        <label>Address params <span style="color:#718096;font-size:10px">— auto-filled per protocol</span></label>
-        <textarea id="c-addr-params" style="height:55px">{"unit_id": 1}</textarea>
-        <label>Tags <span style="color:#718096;font-size:10px">— optional, for dashboard grouping</span></label>
-        <textarea id="c-tags" style="height:40px">{"location": ""}</textarea>
-        <div style="margin-top:12px;display:flex;gap:8px">
-          <button class="btn btn-p" onclick="custAddGatewaySensor()">Add to Qube</button>
-          <button class="btn btn-g" onclick="showStep(3)">← Back</button>
+  <!-- Step 1 -->
+  <div class="step-card active" id="cust-1">
+    <div class="grid2">
+      <div class="card">
+        <div class="card-title">Login to your account</div>
+        <label>Email</label><input id="c-email" type="email" placeholder="admin@factory.com">
+        <label>Password</label><input id="c-pw" type="password">
+        <div style="margin-top:14px;display:flex;gap:8px">
+          <button class="btn btn-p" onclick="custLogin()">Login</button>
+          <button class="btn btn-g" onclick="custRegister()">Register new org</button>
         </div>
-        <div id="c-add-msg"></div>
+        <div id="c-login-msg"></div>
+      </div>
+      <div class="card">
+        <div class="card-title">What you can do</div>
+        <div class="hint">
+          <b>Register</b> creates a new organisation and makes you the admin.<br>
+          <b>Login</b> to an existing org to manage Qubes and sensors.<br><br>
+          <b>Dev defaults:</b> any email/password works on local stack.<br>
+          Superadmin: <code>iotteam@internal.local</code> / <code>iotteam2024</code>
+        </div>
       </div>
     </div>
   </div>
 
-  <div id="cust-step-5" class="card" style="display:none">
-    <h2>Done!</h2>
-    <div id="c-done-info"></div>
-    <div class="hint" style="margin-top:10px">
-      <b>What happens next:</b> Conf-agent polls every 30s, detects the hash change, downloads docker-compose.yml + config.csv, starts the gateway container. Data appears in ~2 minutes.
-    </div>
-    <div style="margin-top:10px;display:flex;gap:8px">
-      <button class="btn btn-p" onclick="showStep(3)">Add another device</button>
-      <button class="btn btn-g" onclick="viewMySensors()">View my sensors</button>
+  <!-- Step 2 -->
+  <div class="step-card" id="cust-2">
+    <div class="card">
+      <div class="card-title">
+        Your Qubes
+        <button class="btn btn-g btn-sm" onclick="loadMyQubes()">Refresh</button>
+      </div>
+      <div id="claimed-qubes-list">
+        <div class="empty-state"><span class="empty-icon">📦</span>No Qubes yet</div>
+      </div>
+      <hr class="divider">
+      <div class="section-label">Claim a new Qube</div>
+      <div class="hint"><b>Register key</b> is printed on the device box or found in <code>/boot/mit.txt</code>. Dev: use <code>TEST-Q1001-REG</code> through <code>TEST-Q1020-REG</code></div>
+      <div class="row" style="margin-top:8px">
+        <div class="col"><input id="c-regkey" placeholder="e.g. TEST-Q1001-REG"></div>
+        <button class="btn btn-p" onclick="custClaim()">Claim Qube</button>
+      </div>
+      <div id="c-claim-msg"></div>
+      <div style="margin-top:14px;display:flex;justify-content:space-between">
+        <button class="btn btn-g" onclick="showStep(1)">← Back</button>
+        <button class="btn btn-p" onclick="showStep(3)">Next: Select Device →</button>
+      </div>
     </div>
   </div>
 
-  <div id="cust-sensors-card" class="card" style="display:none">
-    <h2>My sensors <button class="btn btn-g btn-s" onclick="loadMySensors()">Refresh</button></h2>
-    <div id="cust-sensors-list"></div>
+  <!-- Step 3 -->
+  <div class="step-card" id="cust-3">
+    <div class="card">
+      <div class="card-title">Device Catalog</div>
+      <div class="row" style="margin-bottom:12px">
+        <div class="col">
+          <label>Filter by protocol</label>
+          <select id="c-proto-filter" onchange="filterTemplates()">
+            <option value="">All protocols</option>
+          </select>
+        </div>
+        <div class="col">
+          <label>Search</label>
+          <input id="c-tmpl-search" oninput="filterTemplates()" placeholder="Schneider, UPS, temperature...">
+        </div>
+      </div>
+      <div id="c-catalog">
+        <div class="empty-state"><span class="empty-icon">🔄</span>Login to load catalog</div>
+      </div>
+      <div style="margin-top:14px">
+        <button class="btn btn-g" onclick="showStep(2)">← Back</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 4 -->
+  <div class="step-card" id="cust-4">
+    <div class="split2">
+      <div class="split2-left">
+        <div class="card" style="position:sticky;top:60px">
+          <div class="card-title">Selected device</div>
+          <div id="c-selected-tmpl-info"></div>
+          <hr class="divider">
+          <div id="c-tmpl-registers"></div>
+        </div>
+      </div>
+      <div class="split2-right">
+        <div class="card">
+          <div class="card-title">Configuration</div>
+
+          <label>Which Qube</label>
+          <select id="c-target-qube" onchange="loadGatewaysForQube()"></select>
+
+          <hr class="divider">
+
+          <!-- Gateway section: pick existing OR create new -->
+          <div class="section-label">Gateway <span style="color:#4a5568;font-weight:400;text-transform:none;font-size:10px">— one gateway = one physical connection. Many sensors can share it.</span></div>
+
+          <div style="display:flex;gap:6px;margin-bottom:8px">
+            <button class="btn btn-sm" id="gw-mode-existing" onclick="setGwMode('existing')" style="background:#1e2235;color:#7c85ff;border:1px solid #7c85ff">Use existing gateway</button>
+            <button class="btn btn-g btn-sm" id="gw-mode-new" onclick="setGwMode('new')">Create new gateway</button>
+          </div>
+
+          <!-- Existing gateway picker -->
+          <div id="gw-existing-panel">
+            <div id="gw-existing-list" style="margin-bottom:4px"></div>
+            <div style="font-size:10px;color:#4a5568;margin-top:4px">No matching gateways? Switch to "Create new gateway".</div>
+          </div>
+
+          <!-- New gateway form -->
+          <div id="gw-new-panel" style="display:none">
+            <label>Gateway name <span style="color:#4a5568;font-weight:400">— your label for this connection point</span></label>
+            <input id="c-gw-name" placeholder="e.g. Panel_A, UPS_Room1, LoRa_GW1">
+            <div id="c-proto-fields" style="margin-top:4px">
+              <label>Host / IP</label><input id="cgw-host" placeholder="192.168.1.100">
+              <label>Port</label><input id="cgw-port" type="number" value="502">
+            </div>
+          </div>
+
+          <hr class="divider">
+
+          <div class="section-label">Sensor details <span style="color:#4a5568;font-weight:400;text-transform:none;font-size:10px">— one sensor = one device on the gateway</span></div>
+          <label>Sensor name</label>
+          <input id="c-sensor-name" placeholder="e.g. Main_Meter, UPS_Battery_1, Cold_Room_Sensor">
+          <label>Address params <span style="color:#4a5568;font-weight:400">— protocol-specific identifier for this sensor</span></label>
+          <textarea id="c-addr-params" style="height:60px">{"unit_id": 1}</textarea>
+          <label>Tags <span style="color:#4a5568;font-weight:400">— optional</span></label>
+          <textarea id="c-tags" style="height:40px">{"location": ""}</textarea>
+          <div style="margin-top:16px;display:flex;gap:8px">
+            <button class="btn btn-p" onclick="custAddSensor()">Add Sensor</button>
+            <button class="btn btn-g" onclick="showStep(3)">← Back</button>
+          </div>
+          <div id="c-add-msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 5 -->
+  <div class="step-card" id="cust-5">
+    <div class="card">
+      <div class="card-title">Successfully added!</div>
+      <div id="c-done-info"></div>
+      <div class="hint" style="margin-top:12px">
+        <b>What happens next:</b><br>
+        Conf-agent polls every 30 seconds → detects config hash change → downloads docker-compose.yml + config.csv → starts the gateway container automatically.<br>
+        Data will appear in dashboards in about 1–2 minutes.
+      </div>
+      <div style="margin-top:14px;display:flex;gap:8px">
+        <button class="btn btn-p" onclick="showStep(4)">Add another sensor to same gateway</button>
+      <button class="btn btn-g" onclick="showStep(3)">Add different device</button>
+        <button class="btn btn-g" onclick="viewMySensors()">View my sensors</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sensors panel (shown after done) -->
+  <div id="cust-sensors-panel" style="display:none">
+    <div class="card">
+      <div class="card-title">
+        My Sensors
+        <button class="btn btn-g btn-sm" onclick="loadMySensors()">Refresh</button>
+      </div>
+      <div id="cust-sensors-list"></div>
+    </div>
   </div>
 </div>
 
-<!-- SUPERADMIN VIEW -->
+<!-- ══════════════════════════════════════════ SUPERADMIN ══════════════════════════════════════════ -->
 <div id="view-superadmin" class="view">
-  <div class="card">
-    <h2>Superadmin Login</h2>
+  <!-- Login -->
+  <div id="sa-login-card" class="card">
+    <div class="card-title">Superadmin Login</div>
     <div class="row">
-      <div class="f"><label>Email</label><input id="sa-email" value="iotteam@internal.local"></div>
-      <div class="f"><label>Password</label><input id="sa-pw" type="password" value="iotteam2024"></div>
+      <div class="col"><label>Email</label><input id="sa-email" value="iotteam@internal.local"></div>
+      <div class="col"><label>Password</label><input id="sa-pw" type="password" value="iotteam2024"></div>
     </div>
-    <div style="margin-top:8px"><button class="btn btn-p" onclick="saLogin()">Login as Superadmin</button></div>
+    <div style="margin-top:12px"><button class="btn btn-p" onclick="saLogin()">Login</button></div>
     <div id="sa-login-msg"></div>
   </div>
 
   <div id="sa-main" style="display:none">
 
-    <!-- Protocols -->
+    <!-- Protocols overview -->
     <div class="card">
-      <h2>Active Protocols <span style="color:#718096;font-size:10px;font-weight:400">— add new ones via DB INSERT into protocols table</span></h2>
+      <div class="card-title">
+        Protocols
+        <button class="btn btn-p btn-sm" onclick="toggleAddProto()">+ Add Protocol</button>
+      </div>
       <div id="sa-protocols-list"></div>
-    <div style="margin-top:10px">
-      <button class="btn btn-p btn-s" onclick="document.getElementById('sa-add-proto-card').style.display='block';window.scrollTo(0,0)">+ Add New Protocol</button>
-    </div>
+      <!-- Add Protocol form (hidden by default) -->
+      <div id="sa-add-proto" style="display:none;margin-top:14px;padding-top:14px;border-top:1px solid #2d3748">
+        <div class="section-label">New Protocol</div>
+        <div class="hint"><b>Step 1:</b> Fill this form and click Save — adds to DB.<br><b>Step 2:</b> Build and push the container image (<code>image_name:arm64.latest</code>) to your registry.<br>The container will be pulled automatically when customers add gateways of this type.</div>
+        <div class="row">
+          <div class="col"><label>Protocol ID</label><input id="np-id" placeholder="lorawan_4g"></div>
+          <div class="col"><label>Label</label><input id="np-label" placeholder="LoRaWAN 4G"></div>
+          <div class="col"><label>Image name</label><input id="np-image" placeholder="lorawan-gateway"></div>
+          <div class="col"><label>Default port</label><input id="np-port" type="number" value="9080"></div>
+        </div>
+        <label>Description</label>
+        <input id="np-desc" placeholder="What this protocol is and what devices use it">
+        <div class="row">
+          <div class="col">
+            <label>Connection fields schema <span style="color:#4a5568;font-weight:400">— what to ask when adding a gateway</span></label>
+            <textarea id="np-conn" style="height:80px">[{"key":"host","label":"Gateway IP","type":"text","required":true},{"key":"port","label":"TCP port","type":"number","default":9080}]</textarea>
+          </div>
+          <div class="col">
+            <label>Sensor address schema <span style="color:#4a5568;font-weight:400">— what to ask when adding a sensor</span></label>
+            <textarea id="np-addr" style="height:80px">[{"key":"imei","label":"Gateway IMEI","type":"text","required":true,"hint":"IMEI of the 4G gateway"}]</textarea>
+          </div>
+        </div>
+        <div style="margin-top:10px;display:flex;gap:8px">
+          <button class="btn btn-p" onclick="saAddProtocol()">Save Protocol</button>
+          <button class="btn btn-g" onclick="toggleAddProto()">Cancel</button>
+        </div>
+        <div id="np-msg"></div>
+      </div>
     </div>
 
-    <!-- Add Protocol form -->
-    <div class="card" id="sa-add-proto-card" style="display:none">
-      <h2>Add New Protocol <button class="btn btn-g btn-s" onclick="document.getElementById('sa-add-proto-card').style.display='none'">Cancel</button></h2>
-      <div class="hint">
-        <b>What this does:</b> Registers a new gateway protocol in the DB. You still need to:<br>
-        1. Build and push the container image (e.g. <code>lorawan-gateway:arm64.latest</code>)<br>
-        2. The image will be pulled automatically using <code>QUBE_IMAGE_REGISTRY/image_name:arm64.latest</code><br>
-        3. The <code>connection_params_schema</code> defines what fields the UI shows when a customer adds a gateway of this type.
-      </div>
-      <div class="row">
-        <div class="f"><label>Protocol ID <span style="color:#718096;font-size:10px">— no spaces, use underscore</span></label>
-          <input id="np-id" placeholder="lorawan_4g"></div>
-        <div class="f"><label>Display label</label><input id="np-label" placeholder="LoRaWAN 4G"></div>
-        <div class="f"><label>Container image name</label><input id="np-image" placeholder="lorawan-gateway"></div>
-        <div class="f"><label>Default port</label><input id="np-port" type="number" value="9080"></div>
-      </div>
-      <label>Description</label>
-      <input id="np-desc" placeholder="LoRaWAN gateway via 4G TCP — temperature sensors">
-      <label>connection_params_schema <span style="color:#718096;font-size:10px">— what to ask user when adding a gateway</span></label>
-      <textarea id="np-conn" style="height:80px">[
-  {"key":"host","label":"Gateway IP","type":"text","required":true},
-  {"key":"port","label":"TCP port","type":"number","default":9080}
-]</textarea>
-      <label>addr_params_schema <span style="color:#718096;font-size:10px">— what to ask user when adding a sensor</span></label>
-      <textarea id="np-addr" style="height:60px">[
-  {"key":"imei","label":"Gateway IMEI","type":"text","required":true,"hint":"IMEI of the 4G gateway device"}
-]</textarea>
-      <div style="margin-top:10px"><button class="btn btn-p" onclick="saAddProtocol()">Add Protocol to DB</button></div>
-      <div id="np-msg"></div>
-    </div>
-
-    <!-- Template list -->
+    <!-- Templates -->
     <div class="card">
-      <h2>
-        Device Catalog
-        <div style="display:flex;gap:6px;align-items:center">
-          <select id="sa-proto-filter" onchange="saLoadTemplates()" style="width:140px">
+      <div class="card-title">
+        Device Templates
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="sa-proto-filter" onchange="saLoadTemplates()" style="width:150px;padding:5px 8px">
             <option value="">All protocols</option>
           </select>
-          <button class="btn btn-g btn-s" onclick="saLoadTemplates()">Refresh</button>
-          <button class="btn btn-p btn-s" onclick="saClearForm()">+ New Template</button>
+          <button class="btn btn-g btn-sm" onclick="saLoadTemplates()">Refresh</button>
+          <button class="btn btn-p btn-sm" onclick="saNewTemplate()">+ New Template</button>
         </div>
-      </h2>
+      </div>
       <div id="sa-tmpl-list"></div>
     </div>
 
-    <!-- Add / Edit template form -->
-    <div class="card" id="sa-form-card">
-      <h2 id="sa-form-title">New Template <button class="btn btn-g btn-s" onclick="saClearForm()">Clear</button></h2>
+    <!-- Template editor -->
+    <div class="card" id="sa-editor-card" style="display:none">
+      <div class="card-title" id="sa-editor-title">
+        New Template
+        <button class="btn btn-g btn-sm" onclick="saCloseEditor()">Close</button>
+      </div>
+
       <div class="row">
-        <div class="f"><label>Device name</label><input id="sa-name" placeholder="Schneider PM5100"></div>
-        <div class="f">
+        <div class="col"><label>Device name</label><input id="sa-name" placeholder="Schneider PM5100"></div>
+        <div class="col">
           <label>Protocol</label>
-          <select id="sa-proto" onchange="saUpdateConfigTemplate()">
+          <select id="sa-proto" onchange="saProtoChanged()">
             <option value="modbus_tcp">Modbus TCP</option>
           </select>
         </div>
       </div>
       <label>Description</label>
-      <input id="sa-desc" placeholder="What this device is, what readings it provides">
+      <input id="sa-desc" placeholder="What this device is and what data it provides">
 
-      <!-- Tab switcher for config view -->
-      <div style="display:flex;gap:0;margin-top:12px;border:1px solid #2d3748;border-radius:6px;overflow:hidden;width:fit-content">
-        <button class="btn btn-g btn-s cfg-tab active" id="ct-form" onclick="switchCfgTab('form',this)" style="border-radius:0;border:none">Form view</button>
-        <button class="btn btn-g btn-s cfg-tab" id="ct-json" onclick="switchCfgTab('json',this)" style="border-radius:0;border-left:1px solid #2d3748;border:none;border-left:1px solid #2d3748">JSON view</button>
+      <hr class="divider">
+
+      <!-- Tab switcher -->
+      <div class="tabs-sm">
+        <button class="tab-sm active" id="tab-form" onclick="saSetTab('form',this)">Registers / Config</button>
+        <button class="tab-sm" id="tab-json" onclick="saSetTab('json',this)">Raw JSON</button>
+        <button class="tab-sm" id="tab-fields" onclick="saSetTab('fields',this)">Display fields</button>
       </div>
 
-      <!-- FORM VIEW — register editor -->
-      <div id="cfg-form-view" style="margin-top:10px">
-        <div id="sa-reg-form-list"></div>
-        <div style="margin-top:10px;background:#0a0c12;border:1px solid #2d3748;border-radius:5px;padding:10px">
-          <div style="font-size:11px;color:#718096;margin-bottom:8px">Add register</div>
+      <!-- Form view: register editor -->
+      <div id="sa-tab-form">
+        <div id="sa-reg-list" style="margin-bottom:12px"></div>
+        <div style="background:#0a0c12;border:1px solid #2d3748;border-radius:6px;padding:14px">
+          <div class="section-label">Add register</div>
           <div class="row">
-            <div class="f"><label>Address</label><input id="rf-addr" type="number" value="3000"></div>
-            <div class="f"><label>Reg type</label><select id="rf-rtype"><option>Holding</option><option>Input</option><option>Coil</option></select></div>
-            <div class="f"><label>Data type</label><select id="rf-dtype"><option>uint16</option><option>int16</option><option>uint32</option><option>float32</option></select></div>
-            <div class="f"><label>Count</label><input id="rf-count" type="number" value="1"></div>
-            <div class="f"><label>Scale</label><input id="rf-scale" value="1.0"></div>
-            <div class="f"><label>Field key</label><input id="rf-field" placeholder="active_power_w"></div>
-            <div class="f"><label>Table</label><input id="rf-table" value="Measurements"></div>
+            <div class="col"><label>Address</label><input id="rf-addr" type="number" value="3000"></div>
+            <div class="col"><label>Register type</label>
+              <select id="rf-rtype"><option>Holding</option><option>Input</option><option>Coil</option></select></div>
+            <div class="col"><label>Data type</label>
+              <select id="rf-dtype"><option>float32</option><option>uint16</option><option>int16</option><option>uint32</option><option>int32</option></select></div>
+            <div class="col"><label>Count</label><input id="rf-count" type="number" value="2"></div>
+            <div class="col"><label>Scale</label><input id="rf-scale" value="1.0"></div>
+            <div class="col"><label>Field key</label><input id="rf-field" placeholder="active_power_w"></div>
+            <div class="col"><label>Unit</label><input id="rf-unit" placeholder="W"></div>
           </div>
-          <div style="margin-top:8px;display:flex;gap:8px">
-            <button class="btn btn-p btn-s" onclick="addRegToForm()">Add Register</button>
-            <span style="font-size:10px;color:#718096;align-self:center">Registers are saved when you click Save Template</span>
-          </div>
+          <div style="margin-top:10px"><button class="btn btn-p btn-sm" onclick="addReg()">Add Register</button></div>
         </div>
       </div>
 
-      <!-- JSON VIEW -->
-      <div id="cfg-json-view" style="display:none;margin-top:10px">
-        <label>config_json <span style="color:#718096;font-size:10px">— full JSON for this protocol</span></label>
-        <textarea id="sa-cfg" style="height:160px"></textarea>
-        <label>influx_fields_json <span style="color:#718096;font-size:10px">— display labels + units for dashboard</span></label>
-        <textarea id="sa-fields" style="height:80px"></textarea>
+      <!-- JSON view -->
+      <div id="sa-tab-json" style="display:none">
+        <label>config_json</label>
+        <textarea id="sa-cfg" style="height:180px" oninput="syncJsonToForm()"></textarea>
+        <label>influx_fields_json</label>
+        <textarea id="sa-fields-json" style="height:80px"></textarea>
       </div>
 
-      <div style="margin-top:12px;display:flex;gap:8px">
-        <button class="btn btn-p" onclick="saSaveTemplate()">Save Template</button>
-        <button class="btn btn-g" onclick="saPreviewTemplate()">Preview CSV</button>
-        <button id="sa-patch-btn" class="btn btn-green" style="display:none" onclick="saPatchRegisters()">Patch Registers Only</button>
+      <!-- Display fields view -->
+      <div id="sa-tab-fields" style="display:none">
+        <div class="hint">These labels and units appear in Grafana dashboards and the telemetry API. They are auto-generated from your registers — edit them here.</div>
+        <div id="sa-fields-editor" style="margin-top:10px"></div>
       </div>
-      <div id="sa-form-msg"></div>
-      <div id="sa-preview"></div>
+
+      <hr class="divider">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-p" onclick="saSaveTemplate()">Save Template</button>
+        <button class="btn btn-green" id="sa-patch-btn" style="display:none" onclick="saPatchAll()">Patch Registers</button>
+        <button class="btn btn-g" id="sa-preview-btn" style="display:none" onclick="saPreview()">Preview CSV</button>
+      </div>
+      <div id="sa-editor-msg"></div>
+      <div id="sa-preview-out"></div>
     </div>
   </div>
 </div>
@@ -319,31 +435,15 @@ pre{background:#0a0c12;border:1px solid #2d3748;border-radius:5px;padding:10px;f
 let BASE='http://localhost:8080';
 let CUST_TOKEN='',SA_TOKEN='';
 let allTemplates=[],allProtocols=[],selectedTemplate=null,myQubes=[];
-let editingTmplId=null;
-let formRegisters=[];
+let editingId=null,formRegs=[];
 
+// ── helpers ──────────────────────────────────────────────────────────────────
 function switchView(id,btn){
   document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
   document.querySelectorAll('.tab').forEach(b=>b.classList.remove('active'));
   document.getElementById('view-'+id).classList.add('active');
   btn.classList.add('active');
-  if(id==='superadmin'&&SA_TOKEN)saLoadTemplates();
 }
-
-function switchCfgTab(tab,btn){
-  document.querySelectorAll('.cfg-tab').forEach(b=>{b.classList.remove('active');b.style.background='';});
-  btn.classList.add('active');
-  btn.style.background='#2d3748';
-  if(tab==='form'){
-    document.getElementById('cfg-form-view').style.display='block';
-    document.getElementById('cfg-json-view').style.display='none';
-  }else{
-    document.getElementById('cfg-json-view').style.display='block';
-    document.getElementById('cfg-form-view').style.display='none';
-    syncFormToJson();
-  }
-}
-
 async function api(method,path,body,token){
   try{
     const opts={method,headers:{'Content-Type':'application/json'}};
@@ -355,46 +455,97 @@ async function api(method,path,body,token){
     return{ok:res.ok,status:res.status,data};
   }catch(e){return{ok:false,status:0,data:{error:e.message}};}
 }
-
-function msg(id,type,text){
+function msgEl(id,type,html){
   const el=document.getElementById(id);
-  if(el)el.innerHTML=`<div class="${type==='ok'?'ok':'err'}" style="margin-top:6px">${text}</div>`;
+  if(el)el.innerHTML=`<div class="${type==='ok'?'ok':'err'}" style="margin-top:8px">${html}</div>`;
 }
 function v(id){return document.getElementById(id)?.value||'';}
-
-async function testConn(){
-  BASE=v('cfg-url').replace(/\/$/,'');
-  const r=await api('GET','/health','','');
-  msg('cfg-msg',r.ok?'ok':'err',r.ok?'Connected ✓':'Failed: '+r.data?.error);
+function setAuth(email,role){
+  const el=document.getElementById('auth-label');
+  el.textContent='✓ '+role+' — '+email;
+  el.style.color='#68d391';
 }
+function protoDot(p){
+  const cls={modbus_tcp:'dot-modbus',mqtt:'dot-mqtt',opcua:'dot-opcua',snmp:'dot-snmp'}[p]||'dot-default';
+  return `<span class="proto-dot ${cls}"></span>`;
+}
+function protoLabel(p){
+  return (allProtocols.find(pr=>pr.id===p)||{label:p}).label;
+}
+
+// ── protocols ─────────────────────────────────────────────────────────────────
+const PROTO_FALLBACK=[
+  {id:'modbus_tcp',label:'Modbus TCP',image_name:'modbus-gateway',default_port:502,description:'Industrial PLCs, energy meters, drives',
+   connection_params_schema:[
+     {key:'host',label:'Device IP address',type:'text',required:true,placeholder:'192.168.1.100',hint:'IP address of the Modbus device'},
+     {key:'port',label:'Modbus port',type:'number',default:502,required:true}
+   ],
+   addr_params_schema:[
+     {key:'unit_id',label:'Modbus unit ID',type:'number',default:1,required:true,hint:'1–247, configured on the device (slave address)'},
+     {key:'register_offset',label:'Register address offset',type:'number',default:0,hint:'Shift all register addresses by this amount. Usually 0.'}
+   ]},
+  {id:'opcua',label:'OPC-UA',image_name:'opc-ua-gateway',default_port:4840,description:'Industrial automation, SCADA systems',
+   connection_params_schema:[
+     {key:'host',label:'OPC-UA endpoint URL',type:'text',required:true,placeholder:'opc.tcp://192.168.1.18:4840',hint:'Full OPC-UA endpoint URL'},
+     {key:'port',label:'Port',type:'number',default:4840,required:true}
+   ],
+   addr_params_schema:[
+     {key:'freq_sec',label:'Poll frequency (seconds)',type:'number',default:10,hint:'How often to read values from the OPC-UA server'}
+   ]},
+  {id:'snmp',label:'SNMP',image_name:'snmp-gateway',default_port:161,description:'UPS, switches, network devices',
+   connection_params_schema:[
+     {key:'host',label:'Device IP address',type:'text',required:true,placeholder:'192.168.1.200'},
+     {key:'port',label:'SNMP port',type:'number',default:161,required:true}
+   ],
+   addr_params_schema:[
+     {key:'community',label:'Community string',type:'text',default:'public',required:true,hint:'Usually "public" for read-only access'},
+     {key:'version',label:'SNMP version',type:'select',options:['2c','1','3'],default:'2c'}
+   ]},
+  {id:'mqtt',label:'MQTT',image_name:'mqtt-gateway',default_port:1883,description:'IoT sensors, environmental monitoring',
+   connection_params_schema:[
+     {key:'host',label:'MQTT broker URL',type:'text',required:true,placeholder:'tcp://192.168.1.10:1883',hint:'Full broker URL including protocol prefix'},
+     {key:'port',label:'Port',type:'number',default:1883,required:true},
+     {key:'base_topic',label:'Base topic',type:'text',placeholder:'factory/floor2',hint:'Base MQTT topic prefix — sensors append their own suffix to this'}
+   ],
+   addr_params_schema:[
+     {key:'topic_suffix',label:'Topic suffix',type:'text',placeholder:'sensor_01',hint:'Appended to base topic to form the full subscription topic'}
+   ]}
+];
 
 async function loadProtocols(){
   const r=await api('GET','/api/v1/protocols','','');
-  if(!r.ok)return;
-  allProtocols=r.data;
-  // Populate all protocol selects
+  if(r.ok&&r.data?.length){
+    allProtocols=r.data.map(p=>({
+      ...p,
+      // Ensure schemas are arrays (may come as strings from DB)
+      connection_params_schema:typeof p.connection_params_schema==='string'
+        ?JSON.parse(p.connection_params_schema):p.connection_params_schema||[],
+      addr_params_schema:typeof p.addr_params_schema==='string'
+        ?JSON.parse(p.addr_params_schema):p.addr_params_schema||[]
+    }));
+  }else{
+    allProtocols=PROTO_FALLBACK;
+  }
+  populateProtoSelects();
+}
+
+function populateProtoSelects(){
   ['c-proto-filter','sa-proto-filter','sa-proto'].forEach(id=>{
-    const sel=document.getElementById(id);
-    if(!sel)return;
+    const sel=document.getElementById(id);if(!sel)return;
     const hasAll=id!=='sa-proto';
     sel.innerHTML=(hasAll?'<option value="">All protocols</option>':'')+
       allProtocols.map(p=>`<option value="${p.id}">${p.label}</option>`).join('');
   });
 }
 
-// ── CUSTOMER FLOW ─────────────────────────────────────────────────────────
-
-function setFlowStep(n){
+// ── CUSTOMER FLOW ─────────────────────────────────────────────────────────────
+function showStep(n){
+  document.querySelectorAll('.step-card').forEach(el=>el.classList.remove('active'));
+  document.getElementById('cust-'+n).classList.add('active');
   for(let i=1;i<=5;i++){
     const el=document.getElementById('fs-'+i);
-    el.className='flow-step '+(i<n?'done':i===n?'current':'');
+    el.className='fs'+(i<n?' done':i===n?' active':'');
   }
-}
-
-function showStep(n){
-  for(let i=1;i<=5;i++)
-    document.getElementById('cust-step-'+i).style.display=i===n?'block':'none';
-  setFlowStep(n);
   if(n===2)loadMyQubes();
   if(n===3){loadCatalog();filterTemplates();}
   if(n===4)populateQubeSelect();
@@ -405,26 +556,21 @@ async function custLogin(){
   const r=await api('POST','/api/v1/auth/login',{email:v('c-email'),password:v('c-pw')},'');
   if(r.ok){
     CUST_TOKEN=r.data.token;
-    document.getElementById('auth-label').textContent='✓ '+r.data.role+' — '+v('c-email');
-    document.getElementById('auth-label').style.color='#48bb78';
-    msg('c-login-msg','ok','Logged in');
+    setAuth(v('c-email'),r.data.role);
     await loadProtocols();
-    setTimeout(()=>showStep(2),400);
-  }else msg('c-login-msg','err',r.data.error||'Login failed');
+    setTimeout(()=>showStep(2),300);
+  }else msgEl('c-login-msg','err',r.data.error||'Login failed');
 }
-
 async function custRegister(){
   const org=prompt('Organisation name:');if(!org)return;
   const email=v('c-email'),pw=v('c-pw');
-  if(!email||!pw){msg('c-login-msg','err','Enter email and password first');return;}
+  if(!email||!pw){msgEl('c-login-msg','err','Enter email and password first');return;}
   const r=await api('POST','/api/v1/auth/register',{org_name:org,email,password:pw},'');
   if(r.ok){
-    CUST_TOKEN=r.data.token;
-    document.getElementById('auth-label').textContent='✓ admin — '+email;
-    document.getElementById('auth-label').style.color='#48bb78';
+    CUST_TOKEN=r.data.token;setAuth(email,'admin');
     await loadProtocols();
-    setTimeout(()=>showStep(2),400);
-  }else msg('c-login-msg','err',r.data.error||'Failed');
+    setTimeout(()=>showStep(2),300);
+  }else msgEl('c-login-msg','err',r.data.error||'Failed');
 }
 
 async function loadMyQubes(){
@@ -432,25 +578,30 @@ async function loadMyQubes(){
   if(!r.ok)return;
   myQubes=r.data;
   const el=document.getElementById('claimed-qubes-list');
-  if(!r.data.length){el.innerHTML='<p style="color:#718096;font-size:11px">No Qubes yet — claim your first one below.</p>';return;}
-  el.innerHTML='<div style="font-size:10px;color:#718096;margin-bottom:6px">Your Qubes:</div>'+
-    r.data.map(q=>`<div class="item"><div class="item-row">
-      <div class="item-id">${q.id}</div>
-      <div class="item-info">
-        <span class="badge ${q.status==='online'?'b-green':'b-grey'}">${q.status}</span>
-        <span style="font-size:10px;color:#718096;margin-left:6px">${q.location_label||'no label'}</span>
-        <small>${q.last_seen?'last seen '+new Date(q.last_seen).toLocaleTimeString():'never seen'}</small>
+  if(!r.data.length){
+    el.innerHTML='<div class="empty-state"><span class="empty-icon">📦</span>No Qubes claimed yet<br><small>Enter a register key below to claim your first device</small></div>';
+    return;
+  }
+  el.innerHTML=r.data.map(q=>`
+    <div class="item">
+      <div class="item-body">
+        <div class="item-name">${q.id}</div>
+        <div class="item-meta">
+          <span class="badge ${q.status==='online'?'b-green':q.status==='offline'?'b-red':'b-grey'}">${q.status}</span>
+          ${q.location_label?`<span style="color:#a0aec0">${q.location_label}</span>`:''}
+          <span>${q.last_seen?'last seen '+new Date(q.last_seen).toLocaleTimeString():'never connected'}</span>
+        </div>
       </div>
-    </div></div>`).join('');
+    </div>`).join('');
 }
 
 async function custClaim(){
   const r=await api('POST','/api/v1/qubes/claim',{register_key:v('c-regkey')});
   if(r.ok){
-    msg('c-claim-msg','ok','Claimed: '+r.data.qube_id);
+    msgEl('c-claim-msg','ok','<b>Claimed: '+r.data.qube_id+'</b><br>Conf-agent will connect within 30 seconds.');
+    document.getElementById('c-regkey').value='';
     loadMyQubes();
-    setTimeout(()=>showStep(3),600);
-  }else msg('c-claim-msg','err',r.data.error||'Failed');
+  }else msgEl('c-claim-msg','err',r.data.error||'Failed');
 }
 
 async function loadCatalog(){
@@ -467,553 +618,635 @@ function filterTemplates(){
   );
   const el=document.getElementById('c-catalog');
   if(!filtered.length){
-    el.innerHTML='<p style="color:#718096;font-size:11px">No devices found. Try different filter, or ask your IoT team to add templates.</p>';
+    el.innerHTML='<div class="empty-state"><span class="empty-icon">🔍</span>No devices found<br><small>Try a different filter or contact your IoT team to add templates</small></div>';
     return;
   }
   el.innerHTML=filtered.map(t=>`
     <div class="tmpl-card ${selectedTemplate?.id===t.id?'selected':''}" onclick="selectTemplateC('${t.id}')">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="font-size:12px;font-weight:600;color:${selectedTemplate?.id===t.id?'#7c85ff':'#e2e8f0'}">${t.name}</span>
-        <span class="badge b-blue">${protoLabel(t.protocol)}</span>
-        ${t.is_global?'<span class="badge b-grey">standard</span>':'<span class="badge b-purple">custom</span>'}
+      <div class="tmpl-check">${selectedTemplate?.id===t.id?'✓':''}</div>
+      <div class="tmpl-card-body">
+        <div class="tmpl-card-name">${t.name}</div>
+        <div style="display:flex;gap:6px;margin-bottom:4px">
+          <span class="badge b-blue">${protoDot(t.protocol)}${protoLabel(t.protocol)}</span>
+          <span class="badge ${t.is_global?'b-grey':'b-purple'}">${t.is_global?'standard':'custom'}</span>
+        </div>
+        <div class="tmpl-card-desc">${t.description||'No description'}</div>
       </div>
-      <div style="font-size:10px;color:#718096">${t.description||'No description'}</div>
     </div>`).join('');
-}
-
-// Render form fields dynamically from a protocol schema array
-// schema: [{key, label, type, default, placeholder, hint, required, options}]
-// prefix: used to build unique element IDs
-function renderSchemaFields(schema, prefix){
-  if(!schema||!schema.length)return'<p style="font-size:10px;color:#718096">No connection fields defined.</p>';
-  return schema.map(f=>{
-    const id=prefix+'-'+f.key;
-    const hint=f.hint?`<div style="font-size:9px;color:#718096;margin-top:2px">${f.hint}</div>`:'';
-    if(f.type==='select'&&f.options?.length){
-      const opts=f.options.map(o=>`<option value="${o}" ${o===(f.default||f.options[0])?'selected':''}>${o}</option>`).join('');
-      return `<label>${f.label}${f.required?'<span style="color:#fc8181"> *</span>':''}</label>
-              <select id="${id}">${opts}</select>${hint}`;
-    }
-    const val=f.default!==undefined?f.default:'';
-    const ph=f.placeholder||'';
-    return `<label>${f.label}${f.required?'<span style="color:#fc8181"> *</span>':''}</label>
-            <input id="${id}" type="${f.type||'text'}" value="${val}" placeholder="${ph}">${hint}`;
-  }).join('');
-}
-
-// Read values from schema fields into an object
-function readSchemaValues(schema, prefix){
-  const obj={};
-  (schema||[]).forEach(f=>{
-    const el=document.getElementById(prefix+'-'+f.key);
-    if(!el)return;
-    obj[f.key]=f.type==='number'?parseFloat(el.value||f.default||0):el.value;
-  });
-  return obj;
-}
-
-function protoLabel(p){
-  const found=allProtocols.find(pr=>pr.id===p);
-  return found?found.label:p;
 }
 
 function selectTemplateC(id){
   selectedTemplate=allTemplates.find(t=>t.id===id);
   filterTemplates();
   showStep(4);
-  renderTemplateInfo();
+  renderSelectedDevice();
 }
 
-function renderTemplateInfo(){
+function renderSelectedDevice(){
   if(!selectedTemplate)return;
   const t=selectedTemplate;
   const proto=allProtocols.find(p=>p.id===t.protocol);
 
+  // Selected device card
   document.getElementById('c-selected-tmpl-info').innerHTML=`
-    <div style="background:#13151f;border:1px solid #7c85ff;border-radius:6px;padding:10px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="font-size:12px;font-weight:600;color:#7c85ff">${t.name}</span>
-        <span class="badge b-blue">${protoLabel(t.protocol)}</span>
+    <div style="display:flex;gap:8px;align-items:flex-start">
+      <div style="flex:1">
+        <div style="font-size:13px;font-weight:600;color:#e2e8f0;margin-bottom:4px">${t.name}</div>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <span class="badge b-blue">${protoDot(t.protocol)}${protoLabel(t.protocol)}</span>
+          <span class="badge ${t.is_global?'b-grey':'b-purple'}">${t.is_global?'standard':'custom'}</span>
+        </div>
+        <div style="font-size:11px;color:#718096">${t.description||''}</div>
+        ${proto?`<div style="font-size:10px;color:#4a5568;margin-top:4px">${proto.description}</div>`:''}
       </div>
-      <div style="font-size:10px;color:#718096">${t.description||''}</div>
-      ${proto?`<div style="font-size:10px;color:#4a5568;margin-top:4px">${proto.description}</div>`:''}
+      <button class="btn btn-g btn-sm" onclick="showStep(3)">Change</button>
     </div>`;
 
-  // Show register/config summary
+  // Register/config summary
   const cfg=t.config_json||{};
+  const fields=t.influx_fields_json||{};
   const regsEl=document.getElementById('c-tmpl-registers');
+
   if(t.protocol==='modbus_tcp'&&cfg.registers?.length){
-    regsEl.innerHTML=`<div style="font-size:10px;color:#718096;margin-bottom:4px">Registers (${cfg.registers.length}) — what will be polled from the device:</div>
-      <table class="reg-table"><thead><tr><th>Address</th><th>Field</th><th>Data type</th><th>Scale</th><th>Unit</th></tr></thead>
-      <tbody>${cfg.registers.map(r=>`<tr>
-        <td>${r.address}</td><td><span style="color:#e2e8f0">${r.field_key}</span></td>
-        <td>${r.data_type}</td><td>${r.scale}</td>
-        <td>${(t.influx_fields_json||{})[r.field_key]?.unit||''}</td>
-      </tr>`).join('')}</tbody></table>`;
+    regsEl.innerHTML=`<div class="section-label">Registers — data that will be collected</div>
+      <table class="reg-table">
+        <thead><tr><th>Field</th><th>Address</th><th>Type</th><th>Unit</th></tr></thead>
+        <tbody>${cfg.registers.map(r=>`<tr>
+          <td class="field-name">${fields[r.field_key]?.display_label||r.field_key}</td>
+          <td>${r.address}</td>
+          <td>${r.data_type}</td>
+          <td>${fields[r.field_key]?.unit||r.unit||'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
   }else if(t.protocol==='snmp'&&cfg.oids?.length){
-    regsEl.innerHTML=`<div style="font-size:10px;color:#718096;margin-bottom:4px">OIDs (${cfg.oids.length}):</div>
-      <table class="reg-table"><thead><tr><th>OID</th><th>Field</th><th>Type</th></tr></thead>
-      <tbody>${cfg.oids.map(o=>`<tr><td style="font-size:9px">${o.oid}</td><td>${o.field_key}</td><td>${o.type||'—'}</td></tr>`).join('')}</tbody></table>`;
+    regsEl.innerHTML=`<div class="section-label">OIDs — ${cfg.oids.length} values collected</div>
+      <table class="reg-table">
+        <thead><tr><th>Field</th><th>OID</th></tr></thead>
+        <tbody>${cfg.oids.map(o=>`<tr>
+          <td class="field-name">${fields[o.field_key]?.display_label||o.field_key}</td>
+          <td style="font-size:9px;color:#718096">${o.oid}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
   }else if(t.protocol==='opcua'&&cfg.nodes?.length){
-    regsEl.innerHTML=`<div style="font-size:10px;color:#718096;margin-bottom:4px">OPC-UA Nodes (${cfg.nodes.length}):</div>
-      <table class="reg-table"><thead><tr><th>Node ID</th><th>Field</th><th>Type</th></tr></thead>
-      <tbody>${cfg.nodes.map(n=>`<tr><td style="font-size:9px">${n.node_id}</td><td>${n.field_key}</td><td>${n.data_type||'—'}</td></tr>`).join('')}</tbody></table>`;
+    regsEl.innerHTML=`<div class="section-label">OPC-UA nodes — ${cfg.nodes.length} values collected</div>
+      <table class="reg-table">
+        <thead><tr><th>Field</th><th>Node ID</th></tr></thead>
+        <tbody>${cfg.nodes.map(n=>`<tr>
+          <td class="field-name">${fields[n.field_key]?.display_label||n.field_key}</td>
+          <td style="font-size:9px;color:#718096">${n.node_id}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
   }else if(t.protocol==='mqtt'&&cfg.readings?.length){
-    regsEl.innerHTML=`<div style="font-size:10px;color:#718096;margin-bottom:4px">MQTT readings (${cfg.readings.length}) — topic pattern: <code>${cfg.topic_pattern||'—'}</code></div>
-      <table class="reg-table"><thead><tr><th>JSON Path</th><th>Field</th><th>Unit</th></tr></thead>
-      <tbody>${cfg.readings.map(r=>`<tr><td>${r.json_path}</td><td>${r.field_key}</td><td>${r.unit||'—'}</td></tr>`).join('')}</tbody></table>`;
+    regsEl.innerHTML=`<div class="section-label">MQTT readings — ${cfg.readings.length} values</div>
+      ${cfg.topic_pattern?`<div style="font-size:10px;color:#718096;margin-bottom:6px">Topic pattern: <code>${cfg.topic_pattern}</code></div>`:''}
+      <table class="reg-table">
+        <thead><tr><th>Field</th><th>JSON path</th><th>Unit</th></tr></thead>
+        <tbody>${cfg.readings.map(r=>`<tr>
+          <td class="field-name">${fields[r.field_key]?.display_label||r.field_key}</td>
+          <td style="font-family:monospace;font-size:10px">${r.json_path}</td>
+          <td>${r.unit||fields[r.field_key]?.unit||'—'}</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
   }else{
-    regsEl.innerHTML=renderJson(cfg);
+    regsEl.innerHTML=`<div class="section-label">Config</div><div class="json-view">${colorJson(cfg)}</div>`;
   }
 
-  // Build gateway fields dynamically from protocol connection_params_schema
-  const proto=allProtocols.find(p=>p.id===t.protocol);
-  const connSchema=proto?.connection_params_schema||[];
-  document.getElementById('c-proto-fields').innerHTML=renderSchemaFields(connSchema,'cgw');
+  // Render connection fields from schema
+  const connSchema=(proto?.connection_params_schema)||[];
+  document.getElementById('c-proto-fields').innerHTML=connSchema.length
+    ?renderSchemaFields(connSchema,'cgw')
+    :`<label>Host / IP</label><input id="cgw-host" placeholder="192.168.1.100">
+      <label>Port</label><input id="cgw-port" type="number" value="${proto?.default_port||0}">`;
 
-  // Build default addr_params from addr_params_schema
-  const addrSchema=proto?.addr_params_schema||[];
+  // Set addr_params default from schema
+  const addrSchema=(proto?.addr_params_schema)||[];
   const addrObj={};
-  addrSchema.forEach(f=>{if(f.key!==undefined&&f.default!==undefined)addrObj[f.key]=f.default;});
+  addrSchema.forEach(f=>{if(f.key&&f.default!==undefined)addrObj[f.key]=f.default;});
   document.getElementById('c-addr-params').value=JSON.stringify(addrObj,null,2);
+
+  // Placeholder hints
   document.getElementById('c-gw-name').placeholder=t.name.replace(/\s/g,'_')+'_GW1';
-  document.getElementById('c-gw-name').placeholder=t.name.replace(/\s/g,'_')+'_GW1';
-  document.getElementById('c-sensor-name').placeholder=t.name.replace(/\s/g,'_')+'_1';
+  document.getElementById('c-sensor-name').placeholder=t.name.replace(/\s/g,'_')+'_01';
 }
 
-function renderJson(obj){
-  const s=JSON.stringify(obj,null,2)
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
-    .replace(/"([^"]+)":/g,'<span class="json-key">"$1"</span>:')
-    .replace(/: "([^"]*)"/g,': <span class="json-str">"$1"</span>')
-    .replace(/: (\d+\.?\d*)/g,': <span class="json-num">$1</span>')
-    .replace(/: (true|false)/g,': <span class="json-bool">$1</span>');
-  return `<div class="json-view">${s}</div>`;
+function renderSchemaFields(schema,prefix){
+  return schema.map(f=>{
+    const id=prefix+'-'+f.key;
+    const hint=f.hint?`<div style="font-size:10px;color:#4a5568;margin-top:3px">${f.hint}</div>`:'';
+    if(f.type==='select'&&f.options?.length){
+      const opts=f.options.map(o=>`<option value="${o}"${o===(f.default||'')?'selected':''}>${o}</option>`).join('');
+      return `<label>${f.label}${f.required?' <span style="color:#fc8181">*</span>':''}</label><select id="${id}">${opts}</select>${hint}`;
+    }
+    return `<label>${f.label}${f.required?' <span style="color:#fc8181">*</span>':''}</label>
+      <input id="${id}" type="${f.type||'text'}" value="${f.default??''}" placeholder="${f.placeholder||''}">${hint}`;
+  }).join('');
 }
+
+function readSchemaValues(schema,prefix){
+  const obj={};
+  (schema||[]).forEach(f=>{
+    const el=document.getElementById(prefix+'-'+f.key);
+    if(!el)return;
+    obj[f.key]=f.type==='number'?parseFloat(el.value||0):el.value;
+  });
+  return obj;
+}
+
+let gwMode='existing'; // 'existing' or 'new'
+let selectedGwId=null;
+let qubeGateways=[];
 
 function populateQubeSelect(){
   const sel=document.getElementById('c-target-qube');
   sel.innerHTML=myQubes.length
     ?myQubes.map(q=>`<option value="${q.id}">${q.id}${q.location_label?' ('+q.location_label+')':''}</option>`).join('')
     :'<option value="">No Qubes — go back and claim one</option>';
+  if(myQubes.length)loadGatewaysForQube();
 }
 
-async function custAddGatewaySensor(){
-  if(!selectedTemplate){msg('c-add-msg','err','Select a device first');return;}
+async function loadGatewaysForQube(){
   const qubeId=v('c-target-qube');
-  if(!qubeId){msg('c-add-msg','err','No Qube selected');return;}
-  // Read gateway connection params from dynamically rendered schema fields
-  const proto=allProtocols.find(p=>p.id===selectedTemplate.protocol);
-  const connVals=readSchemaValues(proto?.connection_params_schema||[],'cgw');
-  const host=connVals.host||'';
-  const port=parseInt(connVals.port||proto?.default_port||0);
-  if(!host){msg('c-add-msg','err','Enter the device IP or URL');return;}
-  if(!v('c-gw-name')){msg('c-add-msg','err','Enter a gateway name');return;}
-  if(!v('c-sensor-name')){msg('c-add-msg','err','Enter a sensor name');return;}
+  if(!qubeId)return;
+  const r=await api('GET',`/api/v1/qubes/${qubeId}/gateways`);
+  qubeGateways=r.ok?r.data:[];
+  // Filter to gateways matching selected template protocol
+  const proto=selectedTemplate?.protocol;
+  const matching=proto?qubeGateways.filter(g=>g.protocol===proto):qubeGateways;
+  renderGatewayPicker(matching);
+  // Auto-select mode: if matching gateways exist, default to existing; else new
+  if(matching.length){setGwMode('existing');}else{setGwMode('new');}
+}
 
-  msg('c-add-msg','ok','Creating gateway...');
-  const gwR=await api('POST',`/api/v1/qubes/${qubeId}/gateways`,
-    {name:v('c-gw-name'),protocol:selectedTemplate.protocol,host,port});
-  if(!gwR.ok){msg('c-add-msg','err','Gateway failed: '+(gwR.data.error||'error'));return;}
+function renderGatewayPicker(gateways){
+  const el=document.getElementById('gw-existing-list');
+  if(!gateways.length){
+    el.innerHTML=`<div style="font-size:11px;color:#4a5568;padding:8px;background:#0a0c12;border:1px solid #2d3748;border-radius:6px">No ${selectedTemplate?protoLabel(selectedTemplate.protocol):''} gateways on this Qube yet.</div>`;
+    selectedGwId=null;
+    return;
+  }
+  el.innerHTML=gateways.map(g=>`
+    <div class="item" id="gw-pick-${g.id}" onclick="pickGateway('${g.id}')"
+         style="cursor:pointer;border-color:${selectedGwId===g.id?'#7c85ff':'#2d3748'}">
+      <div class="item-body">
+        <div class="item-name" style="display:flex;align-items:center;gap:8px">
+          <span>${g.name}</span>
+          <span class="badge b-blue">${protoDot(g.protocol)}${protoLabel(g.protocol)}</span>
+          <span class="badge b-green">${g.sensor_count} sensor${g.sensor_count!==1?'s':''}</span>
+        </div>
+        <div class="item-meta">${g.host||'no host'}${g.port?':'+g.port:''}</div>
+      </div>
+      <div style="width:18px;height:18px;border-radius:50%;border:2px solid ${selectedGwId===g.id?'#7c85ff':'#2d3748'};
+                  background:${selectedGwId===g.id?'#7c85ff':'transparent'};display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;flex-shrink:0">
+        ${selectedGwId===g.id?'✓':''}
+      </div>
+    </div>`).join('');
+  // Auto-select first
+  if(!selectedGwId&&gateways.length)pickGateway(gateways[0].id);
+}
+
+function pickGateway(id){
+  selectedGwId=id;
+  document.querySelectorAll('[id^="gw-pick-"]').forEach(el=>{
+    const isSelected=el.id==='gw-pick-'+id;
+    el.style.borderColor=isSelected?'#7c85ff':'#2d3748';
+  });
+  renderGatewayPicker(qubeGateways.filter(g=>!selectedTemplate||g.protocol===selectedTemplate.protocol));
+}
+
+function setGwMode(mode){
+  gwMode=mode;
+  document.getElementById('gw-existing-panel').style.display=mode==='existing'?'block':'none';
+  document.getElementById('gw-new-panel').style.display=mode==='new'?'block':'none';
+  const btnEx=document.getElementById('gw-mode-existing');
+  const btnNew=document.getElementById('gw-mode-new');
+  if(mode==='existing'){
+    btnEx.style.cssText='background:#1e2235;color:#7c85ff;border:1px solid #7c85ff;';
+    btnNew.style.cssText='';btnNew.className='btn btn-g btn-sm';
+  }else{
+    btnNew.style.cssText='background:#1e2235;color:#7c85ff;border:1px solid #7c85ff;';
+    btnEx.style.cssText='';btnEx.className='btn btn-g btn-sm';
+  }
+}
+
+async function custAddSensor(){
+  if(!selectedTemplate){msgEl('c-add-msg','err','No device selected');return;}
+  const qubeId=v('c-target-qube');
+  if(!qubeId){msgEl('c-add-msg','err','No Qube selected');return;}
+  if(!v('c-sensor-name')){msgEl('c-add-msg','err','Enter a sensor name');return;}
+
+  let gatewayId=null;
+  let gatewayName='';
+
+  if(gwMode==='existing'){
+    if(!selectedGwId){msgEl('c-add-msg','err','Select a gateway or switch to "Create new gateway"');return;}
+    gatewayId=selectedGwId;
+    gatewayName=qubeGateways.find(g=>g.id===selectedGwId)?.name||'existing gateway';
+  }else{
+    // Create new gateway
+    if(!v('c-gw-name')){msgEl('c-add-msg','err','Enter a gateway name');return;}
+    const proto=allProtocols.find(p=>p.id===selectedTemplate.protocol);
+    const connSchema=proto?.connection_params_schema||[];
+    const connVals=connSchema.length?readSchemaValues(connSchema,'cgw'):{};
+    const host=connVals.host||document.getElementById('cgw-host')?.value||'';
+    const port=parseInt(connVals.port||document.getElementById('cgw-port')?.value||proto?.default_port||0);
+    if(!host){msgEl('c-add-msg','err','Enter the device IP or URL');return;}
+
+    msgEl('c-add-msg','ok','Creating gateway...');
+    const gwR=await api('POST',`/api/v1/qubes/${qubeId}/gateways`,
+      {name:v('c-gw-name'),protocol:selectedTemplate.protocol,host,port,config_json:connVals});
+    if(!gwR.ok){msgEl('c-add-msg','err','Gateway failed: '+(gwR.data.error||'error'));return;}
+    gatewayId=gwR.data.gateway_id;
+    gatewayName=v('c-gw-name');
+  }
 
   let ap={},tags={};
   try{ap=JSON.parse(v('c-addr-params')||'{}');}catch(e){}
   try{tags=JSON.parse(v('c-tags')||'{}');}catch(e){}
 
-  msg('c-add-msg','ok','Gateway created. Adding sensor...');
-  const sR=await api('POST',`/api/v1/gateways/${gwR.data.gateway_id}/sensors`,
+  msgEl('c-add-msg','ok','Adding sensor...');
+  const sR=await api('POST',`/api/v1/gateways/${gatewayId}/sensors`,
     {name:v('c-sensor-name'),template_id:selectedTemplate.id,address_params:ap,tags_json:tags});
-  if(!sR.ok){msg('c-add-msg','err','Sensor failed: '+(sR.data.error||'error'));return;}
+  if(!sR.ok){msgEl('c-add-msg','err','Sensor failed: '+(sR.data.error||'error'));return;}
 
+  const gwModeLabel=gwMode==='existing'?'added to existing':'new gateway created';
   document.getElementById('c-done-info').innerHTML=`
-    <div class="ok" style="margin-bottom:8px">
-      <b>Gateway:</b> ${gwR.data.service_name} (${protoLabel(selectedTemplate.protocol)}) on ${qubeId}<br>
-      <b>Sensor:</b> ${v('c-sensor-name')} — ${sR.data.csv_rows} CSV rows generated<br>
-      <b>Sensor ID:</b> <span style="font-family:monospace;font-size:10px">${sR.data.sensor_id}</span><br>
-      <b>Config hash:</b> <span style="font-family:monospace;font-size:10px">${sR.data.new_hash?.slice(0,24)}...</span>
+    <div class="ok">
+      <div style="display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:12px">
+        <span style="color:#718096">Qube</span><span>${qubeId}</span>
+        <span style="color:#718096">Gateway</span><span>${gatewayName} (${gwModeLabel})</span>
+        <span style="color:#718096">Protocol</span><span>${protoLabel(selectedTemplate.protocol)}</span>
+        <span style="color:#718096">Sensor</span><span>${v('c-sensor-name')}</span>
+        <span style="color:#718096">CSV rows</span><span>${sR.data.csv_rows} registers mapped</span>
+        <span style="color:#718096">Sensor ID</span><span class="sensor-uuid">${sR.data.sensor_id}</span>
+      </div>
     </div>`;
+  // Reload gateway list so next sensor sees updated count
+  loadGatewaysForQube();
   showStep(5);
 }
 
 function viewMySensors(){
-  document.getElementById('cust-sensors-card').style.display='block';
+  document.getElementById('cust-sensors-panel').style.display='block';
   loadMySensors();
+  document.getElementById('cust-sensors-panel').scrollIntoView({behavior:'smooth'});
 }
 
 async function loadMySensors(){
   const el=document.getElementById('cust-sensors-list');
-  el.innerHTML='<p style="color:#718096;font-size:11px">Loading...</p>';
   const qR=await api('GET','/api/v1/qubes');
-  if(!qR.ok||!qR.data.length){el.innerHTML='<p style="color:#718096;font-size:11px">No Qubes.</p>';return;}
+  if(!qR.ok||!qR.data.length){el.innerHTML='<div class="empty-state"><span class="empty-icon">📡</span>No Qubes</div>';return;}
   let html='';
   for(const q of qR.data){
     const sR=await api('GET',`/api/v1/qubes/${q.id}/sensors`);
     if(!sR.ok||!sR.data.length)continue;
-    html+=`<div style="font-size:10px;color:#718096;margin:8px 0 4px">Qube: <b style="color:#a0aec0">${q.id}</b></div>`;
-    html+=sR.data.map(s=>`<div class="item"><div class="item-row">
-      <div class="item-id" style="font-size:9px">${s.id.slice(0,8)}...</div>
-      <div class="item-info">
-        <b style="font-size:11px;color:#e2e8f0">${s.name}</b>
-        <span class="badge b-blue" style="margin-left:4px">${protoLabel(s.protocol)}</span>
-        <span class="badge b-purple" style="margin-left:4px">${s.template_name||'?'}</span>
-        <small>via ${s.gateway_name||'?'}</small>
-      </div>
-      <div class="actions">
-        <button class="btn btn-g btn-s" onclick="queryLatest('${s.id}','${s.name}')">Latest</button>
-      </div>
-    </div></div>`).join('');
+    html+=`<div style="font-size:10px;font-weight:600;color:#718096;margin:10px 0 6px;text-transform:uppercase;letter-spacing:.05em">Qube: ${q.id}</div>`;
+    html+=sR.data.map(s=>`
+      <div class="item">
+        <div class="item-body">
+          <div class="item-name">${s.name}</div>
+          <div class="item-meta">
+            <span class="badge b-blue">${protoDot(s.protocol)}${protoLabel(s.protocol)}</span>
+            <span class="badge b-purple">${s.template_name||'unknown template'}</span>
+            <span>via ${s.gateway_name||'?'}</span>
+          </div>
+          <div style="margin-top:4px"><span class="sensor-uuid">${s.id}</span></div>
+        </div>
+        <div class="item-actions">
+          <button class="btn btn-g btn-sm" onclick="showLatest('${s.id}','${s.name}')">Latest data</button>
+        </div>
+      </div>`).join('');
   }
-  el.innerHTML=html||'<p style="color:#718096;font-size:11px">No sensors yet.</p>';
+  el.innerHTML=html||'<div class="empty-state"><span class="empty-icon">📡</span>No sensors yet</div>';
 }
 
-async function queryLatest(id,name){
+async function showLatest(id,name){
   const r=await api('GET',`/api/v1/data/sensors/${id}/latest`);
   const f=r.data.fields||[];
   if(!f.length){
-    alert('No data yet for '+name+'\n\nWait 1-2 minutes for:\n1. Conf-agent to sync (30s poll)\n2. Gateway container to start\n3. enterprise-influx-to-sql to forward data');
+    alert('No data yet for '+name+'\n\nWait 1–2 minutes:\n• Conf-agent syncs every 30s\n• Gateway container needs to start\n• enterprise-influx-to-sql forwards data every 60s');
     return;
   }
-  alert('Latest for '+name+':\n\n'+f.map(x=>`${x.field_key}: ${x.value} ${x.unit||''}\n(${new Date(x.recorded_at).toLocaleTimeString()})`).join('\n\n'));
+  alert('Latest readings for '+name+':\n\n'+
+    f.map(x=>`${x.field_key}: ${x.value} ${x.unit||''}\nat ${new Date(x.recorded_at).toLocaleTimeString()}`).join('\n\n'));
 }
 
-// ── SUPERADMIN ─────────────────────────────────────────────────────────────
-
+// ── SUPERADMIN ────────────────────────────────────────────────────────────────
 async function saLogin(){
   const r=await api('POST','/api/v1/auth/login',{email:v('sa-email'),password:v('sa-pw')},'');
   if(r.ok&&['superadmin','admin'].includes(r.data.role)){
     SA_TOKEN=r.data.token;
-    msg('sa-login-msg','ok','Logged in as '+r.data.role);
+    msgEl('sa-login-msg','ok','Logged in as '+r.data.role);
+    document.getElementById('sa-login-card').style.display='none';
     document.getElementById('sa-main').style.display='block';
     await loadProtocols();
-    saLoadProtocolsList();
+    saRenderProtocols();
+    saPopulateProtoSelect();
     saLoadTemplates();
-    saPopulateProtoSelects();
-  }else msg('sa-login-msg','err',(r.data.error||'Failed')+' — need admin or superadmin');
+  }else msgEl('sa-login-msg','err',(r.data.error||'Failed')+' — need admin or superadmin role');
 }
 
-function saPopulateProtoSelects(){
-  ['sa-proto','sa-proto-filter'].forEach(id=>{
-    const sel=document.getElementById(id);
-    if(!sel)return;
+function saRenderProtocols(){
+  const el=document.getElementById('sa-protocols-list');
+  el.innerHTML=allProtocols.map(p=>`
+    <div class="item">
+      <div class="item-body">
+        <div class="item-name">${protoDot(p.id)}${p.label}</div>
+        <div class="item-meta">
+          <span class="badge b-grey">:${p.default_port}</span>
+          <span class="badge b-teal">${p.image_name}:arm64.latest</span>
+          <span>${p.description}</span>
+        </div>
+        <div style="margin-top:4px;font-size:10px;color:#4a5568">
+          ${(p.connection_params_schema||[]).map(f=>`<span style="margin-right:8px">📥 ${f.label}</span>`).join('')}
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function saPopulateProtoSelect(){
+  ['sa-proto-filter','sa-proto'].forEach(id=>{
+    const sel=document.getElementById(id);if(!sel)return;
     const hasAll=id==='sa-proto-filter';
     sel.innerHTML=(hasAll?'<option value="">All protocols</option>':'')+
       allProtocols.map(p=>`<option value="${p.id}">${p.label}</option>`).join('');
   });
 }
 
-async function saAddProtocol(){
-  let conn=[],addr=[];
-  try{conn=JSON.parse(document.getElementById('np-conn').value);}catch(e){msg('np-msg','err','connection_params_schema: invalid JSON');return;}
-  try{addr=JSON.parse(document.getElementById('np-addr').value);}catch(e){msg('np-msg','err','addr_params_schema: invalid JSON');return;}
-  // Direct DB insert via a future admin API — for now show the SQL
-  const sql=`INSERT INTO protocols (id, label, image_name, default_port, description, connection_params_schema, addr_params_schema)
-VALUES ('${v('np-id')}', '${v('np-label')}', '${v('np-image')}', ${v('np-port')||0},
-        '${v('np-desc')}', '${JSON.stringify(conn)}'::jsonb, '${JSON.stringify(addr)}'::jsonb);`;
-  msg('np-msg','ok','No direct DB API yet — run this SQL on your Postgres instance:<br><pre style="margin-top:6px;font-size:9px">'+sql+'</pre><br>Then restart cloud-api to reload. Protocol management API coming soon.');
-}
-
-function saLoadProtocolsList(){
-  const el=document.getElementById('sa-protocols-list');
-  el.innerHTML=allProtocols.map(p=>`
-    <div class="item"><div class="item-row">
-      <div class="item-id">${p.id}</div>
-      <div class="item-info">
-        <b style="font-size:11px;color:#e2e8f0">${p.label}</b>
-        <span style="font-size:10px;color:#718096;margin-left:6px">:${p.default_port}</span>
-        <small>image: ${p.image_name}:arm64.latest — ${p.description}</small>
-      </div>
-      <span class="badge b-green">active</span>
-    </div></div>`).join('');
-}
-
 async function saLoadTemplates(){
   const proto=v('sa-proto-filter');
-  const path='/api/v1/templates'+(proto?'?protocol='+proto:'');
-  const r=await api('GET',path,'',SA_TOKEN);
+  const r=await api('GET','/api/v1/templates'+(proto?'?protocol='+proto:''),'',SA_TOKEN);
   if(!r.ok){document.getElementById('sa-tmpl-list').innerHTML=`<div class="err">${r.data.error}</div>`;return;}
-  if(!r.data.length){document.getElementById('sa-tmpl-list').innerHTML='<p style="color:#718096;font-size:11px">No templates. Click + New Template to add one.</p>';return;}
+  if(!r.data.length){document.getElementById('sa-tmpl-list').innerHTML='<div class="empty-state"><span class="empty-icon">📋</span>No templates yet<br><small>Click + New Template to add one</small></div>';return;}
   document.getElementById('sa-tmpl-list').innerHTML=r.data.map(t=>`
-    <div class="item" id="tmpl-item-${t.id}">
-      <div class="item-row">
-        <div class="item-id" style="font-size:9px">${t.id.slice(0,8)}...</div>
-        <div class="item-info">
-          <b style="font-size:12px;color:#e2e8f0">${t.name}</b>
-          <span class="badge b-blue" style="margin-left:4px">${protoLabel(t.protocol)}</span>
-          <span class="badge ${t.is_global?'b-grey':'b-purple'}" style="margin-left:4px">${t.is_global?'global':'org'}</span>
-          <small>${t.description||'no description'}</small>
+    <div class="item" id="tmpl-${t.id}">
+      <div class="item-body">
+        <div class="item-name">${t.name}</div>
+        <div class="item-meta">
+          <span class="badge b-blue">${protoDot(t.protocol)}${protoLabel(t.protocol)}</span>
+          <span class="badge ${t.is_global?'b-grey':'b-purple'}">${t.is_global?'global (standard)':'org (custom)'}</span>
+          <span>${t.description||'no description'}</span>
         </div>
-        <div class="actions">
-          <button class="btn btn-g btn-s" onclick="saEditTemplate('${t.id}')">Edit</button>
-          ${!t.is_global?`<button class="btn btn-d btn-s" onclick="saDeleteTemplate('${t.id}')">Del</button>`:''}
+        <div style="margin-top:4px">
+          <span class="sensor-uuid">${t.id}</span>
         </div>
       </div>
-      <div class="inline-expand" id="tmpl-expand-${t.id}"></div>
+      <div class="item-actions">
+        <button class="btn btn-g btn-sm" onclick="saOpenEditor('${t.id}')">Edit</button>
+        ${!t.is_global?`<button class="btn btn-d btn-sm" onclick="saDeleteTemplate('${t.id}')">Delete</button>`:''}
+      </div>
     </div>`).join('');
 }
 
-async function saEditTemplate(id){
-  // If clicking edit on same template, toggle the expand panel
-  const expand=document.getElementById('tmpl-expand-'+id);
-  const alreadyOpen=expand.classList.contains('open');
-
-  // Close all other open panels
-  document.querySelectorAll('.inline-expand.open').forEach(el=>{
-    el.classList.remove('open');el.innerHTML='';
-  });
-
-  if(alreadyOpen){editingTmplId=null;return;}
-
-  const r=await api('GET',`/api/v1/templates/${id}`,'',SA_TOKEN);
-  if(!r.ok)return;
-  const t=r.data;
-  editingTmplId=id;
-
-  // Render inline expand with all details
-  const cfg=t.config_json||{};
-  const regs=cfg.registers||[];
-  const oids=cfg.oids||[];
-  const nodes=cfg.nodes||[];
-
-  let regHtml='';
-  if(t.protocol==='modbus_tcp'){
-    regHtml=regs.length?`
-      <div style="font-size:10px;color:#718096;margin:8px 0 4px">Registers (${regs.length}) — click Del to patch-delete, or edit below</div>
-      <table class="reg-table"><thead><tr><th>#</th><th>Address</th><th>Type</th><th>Data type</th><th>Scale</th><th>Field key</th><th>Table</th><th></th></tr></thead>
-      <tbody>${regs.map((r,i)=>`<tr>
-        <td>${i}</td><td>${r.address}</td><td>${r.register_type}</td><td>${r.data_type}</td>
-        <td>${r.scale}</td><td><span style="color:#e2e8f0">${r.field_key}</span></td><td>${r.table}</td>
-        <td><button class="btn btn-d btn-s" onclick="saInlinePatchDelete('${id}',${i})">Del</button></td>
-      </tr>`).join('')}</tbody></table>`:'<p style="color:#718096;font-size:10px">No registers yet.</p>';
-  }else{
-    regHtml=renderJson(cfg);
-  }
-
-  expand.innerHTML=`
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px">
-      <div>
-        <div style="font-size:10px;font-weight:600;color:#7c85ff;margin-bottom:6px">Registers / Config</div>
-        ${regHtml}
-        ${t.protocol==='modbus_tcp'?`
-        <div style="margin-top:8px;background:#0a0c12;border:1px solid #2d3748;border-radius:5px;padding:8px">
-          <div style="font-size:10px;color:#718096;margin-bottom:6px">Quick add register</div>
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px">
-            <div><input id="qi-addr-${id}" type="number" value="3000" placeholder="Address"></div>
-            <div><input id="qi-field-${id}" placeholder="field_key"></div>
-            <div><input id="qi-scale-${id}" value="1.0" placeholder="Scale"></div>
-          </div>
-          <div style="margin-top:4px">
-            <button class="btn btn-p btn-s" onclick="saInlinePatchAdd('${id}')">Add Register</button>
-          </div>
-          <div id="qi-msg-${id}"></div>
-        </div>`:''}
-      </div>
-      <div>
-        <div style="font-size:10px;font-weight:600;color:#7c85ff;margin-bottom:6px">influx_fields_json</div>
-        ${renderJson(t.influx_fields_json||{})}
-        <div style="margin-top:8px">
-          <button class="btn btn-p btn-s" onclick="saLoadIntoForm('${id}')">Edit in form →</button>
-        </div>
-      </div>
-    </div>`;
-  expand.classList.add('open');
-  expand.scrollIntoView({behavior:'smooth',block:'nearest'});
-}
-
-async function saInlinePatchAdd(tmplId){
-  const addr=parseInt(document.getElementById('qi-addr-'+tmplId)?.value||'0');
-  const field=document.getElementById('qi-field-'+tmplId)?.value||'';
-  const scale=parseFloat(document.getElementById('qi-scale-'+tmplId)?.value||'1');
-  if(!field){msg('qi-msg-'+tmplId,'err','Enter field key');return;}
-  const entry={address:addr,register_type:'Holding',data_type:'uint16',count:1,scale,field_key:field,table:'Measurements'};
-  const r=await api('PATCH',`/api/v1/templates/${tmplId}/registers`,{action:'add',entry},SA_TOKEN);
-  if(r.ok){
-    msg('qi-msg-'+tmplId,'ok',`Added. Total: ${r.data.total_entries}`);
-    saEditTemplate(tmplId);saEditTemplate(tmplId); // reload expand
-  }else msg('qi-msg-'+tmplId,'err',r.data.error||'Failed');
-}
-
-async function saInlinePatchDelete(tmplId,index){
-  if(!confirm('Delete register at index '+index+'?'))return;
-  const r=await api('PATCH',`/api/v1/templates/${tmplId}/registers`,{action:'delete',index},SA_TOKEN);
-  if(r.ok){saEditTemplate(tmplId);saEditTemplate(tmplId);}
-  else alert('Failed: '+r.data.error);
-}
-
-async function saLoadIntoForm(id){
-  const r=await api('GET',`/api/v1/templates/${id}`,'',SA_TOKEN);
-  if(!r.ok)return;
-  const t=r.data;
-  editingTmplId=id;
-  formRegisters=[...(t.config_json?.registers||[])];
-  document.getElementById('sa-form-title').innerHTML=`Editing: ${t.name} <button class="btn btn-g btn-s" onclick="saClearForm()">New</button>`;
-  document.getElementById('sa-name').value=t.name;
-  document.getElementById('sa-proto').value=t.protocol;
-  document.getElementById('sa-desc').value=t.description||'';
-  document.getElementById('sa-cfg').value=JSON.stringify(t.config_json,null,2);
-  document.getElementById('sa-fields').value=JSON.stringify(t.influx_fields_json||{},null,2);
-  document.getElementById('sa-patch-btn').style.display='inline-block';
-  renderFormRegisters();
-  document.getElementById('sa-form-card').scrollIntoView({behavior:'smooth'});
-}
-
-function renderFormRegisters(){
-  const el=document.getElementById('sa-reg-form-list');
-  if(!formRegisters.length){el.innerHTML='<p style="color:#718096;font-size:11px">No registers. Add one below.</p>';return;}
-  el.innerHTML=`<table class="reg-table" style="margin-bottom:6px">
-    <thead><tr><th>#</th><th>Addr</th><th>Type</th><th>Data type</th><th>Scale</th><th>Field key</th><th>Table</th><th></th></tr></thead>
-    <tbody>${formRegisters.map((r,i)=>`<tr>
-      <td>${i}</td><td>${r.address}</td><td>${r.register_type}</td><td>${r.data_type}</td>
-      <td>${r.scale}</td><td><span style="color:#e2e8f0">${r.field_key}</span></td><td>${r.table}</td>
-      <td><button class="btn btn-d btn-s" onclick="removeFormRegister(${i})">Del</button></td>
-    </tr>`).join('')}</tbody></table>`;
-}
-
-function addRegToForm(){
-  const reg={
-    address:parseInt(v('rf-addr')),
-    register_type:v('rf-rtype'),
-    data_type:v('rf-dtype'),
-    count:parseInt(v('rf-count')||'1'),
-    scale:parseFloat(v('rf-scale')||'1'),
-    field_key:v('rf-field'),
-    table:v('rf-table')
-  };
-  if(!reg.field_key){alert('Field key required');return;}
-  formRegisters.push(reg);
-  renderFormRegisters();
-  syncFormToJson();
-}
-
-function removeFormRegister(i){
-  formRegisters.splice(i,1);
-  renderFormRegisters();
-  syncFormToJson();
-}
-
-function syncFormToJson(){
-  const proto=v('sa-proto');
-  if(proto==='modbus_tcp'){
-    try{
-      const existing=JSON.parse(v('sa-cfg')||'{}');
-      existing.registers=formRegisters;
-      document.getElementById('sa-cfg').value=JSON.stringify(existing,null,2);
-    }catch(e){}
-  }
-}
-
-function saUpdateConfigTemplate(){
-  if(editingTmplId)return; // don't overwrite when editing
-  const proto=v('sa-proto');
-  const defaults={
-    modbus_tcp:{
-      cfg:{registers:[
-        {address:3000,register_type:"Holding",data_type:"float32",count:2,scale:1.0,field_key:"active_power_w",table:"Measurements"},
-        {address:3028,register_type:"Holding",data_type:"float32",count:2,scale:1.0,field_key:"voltage_ll_v",table:"Measurements"}
-      ]},
-      fields:{active_power_w:{display_label:"Active Power",unit:"W"},voltage_ll_v:{display_label:"Voltage L-L",unit:"V"}}
-    },
-    snmp:{
-      cfg:{community:"public",version:"2c",oids:[
-        {oid:".1.3.6.1.2.1.33.1.3.3.1.2",field_key:"input_voltage",type:"integer"},
-        {oid:".1.3.6.1.2.1.33.1.4.4.1.2",field_key:"output_voltage",type:"integer"}
-      ]},
-      fields:{input_voltage:{display_label:"Input Voltage",unit:"V"},output_voltage:{display_label:"Output Voltage",unit:"V"}}
-    },
-    opcua:{
-      cfg:{nodes:[
-        {node_id:"ns=2;points/ActivePower",field_key:"active_power_w",data_type:"float",table:"Measurements"}
-      ]},
-      fields:{active_power_w:{display_label:"Active Power",unit:"W"}}
-    },
-    mqtt:{
-      cfg:{topic_pattern:"{base}/{suffix}",readings:[
-        {json_path:"$.temperature",field_key:"temperature_c",unit:"C"},
-        {json_path:"$.humidity",field_key:"humidity_pct",unit:"%"}
-      ]},
-      fields:{temperature_c:{display_label:"Temperature",unit:"°C"},humidity_pct:{display_label:"Humidity",unit:"%"}}
-    }
-  };
-  const d=defaults[proto];
-  if(d){
-    formRegisters=d.cfg.registers?[...d.cfg.registers]:[];
-    document.getElementById('sa-cfg').value=JSON.stringify(d.cfg,null,2);
-    document.getElementById('sa-fields').value=JSON.stringify(d.fields,null,2);
-    renderFormRegisters();
-  }
-}
-
-function saClearForm(){
-  editingTmplId=null;formRegisters=[];
-  document.getElementById('sa-form-title').innerHTML='New Template <button class="btn btn-g btn-s" onclick="saClearForm()">Clear</button>';
+function saNewTemplate(){
+  editingId=null;formRegs=[];
+  document.getElementById('sa-editor-title').innerHTML='New Template <button class="btn btn-g btn-sm" onclick="saCloseEditor()">Close</button>';
   document.getElementById('sa-name').value='';
   document.getElementById('sa-desc').value='';
   document.getElementById('sa-patch-btn').style.display='none';
-  saUpdateConfigTemplate();
+  document.getElementById('sa-preview-btn').style.display='none';
+  document.getElementById('sa-editor-msg').innerHTML='';
+  document.getElementById('sa-preview-out').innerHTML='';
+  saProtoChanged();
+  document.getElementById('sa-editor-card').style.display='block';
+  document.getElementById('sa-editor-card').scrollIntoView({behavior:'smooth'});
 }
 
-function switchCfgTab(tab,btn){
-  document.querySelectorAll('.cfg-tab').forEach(b=>{b.style.background='';});
-  btn.style.background='#2d3748';
-  if(tab==='form'){
-    document.getElementById('cfg-form-view').style.display='block';
-    document.getElementById('cfg-json-view').style.display='none';
-  }else{
-    syncFormToJson();
-    document.getElementById('cfg-json-view').style.display='block';
-    document.getElementById('cfg-form-view').style.display='none';
-  }
+async function saOpenEditor(id){
+  const r=await api('GET',`/api/v1/templates/${id}`,'',SA_TOKEN);
+  if(!r.ok)return;
+  const t=r.data;
+  editingId=id;
+  const cfg=t.config_json||{};
+  formRegs=[...(cfg.registers||[])];
+  document.getElementById('sa-editor-title').innerHTML=`Editing: ${t.name} <button class="btn btn-g btn-sm" onclick="saCloseEditor()">Close</button>`;
+  document.getElementById('sa-name').value=t.name;
+  document.getElementById('sa-proto').value=t.protocol;
+  document.getElementById('sa-desc').value=t.description||'';
+  document.getElementById('sa-cfg').value=JSON.stringify(cfg,null,2);
+  document.getElementById('sa-fields-json').value=JSON.stringify(t.influx_fields_json||{},null,2);
+  document.getElementById('sa-patch-btn').style.display='inline-block';
+  document.getElementById('sa-preview-btn').style.display='inline-block';
+  document.getElementById('sa-editor-msg').innerHTML='';
+  document.getElementById('sa-preview-out').innerHTML='';
+  renderFormRegs();
+  renderFieldsEditor(t);
+  document.getElementById('sa-editor-card').style.display='block';
+  document.getElementById('sa-editor-card').scrollIntoView({behavior:'smooth'});
+}
+
+function saCloseEditor(){
+  document.getElementById('sa-editor-card').style.display='none';
+  editingId=null;
+}
+
+function saSetTab(tab,btn){
+  document.querySelectorAll('.tab-sm').forEach(b=>{b.classList.remove('active');});
+  btn.classList.add('active');
+  ['form','json','fields'].forEach(t=>
+    document.getElementById('sa-tab-'+t).style.display=t===tab?'block':'none');
+  if(tab==='json')syncFormToJson();
+  if(tab==='fields')renderFieldsEditorFromForm();
+}
+
+function saProtoChanged(){
+  if(editingId)return;
+  const proto=v('sa-proto');
+  const defaults={
+    modbus_tcp:{registers:[
+      {address:3000,register_type:'Holding',data_type:'float32',count:2,scale:1.0,field_key:'active_power_w',unit:'W'},
+      {address:3028,register_type:'Holding',data_type:'float32',count:2,scale:1.0,field_key:'voltage_ll_v',unit:'V'}
+    ]},
+    snmp:{community:'public',version:'2c',oids:[
+      {oid:'.1.3.6.1.2.1.33.1.3.3.1.2',field_key:'input_voltage',type:'integer',unit:'V'},
+      {oid:'.1.3.6.1.2.1.33.1.4.4.1.2',field_key:'output_voltage',type:'integer',unit:'V'}
+    ]},
+    opcua:{nodes:[
+      {node_id:'ns=2;points/ActivePower',field_key:'active_power_w',data_type:'float',table:'Measurements',unit:'W'}
+    ]},
+    mqtt:{topic_pattern:'{base_topic}/{topic_suffix}',readings:[
+      {json_path:'$.temperature',field_key:'temperature_c',unit:'C'},
+      {json_path:'$.humidity',field_key:'humidity_pct',unit:'%'}
+    ]}
+  };
+  const d=defaults[proto]||{};
+  formRegs=d.registers?[...d.registers]:[];
+  document.getElementById('sa-cfg').value=JSON.stringify(d,null,2);
+  const fields={};
+  (formRegs||[]).forEach(r=>{if(r.field_key)fields[r.field_key]={display_label:r.field_key.replace(/_/g,' '),unit:r.unit||''};});
+  document.getElementById('sa-fields-json').value=JSON.stringify(fields,null,2);
+  renderFormRegs();
+}
+
+function renderFormRegs(){
+  const el=document.getElementById('sa-reg-list');
+  if(!formRegs.length){el.innerHTML='<div style="color:#4a5568;font-size:11px;padding:8px 0">No registers yet. Add one below.</div>';return;}
+  el.innerHTML=`<table class="reg-table">
+    <thead><tr><th>#</th><th>Address</th><th>Type</th><th>Data type</th><th>Scale</th><th>Field key</th><th>Unit</th><th></th></tr></thead>
+    <tbody>${formRegs.map((r,i)=>`<tr>
+      <td>${i}</td>
+      <td>${r.address}</td>
+      <td>${r.register_type||'—'}</td>
+      <td>${r.data_type}</td>
+      <td>${r.scale}</td>
+      <td class="field-name">${r.field_key}</td>
+      <td>${r.unit||r.table||'—'}</td>
+      <td><button class="btn btn-d btn-sm" onclick="delReg(${i})">Del</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+function addReg(){
+  const field=v('rf-field');if(!field){alert('Field key required');return;}
+  formRegs.push({
+    address:parseInt(v('rf-addr')||3000),
+    register_type:v('rf-rtype'),
+    data_type:v('rf-dtype'),
+    count:parseInt(v('rf-count')||2),
+    scale:parseFloat(v('rf-scale')||1),
+    field_key:field,
+    unit:v('rf-unit')
+  });
+  renderFormRegs();
+  syncFormToJson();
+  renderFieldsEditorFromForm();
+}
+
+function delReg(i){formRegs.splice(i,1);renderFormRegs();syncFormToJson();}
+
+function syncFormToJson(){
+  if(v('sa-proto')!=='modbus_tcp')return;
+  try{
+    const existing=JSON.parse(v('sa-cfg')||'{}');
+    existing.registers=formRegs;
+    document.getElementById('sa-cfg').value=JSON.stringify(existing,null,2);
+  }catch(e){}
+}
+
+function syncJsonToForm(){
+  try{
+    const cfg=JSON.parse(v('sa-cfg')||'{}');
+    if(cfg.registers)formRegs=cfg.registers;
+    renderFormRegs();
+  }catch(e){}
+}
+
+function renderFieldsEditor(t){
+  const fields=t.influx_fields_json||{};
+  renderFieldsEditorHtml(fields);
+}
+
+function renderFieldsEditorFromForm(){
+  let fields={};
+  try{fields=JSON.parse(v('sa-fields-json')||'{}');}catch(e){}
+  // Merge with form registers
+  formRegs.forEach(r=>{
+    if(!fields[r.field_key])
+      fields[r.field_key]={display_label:r.field_key.replace(/_/g,' '),unit:r.unit||''};
+  });
+  renderFieldsEditorHtml(fields);
+}
+
+function renderFieldsEditorHtml(fields){
+  const el=document.getElementById('sa-fields-editor');
+  const keys=Object.keys(fields);
+  if(!keys.length){el.innerHTML='<div style="color:#4a5568;font-size:11px">No fields — add registers first.</div>';return;}
+  el.innerHTML=`<table class="reg-table">
+    <thead><tr><th>Field key</th><th>Display label</th><th>Unit</th></tr></thead>
+    <tbody>${keys.map(k=>`<tr>
+      <td class="field-name">${k}</td>
+      <td><input id="fl-label-${k}" value="${fields[k].display_label||''}" style="padding:3px 6px;font-size:11px"></td>
+      <td><input id="fl-unit-${k}" value="${fields[k].unit||''}" style="padding:3px 6px;font-size:11px;width:60px"></td>
+    </tr>`).join('')}</tbody></table>
+    <div style="margin-top:8px"><button class="btn btn-g btn-sm" onclick="saveFieldsFromEditor()">Apply changes</button></div>`;
+}
+
+function saveFieldsFromEditor(){
+  const keys=Object.keys(JSON.parse(v('sa-fields-json')||'{}'));
+  const fields={};
+  keys.forEach(k=>{
+    const label=document.getElementById('fl-label-'+k)?.value||k;
+    const unit=document.getElementById('fl-unit-'+k)?.value||'';
+    fields[k]={display_label:label,unit};
+  });
+  document.getElementById('sa-fields-json').value=JSON.stringify(fields,null,2);
+  msgEl('sa-editor-msg','ok','Display fields updated');
 }
 
 async function saSaveTemplate(){
-  let cfg={},fields={};
-  // Always sync form → json before saving
   syncFormToJson();
-  try{cfg=JSON.parse(v('sa-cfg'));}catch(e){msg('sa-form-msg','err','config_json invalid JSON');return;}
-  try{fields=JSON.parse(v('sa-fields'));}catch(e){msg('sa-form-msg','err','influx_fields_json invalid JSON');return;}
+  let cfg={},fields={};
+  try{cfg=JSON.parse(v('sa-cfg'));}catch(e){msgEl('sa-editor-msg','err','config_json: invalid JSON — check Raw JSON tab');return;}
+  try{fields=JSON.parse(v('sa-fields-json'));}catch(e){msgEl('sa-editor-msg','err','influx_fields_json: invalid JSON');return;}
   const body={name:v('sa-name'),protocol:v('sa-proto'),description:v('sa-desc'),config_json:cfg,influx_fields_json:fields};
-  const r=editingTmplId
-    ?await api('PUT',`/api/v1/templates/${editingTmplId}`,body,SA_TOKEN)
+  const r=editingId
+    ?await api('PUT',`/api/v1/templates/${editingId}`,body,SA_TOKEN)
     :await api('POST','/api/v1/templates',body,SA_TOKEN);
   if(r.ok){
-    msg('sa-form-msg','ok',(editingTmplId?'Updated':'Created')+' ✓');
+    msgEl('sa-editor-msg','ok',(editingId?'Updated':'Created')+' ✓');
+    if(!editingId){editingId=r.data.id;document.getElementById('sa-patch-btn').style.display='inline-block';document.getElementById('sa-preview-btn').style.display='inline-block';}
     saLoadTemplates();
-  }else msg('sa-form-msg','err',r.data.error||'Failed');
+  }else msgEl('sa-editor-msg','err',r.data.error||'Failed');
 }
 
-async function saPatchRegisters(){
-  // Patch all registers in formRegisters to match current state
-  if(!editingTmplId){msg('sa-form-msg','err','No template selected');return;}
-  // Get current template, delete all registers, re-add
-  const r=await api('GET',`/api/v1/templates/${editingTmplId}`,'',SA_TOKEN);
+async function saPatchAll(){
+  if(!editingId)return;
+  const r=await api('GET',`/api/v1/templates/${editingId}`,'',SA_TOKEN);
   if(!r.ok)return;
-  const currentRegs=(r.data.config_json?.registers||[]).length;
-  // Delete from end to start
-  for(let i=currentRegs-1;i>=0;i--){
-    await api('PATCH',`/api/v1/templates/${editingTmplId}/registers`,{action:'delete',index:i},SA_TOKEN);
-  }
-  // Add all formRegisters
-  for(const reg of formRegisters){
-    await api('PATCH',`/api/v1/templates/${editingTmplId}/registers`,{action:'add',entry:reg},SA_TOKEN);
-  }
-  msg('sa-form-msg','ok',`Patched ${formRegisters.length} registers`);
-  saLoadTemplates();
+  const curr=(r.data.config_json?.registers||[]).length;
+  for(let i=curr-1;i>=0;i--)
+    await api('PATCH',`/api/v1/templates/${editingId}/registers`,{action:'delete',index:i},SA_TOKEN);
+  for(const reg of formRegs)
+    await api('PATCH',`/api/v1/templates/${editingId}/registers`,{action:'add',entry:reg},SA_TOKEN);
+  msgEl('sa-editor-msg','ok',`Patched ${formRegs.length} registers via PATCH API`);
 }
 
-async function saPreviewTemplate(){
-  if(!editingTmplId){msg('sa-form-msg','err','Save first to preview');return;}
-  const r=await api('GET',`/api/v1/templates/${editingTmplId}/preview`,'',SA_TOKEN);
+async function saPreview(){
+  if(!editingId){msgEl('sa-editor-msg','err','Save first');return;}
+  const r=await api('GET',`/api/v1/templates/${editingId}/preview`,'',SA_TOKEN);
   if(r.ok){
-    document.getElementById('sa-preview').innerHTML=
-      `<div style="font-size:10px;color:#718096;margin-top:10px">CSV preview — ${r.data.rows?.length||0} rows:</div>`+
-      `<pre>${r.data.header||''}\n${(r.data.rows||[]).join('\n')}</pre>`;
-  }else msg('sa-form-msg','err',r.data.error||'No preview');
+    const rows=r.data.rows||[];
+    let csvText='(no rows generated)';
+    if(rows.length){
+      const keys=Object.keys(rows[0]).filter(k=>!k.startsWith('_'));
+      csvText='#'+keys.join(',')+'\n'+rows.map(row=>keys.map(k=>String(row[k]??'')).join(',')).join('\n');
+    }
+    document.getElementById('sa-preview-out').innerHTML=
+      `<div style="font-size:10px;color:#718096;margin-top:10px">config.csv preview — ${rows.length} rows:</div><pre>${csvText}</pre>`;
+  }else msgEl('sa-editor-msg','err',r.data.error||'No preview');
 }
 
 async function saDeleteTemplate(id){
-  if(!confirm('Delete this template?'))return;
+  if(!confirm('Delete this template? Existing sensors using it will lose their template reference.'))return;
   const r=await api('DELETE',`/api/v1/templates/${id}`,'',SA_TOKEN);
-  if(r.ok)saLoadTemplates();
+  if(r.ok){if(editingId===id)saCloseEditor();saLoadTemplates();}
   else alert('Failed: '+r.data.error);
+}
+
+function toggleAddProto(){
+  const el=document.getElementById('sa-add-proto');
+  el.style.display=el.style.display==='none'?'block':'none';
+}
+
+async function saAddProtocol(){
+  let conn=[],addr=[];
+  try{conn=JSON.parse(document.getElementById('np-conn').value);}catch(e){msgEl('np-msg','err','Connection schema: invalid JSON');return;}
+  try{addr=JSON.parse(document.getElementById('np-addr').value);}catch(e){msgEl('np-msg','err','Address schema: invalid JSON');return;}
+  const sql=`INSERT INTO protocols (id, label, image_name, default_port, description, connection_params_schema, addr_params_schema)\nVALUES ('${v('np-id')}', '${v('np-label')}', '${v('np-image')}', ${v('np-port')||0},\n  '${v('np-desc')}',\n  '${JSON.stringify(conn)}'::jsonb,\n  '${JSON.stringify(addr)}'::jsonb);`;
+  msgEl('np-msg','ok','Run this SQL on your Postgres instance, then rebuild:<pre style="margin-top:6px;font-size:9px;white-space:pre-wrap">'+sql+'</pre>');
+}
+
+function colorJson(obj){
+  return JSON.stringify(obj,null,2)
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+    .replace(/"([^"]+)":/g,'<span class="jk">"$1"</span>:')
+    .replace(/: "([^"]*)"/g,': <span class="js">"$1"</span>')
+    .replace(/: (-?\d+\.?\d*)/g,': <span class="jn">$1</span>')
+    .replace(/: (true|false)/g,': <span class="jb">$1</span>');
+}
+
+async function testConn(){
+  BASE=v('cfg-url').replace(/\/$/,'')||BASE;
+  const r=await api('GET','/health','','');
+  msgEl('cfg-msg',r.ok?'ok':'err',r.ok?'Connected ✓ — '+JSON.stringify(r.data):'Cannot reach API: '+r.data?.error);
 }
 
 // Init

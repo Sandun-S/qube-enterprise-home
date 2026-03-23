@@ -57,7 +57,7 @@ services:
       restart_policy:
         condition: any
 
-%!(EXTRA string=Q-1001)  # Gateway: test (modbus_tcp) → 192.168.1.1
+%!(EXTRA string=Q-1001)  # Gateway: test (modbus_tcp) → 182.12.21.2
   test:
     image: ghcr.io/sandun-s/qube-enterprise-home/modbus-gateway:arm64.latest
     hostname: test
