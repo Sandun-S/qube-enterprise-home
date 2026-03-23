@@ -57,28 +57,7 @@ services:
       restart_policy:
         condition: any
 
-%!(EXTRA string=Q-1001)  # Gateway: X (modbus_tcp) → 1.2.3.4
-  x:
-    image: ghcr.io/sandun-s/qube-enterprise-home/modbus-gateway:arm64.latest
-    hostname: x
-    networks:
-      - qube-net
-    volumes:
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-      - /opt/qube/configs/x/configs.yml:/app/configs.yml:ro
-      - /opt/qube/configs/x/config.csv:/app/config.csv:ro
-    logging:
-      driver: "local"
-      options:
-        max-size: "10mb"
-        max-file: "20"
-    deploy:
-      replicas: 1
-      restart_policy:
-        condition: any
-
-  # Gateway: Panel_A (modbus_tcp) → 192.168.1.100
+%!(EXTRA string=Q-1001)  # Gateway: Panel_A (modbus_tcp) → 192.168.1.100
   panel-a:
     image: ghcr.io/sandun-s/qube-enterprise-home/modbus-gateway:arm64.latest
     hostname: panel-a

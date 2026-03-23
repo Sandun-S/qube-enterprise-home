@@ -104,6 +104,7 @@ Frontend only uses port 8080. TP-API port 8081 is Qube-facing only, never fronte
 ## Quick start — local dev (Docker Compose)
 
 ```bash
+docker compose -f docker-compose.dev.yml down -v
 docker compose -f docker-compose.dev.yml up -d --build
 open http://localhost:8888   # test UI
 ```
