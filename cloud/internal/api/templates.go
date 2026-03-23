@@ -20,7 +20,7 @@ func listTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		                 config_json, influx_fields_json, ui_mapping_json,
 		                 is_global, created_at
 		          FROM sensor_templates
-		          WHERE is_global = TRUE OR org_id = $1`
+		          WHERE (is_global = TRUE OR org_id = $1)`
 		args := []any{orgID}
 
 		if protocol != "" {

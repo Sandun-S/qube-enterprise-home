@@ -1,13 +1,13 @@
 {
-  "Main_Meter.active_power_w": "9693ddee-99f4-4126-b85f-4ff2ab0731ec",
-  "Main_Meter.current_a": "9693ddee-99f4-4126-b85f-4ff2ab0731ec",
-  "Main_Meter.energy_kwh": "9693ddee-99f4-4126-b85f-4ff2ab0731ec",
-  "Main_Meter.voltage_ll_v": "9693ddee-99f4-4126-b85f-4ff2ab0731ec",
-  "Pasteuriser_1.active_power_w": "fdd45c8a-6e29-40d8-b149-90a418b7b35d",
-  "Pasteuriser_1.current_a": "fdd45c8a-6e29-40d8-b149-90a418b7b35d",
-  "Pasteuriser_1.energy_kwh": "fdd45c8a-6e29-40d8-b149-90a418b7b35d",
-  "Pasteuriser_1.voltage_v": "fdd45c8a-6e29-40d8-b149-90a418b7b35d",
-  "Temp_Sensor_1.humidity": "17cefa18-3e6b-4a7d-bc30-dc83ed5fe066",
-  "Temp_Sensor_1.temperature": "17cefa18-3e6b-4a7d-bc30-dc83ed5fe066",
-  "Temp_Sensor_1.value": "17cefa18-3e6b-4a7d-bc30-dc83ed5fe066"
+  "Main_Meter.active_power_w": "cb7b0a16-fa7d-4dc1-8e23-ce6a1948fbb6",
+  "Main_Meter.current_a": "cb7b0a16-fa7d-4dc1-8e23-ce6a1948fbb6",
+  "Main_Meter.energy_kwh": "cb7b0a16-fa7d-4dc1-8e23-ce6a1948fbb6",
+  "Main_Meter.voltage_ll_v": "cb7b0a16-fa7d-4dc1-8e23-ce6a1948fbb6",
+  "Pasteuriser_1.active_power_w": "3e3da34a-5039-4f62-94c3-647f731b3b9f",
+  "Pasteuriser_1.current_a": "3e3da34a-5039-4f62-94c3-647f731b3b9f",
+  "Pasteuriser_1.energy_kwh": "3e3da34a-5039-4f62-94c3-647f731b3b9f",
+  "Pasteuriser_1.voltage_v": "3e3da34a-5039-4f62-94c3-647f731b3b9f",
+  "Temp_Sensor_1.humidity": "c053b561-30c9-46a5-bdab-c49ee43c68fa",
+  "Temp_Sensor_1.temperature": "c053b561-30c9-46a5-bdab-c49ee43c68fa",
+  "Temp_Sensor_1.value": "c053b561-30c9-46a5-bdab-c49ee43c68fa"
 }
