@@ -126,11 +126,12 @@ func createTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "name and protocol are required")
 			return
 		}
-		validProtocols := map[string]bool{
-			"modbus_tcp": true, "mqtt": true, "opcua": true, "snmp": true,
-		}
-		if !validProtocols[req.Protocol] {
-			writeError(w, http.StatusBadRequest, "protocol must be modbus_tcp, mqtt, opcua, or snmp")
+		var protoExists bool
+		pool.QueryRow(context.Background(),
+			`SELECT EXISTS(SELECT 1 FROM protocols WHERE id=$1 AND is_active=TRUE)`,
+			req.Protocol).Scan(&protoExists)
+		if !protoExists {
+			writeError(w, http.StatusBadRequest, "unknown or inactive protocol: "+req.Protocol)
 			return
 		}
 

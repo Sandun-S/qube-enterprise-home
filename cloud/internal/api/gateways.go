@@ -104,11 +104,13 @@ func createGatewayHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		validProtos := map[string]bool{
-			"modbus_tcp": true, "mqtt": true, "opcua": true, "snmp": true,
-		}
-		if !validProtos[req.Protocol] {
-			writeError(w, http.StatusBadRequest, "protocol must be modbus_tcp, mqtt, opcua, or snmp")
+		// Validate protocol against protocols table (so new protocols just need a DB INSERT)
+		var protoExists bool
+		pool.QueryRow(context.Background(),
+			`SELECT EXISTS(SELECT 1 FROM protocols WHERE id=$1 AND is_active=TRUE)`,
+			req.Protocol).Scan(&protoExists)
+		if !protoExists {
+			writeError(w, http.StatusBadRequest, "unknown or inactive protocol: "+req.Protocol)
 			return
 		}
 

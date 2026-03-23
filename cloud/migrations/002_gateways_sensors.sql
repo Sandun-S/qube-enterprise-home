@@ -261,3 +261,72 @@ INSERT INTO registry_config (key, value, description) VALUES
                         'Full image for opc-ua-gateway (existing Qube Lite image)'),
     ('img_snmp',        'registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest',
                         'Full image for snmp-gateway (existing Qube Lite image)');
+
+-- ===================== PROTOCOLS REGISTRY =====================
+-- Add new protocols here when a new gateway container is built.
+-- image_name is the Docker image suffix used in the compose generator.
+CREATE TABLE protocols (
+    id                     TEXT PRIMARY KEY,
+    label                  TEXT NOT NULL,
+    image_name             TEXT NOT NULL,   -- container image suffix (registry added at runtime via QUBE_IMAGE_REGISTRY)
+    default_port           INT NOT NULL DEFAULT 0,
+    description            TEXT NOT NULL DEFAULT '',
+    -- Schema of what to ask the user when adding a gateway of this protocol.
+    -- Each entry: {key, label, type (text|number|select), default, options[], required, hint}
+    -- UI renders this dynamically — no hardcoding needed when adding new protocols.
+    connection_params_schema JSONB NOT NULL DEFAULT '[]',
+    -- Schema of address_params to ask when adding a sensor of this protocol.
+    addr_params_schema     JSONB NOT NULL DEFAULT '[]',
+    is_active              BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO protocols (id, label, image_name, default_port, description,
+                       connection_params_schema, addr_params_schema) VALUES
+(
+  'modbus_tcp', 'Modbus TCP', 'modbus-gateway', 502,
+  'Modbus TCP/IP — industrial PLCs, energy meters, drives',
+  '[
+    {"key":"host","label":"Device IP address","type":"text","required":true,"placeholder":"192.168.1.100","hint":"IP of the Modbus device"},
+    {"key":"port","label":"Modbus port","type":"number","default":502,"required":true}
+  ]'::jsonb,
+  '[
+    {"key":"unit_id","label":"Unit ID (slave address)","type":"number","default":1,"required":true,"hint":"1-247, set on the device"},
+    {"key":"register_offset","label":"Register offset","type":"number","default":0,"hint":"Shift all addresses by this amount. Usually 0."}
+  ]'::jsonb
+),
+(
+  'opcua', 'OPC-UA', 'opc-ua-gateway', 4840,
+  'OPC Unified Architecture — industrial automation, SCADA systems',
+  '[
+    {"key":"host","label":"OPC-UA endpoint URL","type":"text","required":true,"placeholder":"opc.tcp://192.168.1.18:4840","hint":"Full endpoint URL including protocol"},
+    {"key":"port","label":"Port","type":"number","default":4840,"required":true}
+  ]'::jsonb,
+  '[
+    {"key":"freq_sec","label":"Poll frequency (seconds)","type":"number","default":10,"hint":"How often to read node values"}
+  ]'::jsonb
+),
+(
+  'snmp', 'SNMP', 'snmp-gateway', 161,
+  'Simple Network Management Protocol — UPS, switches, network devices',
+  '[
+    {"key":"host","label":"Device IP address","type":"text","required":true,"placeholder":"192.168.1.200"},
+    {"key":"port","label":"SNMP port","type":"number","default":161,"required":true}
+  ]'::jsonb,
+  '[
+    {"key":"community","label":"Community string","type":"text","default":"public","required":true,"hint":"Usually ''public'' for read-only access"},
+    {"key":"version","label":"SNMP version","type":"select","options":["2c","1","3"],"default":"2c"}
+  ]'::jsonb
+),
+(
+  'mqtt', 'MQTT', 'mqtt-gateway', 1883,
+  'MQTT publish/subscribe — IoT sensors, environmental monitoring',
+  '[
+    {"key":"host","label":"Broker URL","type":"text","required":true,"placeholder":"tcp://192.168.1.10:1883","hint":"Full broker URL"},
+    {"key":"port","label":"Port","type":"number","default":1883,"required":true},
+    {"key":"base_topic","label":"Base topic","type":"text","placeholder":"factory/floor2","hint":"Base topic prefix for all sensors on this gateway"}
+  ]'::jsonb,
+  '[
+    {"key":"topic_suffix","label":"Topic suffix","type":"text","placeholder":"sensor_01","hint":"Appended to base topic: base_topic/suffix"}
+  ]'::jsonb
+);
