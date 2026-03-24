@@ -210,48 +210,41 @@ pre{background:#0a0c12;border:1px solid #2d3748;border-radius:6px;padding:12px;f
       </div>
       <div class="split2-right">
         <div class="card">
-          <div class="card-title">Configuration</div>
+          <div class="card-title">Add this device to a Qube</div>
 
           <label>Which Qube</label>
           <select id="c-target-qube" onchange="loadGatewaysForQube()"></select>
 
           <hr class="divider">
 
-          <!-- Gateway section: pick existing OR create new -->
-          <div class="section-label">Gateway <span style="color:#4a5568;font-weight:400;text-transform:none;font-size:10px">— one gateway = one physical connection. Many sensors can share it.</span></div>
-
-          <div style="display:flex;gap:6px;margin-bottom:8px">
-            <button class="btn btn-sm" id="gw-mode-existing" onclick="setGwMode('existing')" style="background:#1e2235;color:#7c85ff;border:1px solid #7c85ff">Use existing gateway</button>
-            <button class="btn btn-g btn-sm" id="gw-mode-new" onclick="setGwMode('new')">Create new gateway</button>
-          </div>
-
-          <!-- Existing gateway picker -->
-          <div id="gw-existing-panel">
-            <div id="gw-existing-list" style="margin-bottom:4px"></div>
-            <div style="font-size:10px;color:#4a5568;margin-top:4px">No matching gateways? Switch to "Create new gateway".</div>
-          </div>
-
-          <!-- New gateway form -->
-          <div id="gw-new-panel" style="display:none">
-            <label>Gateway name <span style="color:#4a5568;font-weight:400">— your label for this connection point</span></label>
-            <input id="c-gw-name" placeholder="e.g. Panel_A, UPS_Room1, LoRa_GW1">
-            <div id="c-proto-fields" style="margin-top:4px">
+          <!-- Connection settings — shown automatically -->
+          <div id="c-conn-section">
+            <div class="section-label">Connection <span style="color:#4a5568;font-weight:400;text-transform:none;font-size:10px">— where is this device?</span></div>
+            <div id="c-proto-fields">
               <label>Host / IP</label><input id="cgw-host" placeholder="192.168.1.100">
               <label>Port</label><input id="cgw-port" type="number" value="502">
             </div>
+            <div id="c-existing-gw-notice" style="display:none;margin-top:8px;padding:8px;background:#0f1e0f;border:1px solid #276749;border-radius:6px;font-size:11px;color:#68d391"></div>
           </div>
 
           <hr class="divider">
 
-          <div class="section-label">Sensor details <span style="color:#4a5568;font-weight:400;text-transform:none;font-size:10px">— one sensor = one device on the gateway</span></div>
+          <div class="section-label">Sensor details</div>
           <label>Sensor name</label>
-          <input id="c-sensor-name" placeholder="e.g. Main_Meter, UPS_Battery_1, Cold_Room_Sensor">
-          <label>Address params <span style="color:#4a5568;font-weight:400">— protocol-specific identifier for this sensor</span></label>
+          <input id="c-sensor-name" placeholder="e.g. Main_Meter, UPS_Battery_1, Cold_Room_Temp">
+          <label>Address params <span style="color:#4a5568;font-weight:400">— how to identify this sensor on the device</span></label>
           <textarea id="c-addr-params" style="height:60px">{"unit_id": 1}</textarea>
-          <label>Tags <span style="color:#4a5568;font-weight:400">— optional</span></label>
+          <label>Tags <span style="color:#4a5568;font-weight:400">— optional, for grouping in dashboards</span></label>
           <textarea id="c-tags" style="height:40px">{"location": ""}</textarea>
+
+          <!-- Hidden gateway fields (auto-managed) -->
+          <input type="hidden" id="c-gw-name">
+          <div id="gw-existing-panel" style="display:none"></div>
+          <div id="gw-new-panel" style="display:none"></div>
+          <div id="gw-existing-list" style="display:none"></div>
+
           <div style="margin-top:16px;display:flex;gap:8px">
-            <button class="btn btn-p" onclick="custAddSensor()">Add Sensor</button>
+            <button class="btn btn-p" onclick="custAddSensor()">Add Sensor to Qube</button>
             <button class="btn btn-g" onclick="showStep(3)">← Back</button>
           </div>
           <div id="c-add-msg"></div>
@@ -717,6 +710,20 @@ function renderSelectedDevice(){
     ?renderSchemaFields(connSchema,'cgw')
     :`<label>Host / IP</label><input id="cgw-host" placeholder="192.168.1.100">
       <label>Port</label><input id="cgw-port" type="number" value="${proto?.default_port||0}">`;
+  // For SNMP: gateway has no meaningful host (each sensor has its own device IP)
+  // Hide the connection section for SNMP — addr_params has device_ip instead
+  const connSection=document.getElementById('c-conn-section');
+  if(t.protocol==='snmp'){
+    connSection.style.display='none';
+  }else{
+    connSection.style.display='block';
+    // Hook host field to update gateway notice as user types
+    setTimeout(()=>{
+      const hostEl=document.getElementById('cgw-host');
+      if(hostEl)hostEl.addEventListener('input',updateConnectionNotice);
+      updateConnectionNotice();
+    },50);
+  }
 
   // Set addr_params default from schema
   const addrSchema=(proto?.addr_params_schema)||[];
@@ -752,8 +759,7 @@ function readSchemaValues(schema,prefix){
   return obj;
 }
 
-let gwMode='existing'; // 'existing' or 'new'
-let selectedGwId=null;
+let selectedGwId=null;  // auto-resolved, not shown to user
 let qubeGateways=[];
 
 function populateQubeSelect(){
@@ -769,64 +775,44 @@ async function loadGatewaysForQube(){
   if(!qubeId)return;
   const r=await api('GET',`/api/v1/qubes/${qubeId}/gateways`);
   qubeGateways=r.ok?r.data:[];
-  // Filter to gateways matching selected template protocol
-  const proto=selectedTemplate?.protocol;
-  const matching=proto?qubeGateways.filter(g=>g.protocol===proto):qubeGateways;
-  renderGatewayPicker(matching);
-  // Auto-select mode: if matching gateways exist, default to existing; else new
-  if(matching.length){setGwMode('existing');}else{setGwMode('new');}
+  updateConnectionNotice();
 }
 
-function renderGatewayPicker(gateways){
-  const el=document.getElementById('gw-existing-list');
-  if(!gateways.length){
-    el.innerHTML=`<div style="font-size:11px;color:#4a5568;padding:8px;background:#0a0c12;border:1px solid #2d3748;border-radius:6px">No ${selectedTemplate?protoLabel(selectedTemplate.protocol):''} gateways on this Qube yet.</div>`;
-    selectedGwId=null;
-    return;
-  }
-  el.innerHTML=gateways.map(g=>`
-    <div class="item" id="gw-pick-${g.id}" onclick="pickGateway('${g.id}')"
-         style="cursor:pointer;border-color:${selectedGwId===g.id?'#7c85ff':'#2d3748'}">
-      <div class="item-body">
-        <div class="item-name" style="display:flex;align-items:center;gap:8px">
-          <span>${g.name}</span>
-          <span class="badge b-blue">${protoDot(g.protocol)}${protoLabel(g.protocol)}</span>
-          <span class="badge b-green">${g.sensor_count} sensor${g.sensor_count!==1?'s':''}</span>
-        </div>
-        <div class="item-meta">${g.host||'no host'}${g.port?':'+g.port:''}</div>
-      </div>
-      <div style="width:18px;height:18px;border-radius:50%;border:2px solid ${selectedGwId===g.id?'#7c85ff':'#2d3748'};
-                  background:${selectedGwId===g.id?'#7c85ff':'transparent'};display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;flex-shrink:0">
-        ${selectedGwId===g.id?'✓':''}
-      </div>
-    </div>`).join('');
-  // Auto-select first
-  if(!selectedGwId&&gateways.length)pickGateway(gateways[0].id);
-}
-
-function pickGateway(id){
-  selectedGwId=id;
-  document.querySelectorAll('[id^="gw-pick-"]').forEach(el=>{
-    const isSelected=el.id==='gw-pick-'+id;
-    el.style.borderColor=isSelected?'#7c85ff':'#2d3748';
-  });
-  renderGatewayPicker(qubeGateways.filter(g=>!selectedTemplate||g.protocol===selectedTemplate.protocol));
-}
-
-function setGwMode(mode){
-  gwMode=mode;
-  document.getElementById('gw-existing-panel').style.display=mode==='existing'?'block':'none';
-  document.getElementById('gw-new-panel').style.display=mode==='new'?'block':'none';
-  const btnEx=document.getElementById('gw-mode-existing');
-  const btnNew=document.getElementById('gw-mode-new');
-  if(mode==='existing'){
-    btnEx.style.cssText='background:#1e2235;color:#7c85ff;border:1px solid #7c85ff;';
-    btnNew.style.cssText='';btnNew.className='btn btn-g btn-sm';
+function updateConnectionNotice(){
+  if(!selectedTemplate)return;
+  const proto=selectedTemplate.protocol;
+  const host=document.getElementById('cgw-host')?.value||'';
+  const singleContainer=['snmp']; // SNMP: one gateway for all devices
+  const notice=document.getElementById('c-existing-gw-notice');
+  let matching;
+  if(singleContainer.includes(proto)){
+    matching=qubeGateways.filter(g=>g.protocol===proto);
+    if(matching.length){
+      notice.style.display='block';
+      notice.textContent=`✓ SNMP: will be added to existing gateway "${matching[0].name}" (${matching[0].sensor_count} devices already). Each sensor uses its own IP from address params below.`;
+      selectedGwId=matching[0].id;
+    }else{
+      notice.style.display='block';
+      notice.style.background='#1a2a1a';
+      notice.style.borderColor='#276749';
+      notice.textContent=`New SNMP gateway will be created. All SNMP sensors on this Qube share one container — each sensor has its own device IP.`;
+      selectedGwId=null;
+    }
   }else{
-    btnNew.style.cssText='background:#1e2235;color:#7c85ff;border:1px solid #7c85ff;';
-    btnEx.style.cssText='';btnEx.className='btn btn-g btn-sm';
+    matching=qubeGateways.filter(g=>g.protocol===proto&&(!host||g.host===host));
+    if(matching.length&&host){
+      notice.style.display='block';
+      notice.textContent=`✓ Will be added to existing gateway "${matching[0].name}" (${matching[0].sensor_count} sensors at ${host})`;
+      selectedGwId=matching[0].id;
+    }else{
+      notice.style.display='none';
+      selectedGwId=null;
+    }
   }
 }
+
+// stub — no longer needed but referenced
+function setGwMode(){}
 
 async function custAddSensor(){
   if(!selectedTemplate){msgEl('c-add-msg','err','No device selected');return;}
@@ -834,29 +820,51 @@ async function custAddSensor(){
   if(!qubeId){msgEl('c-add-msg','err','No Qube selected');return;}
   if(!v('c-sensor-name')){msgEl('c-add-msg','err','Enter a sensor name');return;}
 
+  const proto=allProtocols.find(p=>p.id===selectedTemplate.protocol);
+  const connSchema=proto?.connection_params_schema||[];
+  const connVals=connSchema.length?readSchemaValues(connSchema,'cgw'):{};
+  const host=connVals.host||document.getElementById('cgw-host')?.value||'';
+  const port=parseInt(connVals.port||document.getElementById('cgw-port')?.value||proto?.default_port||0);
+  if(!host){msgEl('c-add-msg','err','Enter the device IP or URL above');return;}
+
   let gatewayId=null;
   let gatewayName='';
+  let gwAction='';
 
-  if(gwMode==='existing'){
-    if(!selectedGwId){msgEl('c-add-msg','err','Select a gateway or switch to "Create new gateway"');return;}
-    gatewayId=selectedGwId;
-    gatewayName=qubeGateways.find(g=>g.id===selectedGwId)?.name||'existing gateway';
+  // AUTO-ASSIGN: protocol-aware gateway matching
+  // SNMP: one container handles ALL device IPs → match by protocol only
+  // Modbus/OPC-UA: one container per device IP → match by protocol + host
+  // MQTT: one container per broker → match by protocol + host
+  const proto_id=selectedTemplate.protocol;
+  const singleContainerProtocols=['snmp']; // protocols where one container = all devices
+  let existing;
+  if(singleContainerProtocols.includes(proto_id)){
+    // For SNMP: reuse any existing SNMP gateway on this Qube
+    existing=qubeGateways.find(g=>g.protocol===proto_id);
   }else{
-    // Create new gateway
-    if(!v('c-gw-name')){msgEl('c-add-msg','err','Enter a gateway name');return;}
-    const proto=allProtocols.find(p=>p.id===selectedTemplate.protocol);
-    const connSchema=proto?.connection_params_schema||[];
-    const connVals=connSchema.length?readSchemaValues(connSchema,'cgw'):{};
-    const host=connVals.host||document.getElementById('cgw-host')?.value||'';
-    const port=parseInt(connVals.port||document.getElementById('cgw-port')?.value||proto?.default_port||0);
-    if(!host){msgEl('c-add-msg','err','Enter the device IP or URL');return;}
-
-    msgEl('c-add-msg','ok','Creating gateway...');
+    // For Modbus/MQTT/OPC-UA: match by protocol + host
+    existing=qubeGateways.find(g=>g.protocol===proto_id&&g.host===host);
+  }
+  if(existing){
+    gatewayId=existing.id;
+    gatewayName=existing.name;
+    gwAction='added to existing gateway';
+    msgEl('c-add-msg','ok',`Reusing gateway "${existing.name}" (${existing.sensor_count} sensors)...`);
+  }else{
+    // Create new gateway automatically
+    const safeName=selectedTemplate.name.replace(/[^a-zA-Z0-9]/g,'_');
+    const autoName=proto_id==='snmp'
+      ?'SNMP_GW'           // SNMP: generic name since it handles all SNMP devices
+      :safeName+'_GW';     // Others: named after device type
     const gwR=await api('POST',`/api/v1/qubes/${qubeId}/gateways`,
-      {name:v('c-gw-name'),protocol:selectedTemplate.protocol,host,port,config_json:connVals});
-    if(!gwR.ok){msgEl('c-add-msg','err','Gateway failed: '+(gwR.data.error||'error'));return;}
+      {name:autoName,protocol:proto_id,
+       host:singleContainerProtocols.includes(proto_id)?'':host,
+       port,config_json:connVals});
+    if(!gwR.ok){msgEl('c-add-msg','err','Gateway creation failed: '+(gwR.data.error||'error'));return;}
     gatewayId=gwR.data.gateway_id;
-    gatewayName=v('c-gw-name');
+    gatewayName=autoName;
+    gwAction='new gateway created';
+    msgEl('c-add-msg','ok',`New gateway "${autoName}" created...`);
   }
 
   let ap={},tags={};

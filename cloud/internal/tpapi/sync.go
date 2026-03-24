@@ -475,7 +475,7 @@ services:
       restart_policy:
         condition: any
 
-`, qubeID, loc, imageForService(pool, "conf_agent"), qubeID, imageForService(pool, "influx_sql"), qubeID, qubeID)
+`, qubeID, loc, imageForService(pool, "conf_agent"), qubeID, imageForService(pool, "influx_sql"), qubeID)
 
 	// One service block per gateway — each gateway = one container
 	// Multiple gateways of same protocol = multiple separate containers with different names
