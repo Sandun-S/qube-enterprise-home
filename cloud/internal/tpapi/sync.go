@@ -210,8 +210,8 @@ Modbus:
   FreqSec: %d
   SingleReadCount: 100
 HTTP:
-  Data: "http://core-switch:8080/v3/batch"
-  Alerts: "http://core-switch:8080/v3/alerts"
+  Data: "http://core-switch:8585/v3/batch"
+  Alerts: "http://core-switch:8585/v3/alerts"
 `, server, freqSec)
 
 	case "opcua":
@@ -222,24 +222,26 @@ OpcUA:
   OpcEndPoint: "%s"
   PointsFile: "config.csv"
 HTTP:
-  Data: "http://core-switch:8080/v3/batch"
-  Alerts: "http://core-switch:8080/v3/alerts"
+  Data: "http://core-switch:8585/v3/batch"
+  Alerts: "http://core-switch:8585/v3/alerts"
 `, endpoint)
 
 	case "snmp":
-		community := strVal(svc.GwCfgJSON["community"], "public")
-		version   := strVal(svc.GwCfgJSON["version"], "2c")
-		fmt.Fprintf(&b, `LogLevel: "Info"
-SNMP:
-  Host: "%s"
-  Community: "%s"
-  Version: "%s"
-  DevicesFile: "config.csv"
-  FreqSec: 60
-HTTP:
-  Data: "http://core-switch:8080/v3/batch"
-  Alerts: "http://core-switch:8080/v3/alerts"
-`, svc.Host, community, version)
+		fetchInterval := 15
+		if v, ok := svc.GwCfgJSON["fetch_interval"].(float64); ok { fetchInterval = int(v) }
+		workerCount := 2
+		if v, ok := svc.GwCfgJSON["worker_count"].(float64); ok { workerCount = int(v) }
+		fmt.Fprintf(&b, `loglevel: "INFO"
+snmp:
+  fetch_interval: %d
+  connect_timeout: 10
+  worker_count: %d
+  devices_file: "config.csv"
+  maps_folder: "./maps"
+http:
+  data_url: "http://core-switch:8585/v3/batch"
+  alerts_url: "http://core-switch:8585/v3/alerts"
+`, fetchInterval, workerCount)
 
 	case "mqtt":
 		brokerURL := strVal(svc.GwCfgJSON["broker_url"], fmt.Sprintf("tcp://%s:%d", svc.Host, svc.GwPort))
@@ -294,34 +296,41 @@ func renderGatewayFiles(protocol, svcName string, rows []csvEntry) (string, map[
 		}
 
 	case "snmp":
-		// Real format: #Table,Device,SNMP_csv,Community,Version,Output,Tags
-		// Each device also gets a separate OID csv
+		// Real devices.csv format: #Table,Device,SNMP_csv,Community,Version,Output,Tags
+		// Device = IP address of the SNMP device (from addr_params.device_ip)
+		// SNMP_csv = maps/{template-slug}.csv  (OID map, shared by all sensors using same template)
+		// maps/{template-slug}.csv format: field_key,OID  (2 columns, no header — real gateway format)
 		b.WriteString("#Table,Device,SNMP_csv,Community,Version,Output,Tags\n")
 
-		// Track written device rows to avoid duplicates
-		written := map[string]bool{}
+		// Track which map CSV files we've already written (one per template type, not per sensor)
+		writtenMaps := map[string]bool{}
 		for _, r := range rows {
-			deviceKey := sv(r.Data, "Device")
-			if !written[deviceKey] {
-				written[deviceKey] = true
-				snmpFile := sv(r.Data, "SNMP_csv")
-				fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s\n",
-					sv(r.Data, "Table"), sv(r.Data, "Device"),
-					snmpFile,
-					sv(r.Data, "Community"), sv(r.Data, "Version"),
-					sv(r.Data, "Output"), sv(r.Data, "Tags"))
+			snmpFile := sv(r.Data, "SNMP_csv")  // e.g. "gxt-rt-ups.csv"
+			deviceIP := sv(r.Data, "DeviceIP")  // IP from addr_params.device_ip
+			if deviceIP == "" { deviceIP = sv(r.Data, "Device") } // fallback
 
-				// Write the per-device OID file
+			// One row per sensor in devices.csv
+			fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s\n",
+				sv(r.Data, "Table"), deviceIP,
+				snmpFile,
+				sv(r.Data, "Community"), sv(r.Data, "Version"),
+				sv(r.Data, "Output"), sv(r.Data, "Tags"))
+
+			// Write the OID map file once per unique template (maps/filename)
+			// Real format: field_key,OID  — two columns, NO header line
+			if !writtenMaps[snmpFile] {
+				writtenMaps[snmpFile] = true
 				if oids, ok := r.Data["_oids"].([]any); ok {
 					var oidBuf bytes.Buffer
-					oidBuf.WriteString("#OID,FieldKey,Type\n")
 					for _, o := range oids {
 						om, ok := o.(map[string]any)
 						if !ok { continue }
-						fmt.Fprintf(&oidBuf, "%s,%s,%s\n",
-							sv(om, "oid"), sv(om, "field_key"), sv(om, "type"))
+						// Real format: field_key,OID  (field first, then OID)
+						fmt.Fprintf(&oidBuf, "%s,%s\n",
+							sv(om, "field_key"), sv(om, "oid"))
 					}
-					extraPath := fmt.Sprintf("configs/%s/%s", svcName, snmpFile)
+					// Write to maps/ subfolder — gateway reads from maps_folder
+					extraPath := fmt.Sprintf("configs/%s/maps/%s", svcName, snmpFile)
 					extraFiles[extraPath] = oidBuf.String()
 				}
 			}
@@ -494,8 +503,12 @@ services:
 		fmt.Fprintf(&b, "      - /etc/localtime:/etc/localtime:ro\n")
 		// configs.yml — gateway connection settings (server IP, port, poll interval)
 		fmt.Fprintf(&b, "      - /opt/qube/configs/%s/configs.yml:/app/configs.yml:ro\n", svc.Name)
-		// config.csv — device register/node/OID map (auto-generated from sensor templates)
+		// config.csv — main data file (registers/nodes/devices depending on protocol)
 		fmt.Fprintf(&b, "      - /opt/qube/configs/%s/config.csv:/app/config.csv:ro\n", svc.Name)
+		// SNMP: mount maps/ folder containing per-device-type OID CSV files
+		if svc.Protocol == "snmp" {
+			fmt.Fprintf(&b, "      - /opt/qube/configs/%s/maps:/app/maps:ro\n", svc.Name)
+		}
 
 		// SNMP gateways may have per-device OID files in the same folder
 		if svc.Protocol == "snmp" {

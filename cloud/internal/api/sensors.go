@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -328,26 +329,32 @@ func generateCSVRows(
 		return rows, "nodes", nil
 
 	// ── SNMP ────────────────────────────────────────────────────────────────
-	// Real format: Table,Device,SNMP_csv,Community,Version,Output,Tags
-	// One row per device (the OID list goes into a separate snmp csv file)
-	// We store the OIDs inline in row_data as a JSON field for the compose builder to write
+	// Real devices.csv format: Table,Device,SNMP_csv,Community,Version,Output,Tags
+	//   Device   = IP address of the device (from addr_params.device_ip)
+	//   SNMP_csv = maps/template-slug.csv  (shared OID map for this device type)
+	// The OID map file format is: field_key,OID  (2 cols, no header)
 	case "snmp":
 		oids, _ := tmplCfg["oids"].([]any)
-		community := strVal(ap["community"], strVal(gwCfg["community"], "public"))
-		version   := strVal(ap["version"], strVal(gwCfg["version"], "2c"))
-		snmpFile  := sensorName + ".csv" // each device gets its own OID csv
+		community := strVal(ap["community"], "public")
+		version   := strVal(ap["version"], "2c")
+		deviceIP  := strVal(ap["device_ip"], "") // per-sensor device IP address
+
+		// Map CSV filename: based on sensor name (slug), written to maps/ folder
+		// Multiple sensors of same template type → same map file (deduped in compose builder)
+		snmpSlug := strings.ToLower(strings.ReplaceAll(sensorName, " ", "-"))
+		snmpFile := snmpSlug + ".csv"
+
 		rows := []map[string]any{{
-			// Main devices.csv row
-			"Table":    "Measurements",
-			"Device":   sensorName,
-			"SNMP_csv": snmpFile,
+			"Table":     "snmp_data",
+			"DeviceIP":  deviceIP,          // actual IP used in devices.csv Device column
+			"Device":    deviceIP,          // alias for compose builder compat
+			"SNMP_csv":  snmpFile,
 			"Community": community,
-			"Version":  version,
-			"Output":   "influxdb",
-			"Tags":     tagsStr,
-			// Embedded OID list — written as a separate file by compose builder
-			"_oids":    oids,
-			"_snmp_file": snmpFile,
+			"Version":   version,
+			"Output":    "influxdb",
+			"Tags":      "name=" + sensorName + (func() string { if tagsStr != "" { return "|" + tagsStr }; return "" })(),
+			// OID list embedded for compose builder to write maps/file
+			"_oids":     oids,
 		}}
 		return rows, "devices", nil
 
