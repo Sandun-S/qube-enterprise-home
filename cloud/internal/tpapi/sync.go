@@ -197,33 +197,36 @@ func renderGatewayConfig(svc svcMeta) string {
 	var b bytes.Buffer
 	switch svc.Protocol {
 	case "modbus_tcp":
-		server := fmt.Sprintf("modbus-tcp://%s:%d", svc.Host, svc.GwPort)
-		if svc.GwPort == 0 { server = fmt.Sprintf("modbus-tcp://%s:502", svc.Host) }
-		pollMs := 5000
-		if v, ok := svc.GwCfgJSON["poll_interval_ms"].(float64); ok { pollMs = int(v) }
-		freqSec := pollMs / 1000
-		if freqSec < 1 { freqSec = 5 }
-		fmt.Fprintf(&b, `LogLevel: "Info"
-Modbus:
-  Server: "%s"
-  ReadingsFile: "config.csv"
-  FreqSec: %d
-  SingleReadCount: 100
-HTTP:
-  Data: "http://core-switch:8585/v3/batch"
-  Alerts: "http://core-switch:8585/v3/alerts"
-`, server, freqSec)
+		// server URL: tcp://host:port  (real gateway format)
+		port := svc.GwPort
+		if port == 0 { port = 502 }
+		server := fmt.Sprintf("tcp://%s:%d", svc.Host, port)
+		freqSec := 20
+		if v, ok := svc.GwCfgJSON["freq_sec"].(float64); ok && int(v) > 0 { freqSec = int(v) }
+		singleRead := 120
+		if v, ok := svc.GwCfgJSON["single_read_count"].(float64); ok && int(v) > 0 { singleRead = int(v) }
+		fmt.Fprintf(&b, `loglevel: "info"
+modbus:
+  server: "%s"
+  readingsfile: "config.csv"
+  freqsec: %d
+  singlereadcount: %d
+http:
+  data: "http://core-switch:8585/batch"
+  alerts: "http://core-switch:8585/alerts"
+`, server, freqSec, singleRead)
 
 	case "opcua":
+		// OpcEndPoint: full endpoint URL stored in host field
+		// e.g. opc.tcp://192.168.1.18:52520/OPCUA/N4OpcUaServer
 		endpoint := svc.Host
-		if svc.GwPort > 0 { endpoint = fmt.Sprintf("%s:%d", svc.Host, svc.GwPort) }
 		fmt.Fprintf(&b, `LogLevel: "Info"
 OpcUA:
   OpcEndPoint: "%s"
   PointsFile: "config.csv"
 HTTP:
-  Data: "http://core-switch:8585/v3/batch"
-  Alerts: "http://core-switch:8585/v3/alerts"
+  Data: "http://core-switch:8585/batch"
+  Alerts: "http://core-switch:8585/alerts"
 `, endpoint)
 
 	case "snmp":
@@ -274,14 +277,19 @@ func renderGatewayFiles(protocol, svcName string, rows []csvEntry) (string, map[
 	switch protocol {
 
 	case "modbus_tcp":
-		// Real format: #Equipment,Reading,RegType,Address,type,Output,Table,Tags
-		b.WriteString("#Equipment,Reading,RegType,Address,type,Output,Table,Tags\n")
+		// Real format: #Section,Equipment,Reading,RegType,Address,type,Output
+		// Section = InfluxDB measurement name (maps to "table" field in template registers)
+		// No Tags column in this format
+		b.WriteString("#Section,Equipment,Reading,RegType,Address,type,Output\n")
 		for _, r := range rows {
-			fmt.Fprintf(&b, "%s,%s,%s,%v,%s,%s,%s,%s\n",
-				sv(r.Data, "Equipment"), sv(r.Data, "Reading"),
-				sv(r.Data, "RegType"), r.Data["Address"],
-				sv(r.Data, "Type"), sv(r.Data, "Output"),
-				sv(r.Data, "Table"), sv(r.Data, "Tags"))
+			fmt.Fprintf(&b, "%s,%s,%s,%s,%v,%s,%s\n",
+				sv(r.Data, "Section"),    // measurement/table name
+				sv(r.Data, "Equipment"),  // device name
+				sv(r.Data, "Reading"),    // field key
+				sv(r.Data, "RegType"),    // Holding/Input/Coil
+				r.Data["Address"],        // register address
+				sv(r.Data, "Type"),       // uint16/float32 etc
+				sv(r.Data, "Output"))     // influxdb
 		}
 
 	case "opcua":
@@ -296,28 +304,29 @@ func renderGatewayFiles(protocol, svcName string, rows []csvEntry) (string, map[
 		}
 
 	case "snmp":
-		// Real devices.csv format: #Table,Device,SNMP_csv,Community,Version,Output,Tags
+		// Real devices.csv format: #Table, Device, SNMP csv, Community, Version, Output, Tags
 		// Device = IP address of the SNMP device (from addr_params.device_ip)
-		// SNMP_csv = maps/{template-slug}.csv  (OID map, shared by all sensors using same template)
-		// maps/{template-slug}.csv format: field_key,OID  (2 columns, no header — real gateway format)
-		b.WriteString("#Table,Device,SNMP_csv,Community,Version,Output,Tags\n")
+		// SNMP csv = template map filename (e.g. gxt-rt-ups.csv) — stored in template config_json.map_file
+		// OID map file: field_name,OID  — two columns, NO header line
+		b.WriteString("#Table, Device, SNMP csv, Community, Version, Output, Tags\n")
 
-		// Track which map CSV files we've already written (one per template type, not per sensor)
 		writtenMaps := map[string]bool{}
 		for _, r := range rows {
-			snmpFile := sv(r.Data, "SNMP_csv")  // e.g. "gxt-rt-ups.csv"
-			deviceIP := sv(r.Data, "DeviceIP")  // IP from addr_params.device_ip
-			if deviceIP == "" { deviceIP = sv(r.Data, "Device") } // fallback
+			snmpFile := sv(r.Data, "SNMP_csv")
+			deviceIP  := sv(r.Data, "DeviceIP")
+			if deviceIP == "" { deviceIP = "0.0.0.0" }
 
-			// One row per sensor in devices.csv
+			// tags: always include name=SensorName
+			tags := sv(r.Data, "Tags")
+
 			fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s\n",
 				sv(r.Data, "Table"), deviceIP,
 				snmpFile,
 				sv(r.Data, "Community"), sv(r.Data, "Version"),
-				sv(r.Data, "Output"), sv(r.Data, "Tags"))
+				sv(r.Data, "Output"), tags)
 
-			// Write the OID map file once per unique template (maps/filename)
-			// Real format: field_key,OID  — two columns, NO header line
+			// Write OID map file once per unique template map file
+			// Format: field_name,OID  (no header — matches real gateway maps/*.csv)
 			if !writtenMaps[snmpFile] {
 				writtenMaps[snmpFile] = true
 				if oids, ok := r.Data["_oids"].([]any); ok {
@@ -325,11 +334,9 @@ func renderGatewayFiles(protocol, svcName string, rows []csvEntry) (string, map[
 					for _, o := range oids {
 						om, ok := o.(map[string]any)
 						if !ok { continue }
-						// Real format: field_key,OID  (field first, then OID)
 						fmt.Fprintf(&oidBuf, "%s,%s\n",
 							sv(om, "field_key"), sv(om, "oid"))
 					}
-					// Write to maps/ subfolder — gateway reads from maps_folder
 					extraPath := fmt.Sprintf("configs/%s/maps/%s", svcName, snmpFile)
 					extraFiles[extraPath] = oidBuf.String()
 				}

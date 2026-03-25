@@ -5,5 +5,5 @@ Modbus:
   FreqSec: 5
   SingleReadCount: 100
 HTTP:
-  Data: "http://core-switch:8080/v3/batch"
-  Alerts: "http://core-switch:8080/v3/alerts"
+  Data: "http://core-switch:8585/v3/batch"
+  Alerts: "http://core-switch:8585/v3/alerts"

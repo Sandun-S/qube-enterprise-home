@@ -104,13 +104,15 @@ INSERT INTO sensor_templates (name, protocol, description, is_global, config_jso
   'APC Smart-UPS — battery capacity, runtime, input/output voltage, load',
   TRUE,
   '{
+    "map_file": "apc-ups.csv",
+    "table": "snmp_data",
     "oids": [
-      {"oid": "1.3.6.1.4.1.318.1.1.1.2.2.1.0",  "field_key": "battery_capacity_pct", "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.318.1.1.1.2.2.3.0",  "field_key": "battery_runtime_min",  "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.318.1.1.1.3.2.1.0",  "field_key": "input_voltage_v",      "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.318.1.1.1.4.2.1.0",  "field_key": "output_voltage_v",     "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.318.1.1.1.4.2.3.0",  "field_key": "load_pct",             "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.318.1.1.1.2.2.4.0",  "field_key": "battery_temp_c",       "type": "gauge"}
+      {"oid": "1.3.6.1.4.1.318.1.1.1.2.2.1.0",  "field_key": "battery_capacity_pct"},
+      {"oid": "1.3.6.1.4.1.318.1.1.1.2.2.3.0",  "field_key": "battery_runtime_min"},
+      {"oid": "1.3.6.1.4.1.318.1.1.1.3.2.1.0",  "field_key": "input_voltage_v"},
+      {"oid": "1.3.6.1.4.1.318.1.1.1.4.2.1.0",  "field_key": "output_voltage_v"},
+      {"oid": "1.3.6.1.4.1.318.1.1.1.4.2.3.0",  "field_key": "load_pct"},
+      {"oid": "1.3.6.1.4.1.318.1.1.1.2.2.4.0",  "field_key": "battery_temp_c"}
     ]
   }',
   '{
@@ -129,12 +131,14 @@ INSERT INTO sensor_templates (name, protocol, description, is_global, config_jso
   'Liebert GXT RT UPS — battery, runtime, voltages, load',
   TRUE,
   '{
-    "oids": [
-      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.1",  "field_key": "battery_capacity_pct", "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.2",  "field_key": "battery_runtime_min",  "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.3",  "field_key": "input_voltage_v",      "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.4",  "field_key": "output_voltage_v",     "type": "gauge"},
-      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.5",  "field_key": "load_pct",             "type": "gauge"}
+    "map_file": "gxt-rt-ups.csv",
+    "table": "snmp_data",
+   "oids": [
+      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.1",  "field_key": "battery_capacity_pct"},
+      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.2",  "field_key": "battery_runtime_min"},
+      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.3",  "field_key": "input_voltage_v"},
+      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.4",  "field_key": "output_voltage_v"},
+      {"oid": "1.3.6.1.4.1.476.1.42.3.9.20.1.20.1.2.1.4.5",  "field_key": "load_pct"}
     ]
   }',
   '{
@@ -238,3 +242,58 @@ INSERT INTO sensor_templates (name, protocol, description, is_global, config_jso
 
 -- Add version column to sensor_templates for tracking updates
 ALTER TABLE sensor_templates ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
+
+-- Vertiv ITA2 UPS
+INSERT INTO sensor_templates (name, protocol, description, is_global, config_json, influx_fields_json)
+VALUES (
+  'Vertiv ITA2 UPS',
+  'snmp',
+  'Vertiv ITA2 3-phase UPS — input/output voltages, currents, load, battery',
+  TRUE,
+  '{
+    "map_file": "vertiv-ita2.csv",
+    "table": "snmp_data",
+    "oids": [
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.1.1.0", "field_key": "systemStatus"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.1.2.0", "field_key": "upsOutputSource"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.2.1.0", "field_key": "inputPhaseVoltageA"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.2.2.0", "field_key": "inputPhaseVoltageB"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.2.3.0", "field_key": "inputPhaseVoltageC"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.2.4.0", "field_key": "inputFrequency"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.1.0", "field_key": "outputPhaseVoltageA"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.2.0", "field_key": "outputPhaseVoltageB"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.3.0", "field_key": "outputPhaseVoltageC"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.4.0", "field_key": "outputCurrentA"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.5.0", "field_key": "outputCurrentB"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.6.0", "field_key": "outputCurrentC"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.7.0", "field_key": "outputFrequency"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.8.0", "field_key": "outputActivePowerA"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.9.0", "field_key": "outputActivePowerB"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.10.0", "field_key": "outputActivePowerC"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.14.0", "field_key": "outputLoadA"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.15.0", "field_key": "outputLoadB"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.3.16.0", "field_key": "outputLoadC"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.5.7.0", "field_key": "batteryRemainsTime"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.5.8.0", "field_key": "batteryTemperature"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.5.10.0", "field_key": "batteryCapacity"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.5.1.0", "field_key": "positiveBatteryVoltage"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.5.3.0", "field_key": "positiveBatteryChargingCurrent"},
+      {"oid": "1.3.6.1.4.1.13400.2.54.2.5.4.0", "field_key": "positiveBatteryDischargingCurrent"}
+    ]
+  }',
+  '{
+    "systemStatus": {"display_label": "Systemstatus", "unit": ""},
+    "upsOutputSource": {"display_label": "Upsoutputsource", "unit": ""},
+    "inputPhaseVoltageA": {"display_label": "Inputphasevoltagea", "unit": ""},
+    "inputPhaseVoltageB": {"display_label": "Inputphasevoltageb", "unit": ""},
+    "inputPhaseVoltageC": {"display_label": "Inputphasevoltagec", "unit": ""},
+    "inputFrequency": {"display_label": "Inputfrequency", "unit": ""},
+    "outputPhaseVoltageA": {"display_label": "Outputphasevoltagea", "unit": ""},
+    "outputPhaseVoltageB": {"display_label": "Outputphasevoltageb", "unit": ""},
+    "outputPhaseVoltageC": {"display_label": "Outputphasevoltagec", "unit": ""},
+    "outputCurrentA": {"display_label": "Outputcurrenta", "unit": ""},
+    "outputCurrentB": {"display_label": "Outputcurrentb", "unit": ""},
+    "outputCurrentC": {"display_label": "Outputcurrentc", "unit": ""}
+  }'
+);
+

@@ -455,7 +455,7 @@ function msgEl(id,type,html){
 function v(id){return document.getElementById(id)?.value||'';}
 function setAuth(email,role){
   const el=document.getElementById('auth-label');
-  el.textContent='✓ '+role+' — '+email;
+  el.textContent='✓ '+role+' - '+email;
   el.style.color='#68d391';
 }
 function protoDot(p){
@@ -474,8 +474,9 @@ const PROTO_FALLBACK=[
      {key:'port',label:'Modbus port',type:'number',default:502,required:true}
    ],
    addr_params_schema:[
-     {key:'unit_id',label:'Modbus unit ID',type:'number',default:1,required:true,hint:'1–247, configured on the device (slave address)'},
-     {key:'register_offset',label:'Register address offset',type:'number',default:0,hint:'Shift all register addresses by this amount. Usually 0.'}
+     {key:'unit_id',label:'Unit ID (slave address)',type:'number',default:1,required:true,hint:'1-247, set on the device'},
+     {key:'register_offset',label:'Register offset',type:'number',default:0,hint:'Shift all addresses. Usually 0.'},
+     {key:'section',label:'Section (measurement)',type:'text',default:'Measurements',hint:'InfluxDB measurement name (Section column in config.csv)'}
    ]},
   {id:'opcua',label:'OPC-UA',image_name:'opc-ua-gateway',default_port:4840,description:'Industrial automation, SCADA systems',
    connection_params_schema:[
@@ -498,7 +499,7 @@ const PROTO_FALLBACK=[
    connection_params_schema:[
      {key:'host',label:'MQTT broker URL',type:'text',required:true,placeholder:'tcp://192.168.1.10:1883',hint:'Full broker URL including protocol prefix'},
      {key:'port',label:'Port',type:'number',default:1883,required:true},
-     {key:'base_topic',label:'Base topic',type:'text',placeholder:'factory/floor2',hint:'Base MQTT topic prefix — sensors append their own suffix to this'}
+     {key:'base_topic',label:'Base topic',type:'text',placeholder:'factory/floor2',hint:'Base MQTT topic prefix - sensors append their own suffix to this'}
    ],
    addr_params_schema:[
      {key:'topic_suffix',label:'Topic suffix',type:'text',placeholder:'sensor_01',hint:'Appended to base topic to form the full subscription topic'}
@@ -661,18 +662,18 @@ function renderSelectedDevice(){
   const regsEl=document.getElementById('c-tmpl-registers');
 
   if(t.protocol==='modbus_tcp'&&cfg.registers?.length){
-    regsEl.innerHTML=`<div class="section-label">Registers — data that will be collected</div>
+    regsEl.innerHTML=`<div class="section-label">Registers - data that will be collected</div>
       <table class="reg-table">
         <thead><tr><th>Field</th><th>Address</th><th>Type</th><th>Unit</th></tr></thead>
         <tbody>${cfg.registers.map(r=>`<tr>
           <td class="field-name">${fields[r.field_key]?.display_label||r.field_key}</td>
           <td>${r.address}</td>
           <td>${r.data_type}</td>
-          <td>${fields[r.field_key]?.unit||r.unit||'—'}</td>
+          <td>${fields[r.field_key]?.unit||r.unit||'-'}</td>
         </tr>`).join('')}</tbody>
       </table>`;
   }else if(t.protocol==='snmp'&&cfg.oids?.length){
-    regsEl.innerHTML=`<div class="section-label">OIDs — ${cfg.oids.length} values collected</div>
+    regsEl.innerHTML=`<div class="section-label">OIDs - ${cfg.oids.length} values collected</div>
       <table class="reg-table">
         <thead><tr><th>Field</th><th>OID</th></tr></thead>
         <tbody>${cfg.oids.map(o=>`<tr>
@@ -681,7 +682,7 @@ function renderSelectedDevice(){
         </tr>`).join('')}</tbody>
       </table>`;
   }else if(t.protocol==='opcua'&&cfg.nodes?.length){
-    regsEl.innerHTML=`<div class="section-label">OPC-UA nodes — ${cfg.nodes.length} values collected</div>
+    regsEl.innerHTML=`<div class="section-label">OPC-UA nodes - ${cfg.nodes.length} values collected</div>
       <table class="reg-table">
         <thead><tr><th>Field</th><th>Node ID</th></tr></thead>
         <tbody>${cfg.nodes.map(n=>`<tr>
@@ -690,14 +691,14 @@ function renderSelectedDevice(){
         </tr>`).join('')}</tbody>
       </table>`;
   }else if(t.protocol==='mqtt'&&cfg.readings?.length){
-    regsEl.innerHTML=`<div class="section-label">MQTT readings — ${cfg.readings.length} values</div>
+    regsEl.innerHTML=`<div class="section-label">MQTT readings - ${cfg.readings.length} values</div>
       ${cfg.topic_pattern?`<div style="font-size:10px;color:#718096;margin-bottom:6px">Topic pattern: <code>${cfg.topic_pattern}</code></div>`:''}
       <table class="reg-table">
         <thead><tr><th>Field</th><th>JSON path</th><th>Unit</th></tr></thead>
         <tbody>${cfg.readings.map(r=>`<tr>
           <td class="field-name">${fields[r.field_key]?.display_label||r.field_key}</td>
           <td style="font-family:monospace;font-size:10px">${r.json_path}</td>
-          <td>${r.unit||fields[r.field_key]?.unit||'—'}</td>
+          <td>${r.unit||fields[r.field_key]?.unit||'-'}</td>
         </tr>`).join('')}</tbody>
       </table>`;
   }else{
@@ -711,7 +712,7 @@ function renderSelectedDevice(){
     :`<label>Host / IP</label><input id="cgw-host" placeholder="192.168.1.100">
       <label>Port</label><input id="cgw-port" type="number" value="${proto?.default_port||0}">`;
   // For SNMP: gateway has no meaningful host (each sensor has its own device IP)
-  // Hide the connection section for SNMP — addr_params has device_ip instead
+  // Hide the connection section for SNMP - addr_params has device_ip instead
   const connSection=document.getElementById('c-conn-section');
   if(t.protocol==='snmp'){
     connSection.style.display='none';
@@ -766,7 +767,7 @@ function populateQubeSelect(){
   const sel=document.getElementById('c-target-qube');
   sel.innerHTML=myQubes.length
     ?myQubes.map(q=>`<option value="${q.id}">${q.id}${q.location_label?' ('+q.location_label+')':''}</option>`).join('')
-    :'<option value="">No Qubes — go back and claim one</option>';
+    :'<option value="">No Qubes - go back and claim one</option>';
   if(myQubes.length)loadGatewaysForQube();
 }
 
@@ -795,7 +796,7 @@ function updateConnectionNotice(){
       notice.style.display='block';
       notice.style.background='#1a2a1a';
       notice.style.borderColor='#276749';
-      notice.textContent=`New SNMP gateway will be created. All SNMP sensors on this Qube share one container — each sensor has its own device IP.`;
+      notice.textContent=`New SNMP gateway will be created. All SNMP sensors on this Qube share one container - each sensor has its own device IP.`;
       selectedGwId=null;
     }
   }else{
@@ -811,7 +812,7 @@ function updateConnectionNotice(){
   }
 }
 
-// stub — no longer needed but referenced
+// stub - no longer needed but referenced
 function setGwMode(){}
 
 async function custAddSensor(){
@@ -950,7 +951,7 @@ async function saLogin(){
     saRenderProtocols();
     saPopulateProtoSelect();
     saLoadTemplates();
-  }else msgEl('sa-login-msg','err',(r.data.error||'Failed')+' — need admin or superadmin role');
+  }else msgEl('sa-login-msg','err',(r.data.error||'Failed')+' - need admin or superadmin role');
 }
 
 function saRenderProtocols(){
@@ -1093,11 +1094,11 @@ function renderFormRegs(){
     <tbody>${formRegs.map((r,i)=>`<tr>
       <td>${i}</td>
       <td>${r.address}</td>
-      <td>${r.register_type||'—'}</td>
+      <td>${r.register_type||'-'}</td>
       <td>${r.data_type}</td>
       <td>${r.scale}</td>
       <td class="field-name">${r.field_key}</td>
-      <td>${r.unit||r.table||'—'}</td>
+      <td>${r.unit||r.table||'-'}</td>
       <td><button class="btn btn-d btn-sm" onclick="delReg(${i})">Del</button></td>
     </tr>`).join('')}</tbody></table>`;
 }
@@ -1156,7 +1157,7 @@ function renderFieldsEditorFromForm(){
 function renderFieldsEditorHtml(fields){
   const el=document.getElementById('sa-fields-editor');
   const keys=Object.keys(fields);
-  if(!keys.length){el.innerHTML='<div style="color:#4a5568;font-size:11px">No fields — add registers first.</div>';return;}
+  if(!keys.length){el.innerHTML='<div style="color:#4a5568;font-size:11px">No fields - add registers first.</div>';return;}
   el.innerHTML=`<table class="reg-table">
     <thead><tr><th>Field key</th><th>Display label</th><th>Unit</th></tr></thead>
     <tbody>${keys.map(k=>`<tr>
@@ -1182,7 +1183,7 @@ function saveFieldsFromEditor(){
 async function saSaveTemplate(){
   syncFormToJson();
   let cfg={},fields={};
-  try{cfg=JSON.parse(v('sa-cfg'));}catch(e){msgEl('sa-editor-msg','err','config_json: invalid JSON — check Raw JSON tab');return;}
+  try{cfg=JSON.parse(v('sa-cfg'));}catch(e){msgEl('sa-editor-msg','err','config_json: invalid JSON - check Raw JSON tab');return;}
   try{fields=JSON.parse(v('sa-fields-json'));}catch(e){msgEl('sa-editor-msg','err','influx_fields_json: invalid JSON');return;}
   const body={name:v('sa-name'),protocol:v('sa-proto'),description:v('sa-desc'),config_json:cfg,influx_fields_json:fields};
   const r=editingId
@@ -1218,7 +1219,7 @@ async function saPreview(){
       csvText='#'+keys.join(',')+'\n'+rows.map(row=>keys.map(k=>String(row[k]??'')).join(',')).join('\n');
     }
     document.getElementById('sa-preview-out').innerHTML=
-      `<div style="font-size:10px;color:#718096;margin-top:10px">config.csv preview — ${rows.length} rows:</div><pre>${csvText}</pre>`;
+      `<div style="font-size:10px;color:#718096;margin-top:10px">config.csv preview - ${rows.length} rows:</div><pre>${csvText}</pre>`;
   }else msgEl('sa-editor-msg','err',r.data.error||'No preview');
 }
 
@@ -1254,7 +1255,7 @@ function colorJson(obj){
 async function testConn(){
   BASE=v('cfg-url').replace(/\/$/,'')||BASE;
   const r=await api('GET','/health','','');
-  msgEl('cfg-msg',r.ok?'ok':'err',r.ok?'Connected ✓ — '+JSON.stringify(r.data):'Cannot reach API: '+r.data?.error);
+  msgEl('cfg-msg',r.ok?'ok':'err',r.ok?'Connected ✓ - '+JSON.stringify(r.data):'Cannot reach API: '+r.data?.error);
 }
 
 // Init

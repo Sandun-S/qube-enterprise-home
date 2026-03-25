@@ -280,8 +280,10 @@ func generateCSVRows(
 	switch protocol {
 
 	// ── Modbus TCP ──────────────────────────────────────────────────────────
-	// Real format: Equipment,Reading,RegType,Address,type,Output,Table,Tags
-	// gateway reads registers.csv and posts batch to core-switch /v3/batch
+	// Real format: Section,Equipment,Reading,RegType,Address,type,Output
+	// Section = InfluxDB measurement name (from register "table" field, default "Measurements")
+	// Equipment = sensor name (identifies this device in InfluxDB)
+	// No Tags column in this format
 	case "modbus_tcp":
 		registers, _ := tmplCfg["registers"].([]any)
 		offset := toInt(ap["register_offset"], 0)
@@ -290,16 +292,16 @@ func generateCSVRows(
 			reg, ok := r.(map[string]any)
 			if !ok { continue }
 			addr := toInt(reg["address"], 0) + offset
+			// Section: from register "table" field, or addr_params "section", or "Measurements"
+			section := strVal(ap["section"], strVal(reg["table"], "Measurements"))
 			rows = append(rows, map[string]any{
-				// Column order matches real registers.csv exactly
+				"Section":   section,
 				"Equipment": sensorName,
 				"Reading":   strVal(reg["field_key"], "value"),
 				"RegType":   strVal(reg["register_type"], "Holding"),
 				"Address":   addr,
 				"Type":      strVal(reg["data_type"], "uint16"),
 				"Output":    "influxdb",
-				"Table":     strVal(reg["table"], "Measurements"),
-				"Tags":      tagsStr,
 			})
 		}
 		return rows, "registers", nil
@@ -329,31 +331,38 @@ func generateCSVRows(
 		return rows, "nodes", nil
 
 	// ── SNMP ────────────────────────────────────────────────────────────────
-	// Real devices.csv format: Table,Device,SNMP_csv,Community,Version,Output,Tags
-	//   Device   = IP address of the device (from addr_params.device_ip)
-	//   SNMP_csv = maps/template-slug.csv  (shared OID map for this device type)
-	// The OID map file format is: field_key,OID  (2 cols, no header)
+	// Real devices.csv format: #Table, Device, SNMP csv, Community, Version, Output, Tags
+	//   Device   = IP address of the SNMP device (from addr_params.device_ip)
+	//   SNMP csv = map filename from template config_json.map_file (e.g. gxt-rt-ups.csv)
+	//              This filename is the same for all sensors of this template type.
+	// OID map file format: field_name,OID  (2 cols, no header)
 	case "snmp":
 		oids, _ := tmplCfg["oids"].([]any)
 		community := strVal(ap["community"], "public")
 		version   := strVal(ap["version"], "2c")
-		deviceIP  := strVal(ap["device_ip"], "") // per-sensor device IP address
+		deviceIP  := strVal(ap["device_ip"], "")
 
-		// Map CSV filename: based on sensor name (slug), written to maps/ folder
-		// Multiple sensors of same template type → same map file (deduped in compose builder)
-		snmpSlug := strings.ToLower(strings.ReplaceAll(sensorName, " ", "-"))
-		snmpFile := snmpSlug + ".csv"
+		// Map file: from template config_json.map_file — author sets this when creating template
+		// Falls back to slugified template name if not set
+		mapFile := strVal(tmplCfg["map_file"], "")
+		if mapFile == "" {
+			// derive from sensor name as fallback
+			mapFile = strings.ToLower(strings.ReplaceAll(strings.ReplaceAll(sensorName, " ", "-"), "_", "-")) + ".csv"
+		}
+
+		tableField := strVal(tmplCfg["table"], "snmp_data")
+		tagStr := "name=" + sensorName
+		if tagsStr != "" { tagStr += "|" + tagsStr }
 
 		rows := []map[string]any{{
-			"Table":     "snmp_data",
-			"DeviceIP":  deviceIP,          // actual IP used in devices.csv Device column
-			"Device":    deviceIP,          // alias for compose builder compat
-			"SNMP_csv":  snmpFile,
+			"Table":     tableField,
+			"DeviceIP":  deviceIP,
+			"Device":    deviceIP,
+			"SNMP_csv":  mapFile,
 			"Community": community,
 			"Version":   version,
 			"Output":    "influxdb",
-			"Tags":      "name=" + sensorName + (func() string { if tagsStr != "" { return "|" + tagsStr }; return "" })(),
-			// OID list embedded for compose builder to write maps/file
+			"Tags":      tagStr,
 			"_oids":     oids,
 		}}
 		return rows, "devices", nil

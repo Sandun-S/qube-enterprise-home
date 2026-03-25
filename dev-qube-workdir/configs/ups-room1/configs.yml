@@ -1,10 +1,10 @@
-LogLevel: "Info"
-SNMP:
-  Host: "192.168.1.200"
-  Community: "public"
-  Version: "2c"
-  DevicesFile: "config.csv"
-  FreqSec: 60
-HTTP:
-  Data: "http://core-switch:8080/v3/batch"
-  Alerts: "http://core-switch:8080/v3/alerts"
+loglevel: "INFO"
+snmp:
+  fetch_interval: 15
+  connect_timeout: 10
+  worker_count: 2
+  devices_file: "config.csv"
+  maps_folder: "./maps"
+http:
+  data_url: "http://core-switch:8585/v3/batch"
+  alerts_url: "http://core-switch:8585/v3/alerts"

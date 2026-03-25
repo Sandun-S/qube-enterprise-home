@@ -486,6 +486,70 @@ if [ -n "$GLOBAL_TMPL_ID" ] && [ "$GLOBAL_TMPL_ID" != "null" ]; then
 fi
 
 # =============================================================================
+section "13b. Templates — superadmin creates global SNMP template (Vertiv ITA2)"
+# =============================================================================
+
+# Superadmin creates a new global template via API
+R=$(api POST /api/v1/templates   '{
+    "name":"Vertiv ITA2 UPS",
+    "protocol":"snmp",
+    "description":"Vertiv ITA2 3-phase UPS — voltages, currents, load, battery",
+    "config_json":{
+      "map_file":"vertiv-ita2.csv",
+      "table":"snmp_data",
+      "oids":[
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.1.1.0","field_key":"systemStatus"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.2.1.0","field_key":"inputPhaseVoltageA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.3.1.0","field_key":"outputPhaseVoltageA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.3.4.0","field_key":"outputCurrentA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.3.8.0","field_key":"outputActivePowerA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.3.14.0","field_key":"outputLoadA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.5.7.0","field_key":"batteryRemainsTime"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.5.10.0","field_key":"batteryCapacity"}
+      ]
+    },
+    "influx_fields_json":{
+      "systemStatus":       {"display_label":"System Status","unit":""},
+      "inputPhaseVoltageA": {"display_label":"Input Voltage A","unit":"V"},
+      "outputPhaseVoltageA":{"display_label":"Output Voltage A","unit":"V"},
+      "outputCurrentA":     {"display_label":"Output Current A","unit":"A"},
+      "outputActivePowerA": {"display_label":"Output Active Power A","unit":"W"},
+      "outputLoadA":        {"display_label":"Output Load A","unit":"%"},
+      "batteryRemainsTime": {"display_label":"Battery Remaining","unit":"min"},
+      "batteryCapacity":    {"display_label":"Battery Capacity","unit":"%"}
+    }
+  }'   "$SUPER_TOKEN")
+assert_status "superadmin create global SNMP template" "201" "$(code "$R")"
+VERTIV_TMPL_ID=$(split "$R" | jq -r .id)
+assert_field "vertiv template id" "$VERTIV_TMPL_ID"
+
+# Verify it is global=true (superadmin-created templates default to global)
+IS_GLOBAL=$(split "$R" | jq -r .is_global)
+[ "$IS_GLOBAL" = "true" ] && ok "new template is global" || fail "expected is_global=true, got $IS_GLOBAL"
+
+# Regular admin can see it
+R=$(api GET "/api/v1/templates?protocol=snmp" "" "$TOKEN")
+assert_status "regular admin sees new global SNMP template" "200" "$(code "$R")"
+SNMP_COUNT=$(split "$R" | jq '[.[] | select(.is_global==true)] | length')
+[ "$SNMP_COUNT" -ge "3" ] && ok "snmp global templates: $SNMP_COUNT"   || fail "expected ≥3 global SNMP templates, got $SNMP_COUNT"
+
+# Preview the Vertiv template
+R=$(api GET "/api/v1/templates/$VERTIV_TMPL_ID/preview" "" "$TOKEN")
+assert_status "vertiv template preview" "200" "$(code "$R")"
+ROW_COUNT=$(split "$R" | jq -r .row_count)
+[ "$ROW_COUNT" -ge "1" ] && ok "vertiv preview has $ROW_COUNT rows" || fail "expected preview rows"
+
+# Regular admin CANNOT delete a global template
+R=$(api DELETE "/api/v1/templates/$VERTIV_TMPL_ID" "" "$TOKEN")
+assert_status "regular admin cannot delete global template → 403" "403" "$(code "$R")"
+
+# Superadmin can patch OIDs
+R=$(api PATCH "/api/v1/templates/$VERTIV_TMPL_ID/registers"   '{"action":"add","entry":{"oid":"1.3.6.1.4.1.13400.2.54.2.5.8.0","field_key":"batteryTemperature"}}'   "$SUPER_TOKEN")
+assert_status "superadmin patch global SNMP template" "200" "$(code "$R")"
+AFTER=$(split "$R" | jq -r .total_entries)
+[ "$AFTER" = "9" ] && ok "patch add OID → 9 total" || fail "expected 9 OIDs, got $AFTER"
+
+# =============================================================================
 section "14. Gateways — all 4 protocols"
 # =============================================================================
 

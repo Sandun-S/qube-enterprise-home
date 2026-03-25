@@ -1,5 +1,5 @@
 #Equipment,Reading,RegType,Address,type,Output,Table,Tags
 Main_Meter,active_power_w,Holding,3001,uint16,influxdb,Measurements,location=panel_a
-Main_Meter,voltage_ll_v,holding,3028,float32,influxdb,Measurements,location=panel_a,building=HQ
-Main_Meter,current_a,holding,3054,float32,influxdb,Measurements,location=panel_a,building=HQ
-Main_Meter,energy_kwh,holding,3204,float32,influxdb,Measurements,location=panel_a,building=HQ
+Main_Meter,voltage_ll_v,holding,3028,float32,influxdb,Measurements,building=HQ,location=panel_a
+Main_Meter,current_a,holding,3054,float32,influxdb,Measurements,building=HQ,location=panel_a
+Main_Meter,energy_kwh,holding,3204,float32,influxdb,Measurements,building=HQ,location=panel_a

@@ -1434,6 +1434,48 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ---
 
+## 13b. Superadmin — Create Global SNMP Template
+
+> Superadmin creates global templates visible to all orgs. Key fields for SNMP: `map_file` (OID CSV filename in maps/ folder), `table` (InfluxDB measurement), `oids` (list of `{oid, field_key}`).
+
+### Create global SNMP template
+```bash
+curl -s -X POST $BASE/api/v1/templates \
+  -H "Authorization: Bearer $SUPER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name":"Vertiv ITA2 UPS","protocol":"snmp",
+    "description":"Vertiv ITA2 3-phase UPS",
+    "config_json":{
+      "map_file":"vertiv-ita2.csv","table":"snmp_data",
+      "oids":[
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.1.1.0","field_key":"systemStatus"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.2.1.0","field_key":"inputPhaseVoltageA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.3.1.0","field_key":"outputPhaseVoltageA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.3.4.0","field_key":"outputCurrentA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.3.14.0","field_key":"outputLoadA"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.5.7.0","field_key":"batteryRemainsTime"},
+        {"oid":"1.3.6.1.4.1.13400.2.54.2.5.10.0","field_key":"batteryCapacity"}
+      ]
+    },
+    "influx_fields_json":{
+      "systemStatus":{"display_label":"System Status","unit":""},
+      "inputPhaseVoltageA":{"display_label":"Input Voltage A","unit":"V"},
+      "outputPhaseVoltageA":{"display_label":"Output Voltage A","unit":"V"},
+      "outputCurrentA":{"display_label":"Output Current A","unit":"A"},
+      "outputLoadA":{"display_label":"Output Load A","unit":"%"},
+      "batteryRemainsTime":{"display_label":"Battery Remaining","unit":"min"},
+      "batteryCapacity":{"display_label":"Battery Capacity","unit":"%"}
+    }
+  }'
+# Expected: 201 {id, is_global:true}
+# Regular admin can see it: GET /api/v1/templates?protocol=snmp
+# Regular admin CANNOT delete it: DELETE returns 403
+# Superadmin can patch OIDs: PATCH /api/v1/templates/{id}/registers
+```
+
+---
+
 ## 13. Error and edge cases
 
 ### 13.1 Very long sensor name

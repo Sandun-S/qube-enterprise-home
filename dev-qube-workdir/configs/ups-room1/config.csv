@@ -1,2 +1,2 @@
 #Table,Device,SNMP_csv,Community,Version,Output,Tags
-Measurements,UPS_Main,UPS_Main.csv,public,2c,influxdb,room=server_room
+snmp_data,,ups_main.csv,public,2c,influxdb,name=UPS_Main|room=server_room

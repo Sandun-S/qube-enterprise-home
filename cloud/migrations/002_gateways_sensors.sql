@@ -32,7 +32,8 @@ INSERT INTO protocols (id, label, image_name, default_port, description,
   ]'::jsonb,
   '[
     {"key":"unit_id","label":"Unit ID (slave address)","type":"number","default":1,"required":true,"hint":"1-247, set on the device"},
-    {"key":"register_offset","label":"Register offset","type":"number","default":0,"hint":"Shift all addresses by this amount. Usually 0."}
+    {"key":"register_offset","label":"Register offset","type":"number","default":0,"hint":"Shift all addresses. Usually 0."},
+    {"key":"section","label":"Section (measurement name)","type":"text","default":"Measurements","hint":"InfluxDB measurement / Section column in config.csv"}
   ]'::jsonb
 ),
 (
@@ -336,7 +337,7 @@ INSERT INTO registry_config (key, value, description) VALUES
     ('img_snmp',        'registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest',
                         'Full image for snmp-gateway (existing Qube Lite image)');
 
-- 002_gateways_sensors.sql — Qube Enterprise Phase 2 Schema
+-- 002_gateways_sensors.sql — Qube Enterprise Phase 2 Schema
 -- Adds: sensor_templates, gateways, sensors, services, service_csv_rows, sensor_readings
 
 -- ===================== SENSOR TEMPLATES =====================
