@@ -1,7 +1,7 @@
 LogLevel: "Info"
 OpcUA:
-  OpcEndPoint: "opc.tcp://192.168.1.18:52520/OPCUA/Server:52520"
+  OpcEndPoint: "opc.tcp://192.168.1.18:52520/OPCUA/Server"
   PointsFile: "config.csv"
 HTTP:
-  Data: "http://core-switch:8585/v3/batch"
-  Alerts: "http://core-switch:8585/v3/alerts"
+  Data: "http://core-switch:8585/batch"
+  Alerts: "http://core-switch:8585/alerts"

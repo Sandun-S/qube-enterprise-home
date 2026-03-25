@@ -382,14 +382,35 @@ HASH=$(split "$R" | jq -r .hash)
 assert_field "sync/state returns hash" "$HASH"
 
 # =============================================================================
+section "10b. Protocols — list"
+# =============================================================================
+
+R=$(api GET /api/v1/protocols "" "$TOKEN")
+assert_status "list protocols" "200" "$(code "$R")"
+PROTO_COUNT=$(split "$R" | jq '. | length')
+[ "$PROTO_COUNT" = "4" ] && ok "4 protocols returned" || fail "expected 4 protocols, got $PROTO_COUNT"
+
+PROTO_IDS=$(split "$R" | jq -r '[.[].id] | sort | join(",")')
+[ "$PROTO_IDS" = "modbus_tcp,mqtt,opcua,snmp" ] && ok "all 4 protocol IDs present" \
+  || fail "expected modbus_tcp,mqtt,opcua,snmp, got $PROTO_IDS"
+
+assert_field "protocol has label"        "$(split "$R" | jq -r '.[0].label')"
+assert_field "protocol has default_port" "$(split "$R" | jq -r '.[0].default_port')"
+assert_field "protocol has addr_params_schema" "$(split "$R" | jq -r '.[0].addr_params_schema')"
+
+# No auth → 401
+R=$(curl -s -w "\n%{http_code}" "$BASE/api/v1/protocols")
+assert_status "protocols no auth → 401" "401" "$(code "$R")"
+
+# =============================================================================
 section "11. Templates — list and get"
 # =============================================================================
 
 R=$(api GET /api/v1/templates "" "$TOKEN")
 assert_status "list templates" "200" "$(code "$R")"
 TMPL_COUNT=$(split "$R" | jq '. | length')
-[ "$TMPL_COUNT" -ge "3" ] && ok "templates has seeded globals ($TMPL_COUNT found)" \
-  || fail "expected ≥3 global templates from migrations, got $TMPL_COUNT"
+[ "$TMPL_COUNT" -ge "10" ] && ok "templates has seeded globals ($TMPL_COUNT found)" \
+  || fail "expected ≥10 global templates from migrations, got $TMPL_COUNT"
 
 # Filter by protocol
 R=$(api GET "/api/v1/templates?protocol=modbus_tcp" "" "$TOKEN")
@@ -531,7 +552,7 @@ IS_GLOBAL=$(split "$R" | jq -r .is_global)
 R=$(api GET "/api/v1/templates?protocol=snmp" "" "$TOKEN")
 assert_status "regular admin sees new global SNMP template" "200" "$(code "$R")"
 SNMP_COUNT=$(split "$R" | jq '[.[] | select(.is_global==true)] | length')
-[ "$SNMP_COUNT" -ge "3" ] && ok "snmp global templates: $SNMP_COUNT"   || fail "expected ≥3 global SNMP templates, got $SNMP_COUNT"
+[ "$SNMP_COUNT" -ge "4" ] && ok "snmp global templates: $SNMP_COUNT"   || fail "expected ≥4 global SNMP templates (3 seeded + 1 created), got $SNMP_COUNT"
 
 # Preview the Vertiv template
 R=$(api GET "/api/v1/templates/$VERTIV_TMPL_ID/preview" "" "$TOKEN")
@@ -548,6 +569,39 @@ R=$(api PATCH "/api/v1/templates/$VERTIV_TMPL_ID/registers"   '{"action":"add","
 assert_status "superadmin patch global SNMP template" "200" "$(code "$R")"
 AFTER=$(split "$R" | jq -r .total_entries)
 [ "$AFTER" = "9" ] && ok "patch add OID → 9 total" || fail "expected 9 OIDs, got $AFTER"
+
+# =============================================================================
+section "13c. Registry — view and update (superadmin only)"
+# =============================================================================
+
+R=$(api GET /api/v1/admin/registry "" "$SUPER_TOKEN")
+assert_status "get registry (superadmin)" "200" "$(code "$R")"
+REG_MODE=$(split "$R" | jq -r .mode)
+assert_field "registry has mode" "$REG_MODE"
+assert_field "registry has github_base" "$(split "$R" | jq -r .github_base)"
+RESOLVED_COUNT=$(split "$R" | jq -r '.resolved | length')
+[ "$RESOLVED_COUNT" -ge "6" ] && ok "registry has $RESOLVED_COUNT resolved images" \
+  || fail "expected ≥6 resolved images, got $RESOLVED_COUNT"
+
+# Non-superadmin cannot access
+R=$(api GET /api/v1/admin/registry "" "$TOKEN")
+assert_status "get registry non-superadmin → 403" "403" "$(code "$R")"
+
+# Update mode to gitlab
+R=$(api PUT /api/v1/admin/registry '{"mode":"gitlab"}' "$SUPER_TOKEN")
+assert_status "switch to gitlab mode" "200" "$(code "$R")"
+[ "$(split "$R" | jq -r .settings.mode)" = "gitlab" ] && ok "mode switched to gitlab" \
+  || fail "expected gitlab mode"
+
+# Restore github mode
+R=$(api PUT /api/v1/admin/registry '{"mode":"github"}' "$SUPER_TOKEN")
+assert_status "restore github mode" "200" "$(code "$R")"
+[ "$(split "$R" | jq -r .settings.mode)" = "github" ] && ok "mode restored to github" \
+  || fail "expected github mode"
+
+# Non-superadmin cannot update
+R=$(api PUT /api/v1/admin/registry '{"mode":"custom"}' "$TOKEN")
+assert_status "update registry non-superadmin → 403" "403" "$(code "$R")"
 
 # =============================================================================
 section "14. Gateways — all 4 protocols"
@@ -1000,8 +1054,8 @@ assert_status "org B can't see org A sensor → 404" "404" "$(code "$R")"
 R=$(api GET "/api/v1/templates" "" "$TOKEN_B")
 assert_status "org B can see global templates" "200" "$(code "$R")"
 GLOBAL_COUNT=$(split "$R" | jq '[.[] | select(.is_global==true)] | length')
-[ "$GLOBAL_COUNT" -ge "3" ] && ok "org B sees $GLOBAL_COUNT global templates" \
-  || fail "org B should see global templates"
+[ "$GLOBAL_COUNT" -ge "10" ] && ok "org B sees $GLOBAL_COUNT global templates" \
+  || fail "org B should see ≥10 global templates"
 
 # =============================================================================
 section "SUMMARY"

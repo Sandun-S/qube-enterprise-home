@@ -1,7 +1,7 @@
 loglevel: "info"
 modbus:
-  server: "tcp://192.168.1.100:502"
-  readingsfile: "config.csv"
+  server: "tcp://10.51.12.45:502"
+  readingsfile: "registers.csv"
   freqsec: 20
   singlereadcount: 120
 http:

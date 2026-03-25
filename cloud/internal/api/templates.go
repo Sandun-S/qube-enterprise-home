@@ -135,8 +135,8 @@ func createTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Only superadmin can create global templates (IoT team internal role)
-		isGlobal := req.IsGlobal && role == "superadmin"
+		// Superadmin always creates global templates (IoT team internal role)
+		isGlobal := role == "superadmin"
 
 		cfg, _    := json.Marshal(req.ConfigJSON)
 		fields, _ := json.Marshal(req.InfluxFieldsJSON)

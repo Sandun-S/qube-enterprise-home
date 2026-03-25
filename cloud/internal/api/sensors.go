@@ -249,10 +249,10 @@ func listAllSensorsForQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 // ─── CSV Generation — matches EXACT real gateway file formats ─────────────────
 //
-// Modbus registers.csv:  #Equipment,Reading,RegType,Address,type,Output,Table,Tags
-// OPC-UA nodes.csv:      #Table,Device,Reading,OpcNode,Type,Freq,Output,Tags
-// SNMP devices.csv:      #Table,Device,SNMP_csv,Community,Version,Output,Tags
-// (SNMP has separate device rows + OID rows in two files — we use one unified row per reading)
+// Modbus config.csv:  #Equipment,Reading,RegType,Address,type,Output,Table,Tags
+// OPC-UA config.csv:  #Table,Device,Reading,OpcNode,Type,Freq,Output,Tags
+// SNMP config.csv:    #Table,Device,SNMP_csv,Community,Version,Output,Tags  (+ maps/*.csv: field_key,OID)
+// Tags in all CSV files are pipe-separated (|). Gateways convert | → , before forwarding.
 
 func generateCSVRows(
 	sensorID, sensorName, protocol string,
@@ -280,28 +280,30 @@ func generateCSVRows(
 	switch protocol {
 
 	// ── Modbus TCP ──────────────────────────────────────────────────────────
-	// Real format: Section,Equipment,Reading,RegType,Address,type,Output
-	// Section = InfluxDB measurement name (from register "table" field, default "Measurements")
-	// Equipment = sensor name (identifies this device in InfluxDB)
-	// No Tags column in this format
+	// Real format: Equipment,Reading,RegType,Address,type,Output,Table,Tags
+	// Equipment = sensor name (identifies device in InfluxDB)
+	// Table = InfluxDB measurement name (from register "table" field, default "Measurements")
+	// Tags = pipe-separated, gateway converts | → , before sending to core-switch
 	case "modbus_tcp":
 		registers, _ := tmplCfg["registers"].([]any)
 		offset := toInt(ap["register_offset"], 0)
 		rows := make([]map[string]any, 0, len(registers))
+		tagStr := "name=" + sensorName
+		if tagsStr != "" { tagStr += "|" + tagsStr }
 		for _, r := range registers {
 			reg, ok := r.(map[string]any)
 			if !ok { continue }
 			addr := toInt(reg["address"], 0) + offset
-			// Section: from register "table" field, or addr_params "section", or "Measurements"
-			section := strVal(ap["section"], strVal(reg["table"], "Measurements"))
+			table := strVal(ap["section"], strVal(reg["table"], "Measurements"))
 			rows = append(rows, map[string]any{
-				"Section":   section,
 				"Equipment": sensorName,
 				"Reading":   strVal(reg["field_key"], "value"),
 				"RegType":   strVal(reg["register_type"], "Holding"),
 				"Address":   addr,
 				"Type":      strVal(reg["data_type"], "uint16"),
 				"Output":    "influxdb",
+				"Table":     table,
+				"Tags":      tagStr,
 			})
 		}
 		return rows, "registers", nil
@@ -427,7 +429,7 @@ func flattenTags(tags map[string]any) string {
 	if len(tags) == 0 { return "" }
 	out := ""
 	for k, v := range tags {
-		if out != "" { out += "," }
+		if out != "" { out += "|" }
 		out += fmt.Sprintf("%s=%v", k, v)
 	}
 	return out

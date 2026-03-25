@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose:*)",
+      "Bash(curl -s http://localhost:8080/api/v1/auth/login -X POST -H \"Content-Type: application/json\" -d '{\"\"\"\"email\"\"\"\":\"\"\"\"iotteam@internal.local\"\"\"\",\"\"\"\"password\"\"\"\":\"\"\"\"iotteam2024\"\"\"\"}')",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d.get\\(''''token'''',''''''''\\)\\)\")",
+      "Bash(TOKEN=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NzQ1MDM2MTUsIm9yZ19pZCI6IjAwMDAwMDAwLTAwMDAtMDAwMC0wMDAwLTAwMDAwMDAwMDAwMSIsInJvbGUiOiJzdXBlcmFkbWluIiwidXNlcl9pZCI6ImQ5NTA3ZmVjLWI3OWEtNGZiMS1hNmFjLWE0YTU4ZGM5YjY3OCJ9.pG6ajt1wkaSv1QvuK7BwOG1XCRexhJ-H5JXRNPJKTqo\")",
+      "Bash(curl -s http://localhost:8080/api/v1/sensors/9daced26-2509-4dd0-90ce-5e9dd5b1a865/rows -H \"Authorization: Bearer $TOKEN\")",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s http://localhost:8080/api/v1/qubes -H \"Authorization: Bearer $TOKEN\")",
+      "Bash(for dir:*)",
+      "Bash(do echo:*)",
+      "Read(//mnt/d/Sandun/Projects/qube-enterprise-home/**)",
+      "Bash(done)"
+    ]
+  }
+}

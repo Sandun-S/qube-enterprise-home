@@ -1,2 +1,2 @@
-#Table,Device,SNMP_csv,Community,Version,Output,Tags
-snmp_data,,ups_main.csv,public,2c,influxdb,name=UPS_Main|room=server_room
+#Table, Device, SNMP csv, Community, Version, Output, Tags
+snmp_data,0.0.0.0,apc-ups.csv,public,2c,influxdb,name=UPS_Main|room=server_room

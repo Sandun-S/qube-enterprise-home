@@ -277,19 +277,20 @@ func renderGatewayFiles(protocol, svcName string, rows []csvEntry) (string, map[
 	switch protocol {
 
 	case "modbus_tcp":
-		// Real format: #Section,Equipment,Reading,RegType,Address,type,Output
-		// Section = InfluxDB measurement name (maps to "table" field in template registers)
-		// No Tags column in this format
-		b.WriteString("#Section,Equipment,Reading,RegType,Address,type,Output\n")
+		// Real format: #Equipment,Reading,RegType,Address,type,Output,Table,Tags
+		// Equipment = sensor/device name; Table = InfluxDB measurement name
+		// Tags are pipe-separated; gateway converts | → , before forwarding to core-switch
+		b.WriteString("#Equipment,Reading,RegType,Address,type,Output,Table,Tags\n")
 		for _, r := range rows {
-			fmt.Fprintf(&b, "%s,%s,%s,%s,%v,%s,%s\n",
-				sv(r.Data, "Section"),    // measurement/table name
-				sv(r.Data, "Equipment"),  // device name
-				sv(r.Data, "Reading"),    // field key
-				sv(r.Data, "RegType"),    // Holding/Input/Coil
-				r.Data["Address"],        // register address
-				sv(r.Data, "Type"),       // uint16/float32 etc
-				sv(r.Data, "Output"))     // influxdb
+			fmt.Fprintf(&b, "%s,%s,%s,%v,%s,%s,%s,%s\n",
+				sv(r.Data, "Equipment"),
+				sv(r.Data, "Reading"),
+				sv(r.Data, "RegType"),
+				r.Data["Address"],
+				sv(r.Data, "Type"),
+				sv(r.Data, "Output"),
+				sv(r.Data, "Table"),
+				sv(r.Data, "Tags"))
 		}
 
 	case "opcua":

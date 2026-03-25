@@ -240,9 +240,6 @@ INSERT INTO sensor_templates (name, protocol, description, is_global, config_jso
   }'
 );
 
--- Add version column to sensor_templates for tracking updates
-ALTER TABLE sensor_templates ADD COLUMN IF NOT EXISTS version INT NOT NULL DEFAULT 1;
-
 -- Vertiv ITA2 UPS
 INSERT INTO sensor_templates (name, protocol, description, is_global, config_json, influx_fields_json)
 VALUES (
@@ -282,18 +279,31 @@ VALUES (
     ]
   }',
   '{
-    "systemStatus": {"display_label": "Systemstatus", "unit": ""},
-    "upsOutputSource": {"display_label": "Upsoutputsource", "unit": ""},
-    "inputPhaseVoltageA": {"display_label": "Inputphasevoltagea", "unit": ""},
-    "inputPhaseVoltageB": {"display_label": "Inputphasevoltageb", "unit": ""},
-    "inputPhaseVoltageC": {"display_label": "Inputphasevoltagec", "unit": ""},
-    "inputFrequency": {"display_label": "Inputfrequency", "unit": ""},
-    "outputPhaseVoltageA": {"display_label": "Outputphasevoltagea", "unit": ""},
-    "outputPhaseVoltageB": {"display_label": "Outputphasevoltageb", "unit": ""},
-    "outputPhaseVoltageC": {"display_label": "Outputphasevoltagec", "unit": ""},
-    "outputCurrentA": {"display_label": "Outputcurrenta", "unit": ""},
-    "outputCurrentB": {"display_label": "Outputcurrentb", "unit": ""},
-    "outputCurrentC": {"display_label": "Outputcurrentc", "unit": ""}
+    "systemStatus":                      {"display_label": "System Status",               "unit": ""},
+    "upsOutputSource":                   {"display_label": "UPS Output Source",            "unit": ""},
+    "inputPhaseVoltageA":                {"display_label": "Input Voltage A",              "unit": "V"},
+    "inputPhaseVoltageB":                {"display_label": "Input Voltage B",              "unit": "V"},
+    "inputPhaseVoltageC":                {"display_label": "Input Voltage C",              "unit": "V"},
+    "inputFrequency":                    {"display_label": "Input Frequency",              "unit": "Hz"},
+    "outputPhaseVoltageA":               {"display_label": "Output Voltage A",             "unit": "V"},
+    "outputPhaseVoltageB":               {"display_label": "Output Voltage B",             "unit": "V"},
+    "outputPhaseVoltageC":               {"display_label": "Output Voltage C",             "unit": "V"},
+    "outputCurrentA":                    {"display_label": "Output Current A",             "unit": "A"},
+    "outputCurrentB":                    {"display_label": "Output Current B",             "unit": "A"},
+    "outputCurrentC":                    {"display_label": "Output Current C",             "unit": "A"},
+    "outputFrequency":                   {"display_label": "Output Frequency",             "unit": "Hz"},
+    "outputActivePowerA":                {"display_label": "Output Active Power A",        "unit": "W"},
+    "outputActivePowerB":                {"display_label": "Output Active Power B",        "unit": "W"},
+    "outputActivePowerC":                {"display_label": "Output Active Power C",        "unit": "W"},
+    "outputLoadA":                       {"display_label": "Output Load A",                "unit": "%"},
+    "outputLoadB":                       {"display_label": "Output Load B",                "unit": "%"},
+    "outputLoadC":                       {"display_label": "Output Load C",                "unit": "%"},
+    "batteryRemainsTime":                {"display_label": "Battery Remaining Time",       "unit": "min"},
+    "batteryTemperature":                {"display_label": "Battery Temperature",          "unit": "C"},
+    "batteryCapacity":                   {"display_label": "Battery Capacity",             "unit": "%"},
+    "positiveBatteryVoltage":            {"display_label": "Battery Voltage (+)",          "unit": "V"},
+    "positiveBatteryChargingCurrent":    {"display_label": "Battery Charging Current (+)", "unit": "A"},
+    "positiveBatteryDischargingCurrent": {"display_label": "Battery Discharging Current (+)", "unit": "A"}
   }'
 );
 

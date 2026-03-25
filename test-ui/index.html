@@ -877,7 +877,7 @@ async function custAddSensor(){
     {name:v('c-sensor-name'),template_id:selectedTemplate.id,address_params:ap,tags_json:tags});
   if(!sR.ok){msgEl('c-add-msg','err','Sensor failed: '+(sR.data.error||'error'));return;}
 
-  const gwModeLabel=gwMode==='existing'?'added to existing':'new gateway created';
+  const gwModeLabel=gwAction;
   document.getElementById('c-done-info').innerHTML=`
     <div class="ok">
       <div style="display:grid;grid-template-columns:120px 1fr;gap:4px 12px;font-size:12px">

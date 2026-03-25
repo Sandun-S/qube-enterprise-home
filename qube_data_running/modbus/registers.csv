@@ -1,0 +1,7 @@
+#Section,Equipment,Reading,RegType,Address,type,Output
+Breakdown,Conebakery-Breakdown-Counters,Major-Break-Down,Holding,272,uint16,influxdb
+Breakdown,Conebakery-Breakdown-Counters,Minor-Break-Down,Holding,271,uint16,influxdb
+Breakdown,Flexline-Breakdown-Counters,Major-Break-Down,Holding,72,uint16,influxdb
+Breakdown,Flexline-Breakdown-Counters,Minor-Break-Down,Holding,71,uint16,influxdb
+Breakdown,Versaline-Breakdown-Counters,Major-Break-Down,Holding,182,uint16,influxdb
+Breakdown,Versaline-Breakdown-Counters,Minor-Break-Down,Holding,181,uint16,influxdb

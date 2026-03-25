@@ -32,6 +32,7 @@ services:
       - postgres_data:/var/lib/postgresql/data
       - ./cloud/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
       - ./cloud/migrations/002_gateways_sensors.sql:/docker-entrypoint-initdb.d/002_gateways_sensors.sql:ro
+      - ./cloud/migrations/003_device_catalog.sql:/docker-entrypoint-initdb.d/003_device_catalog.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U qubeadmin -d qubedb"]
       interval: 5s

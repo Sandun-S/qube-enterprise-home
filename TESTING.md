@@ -495,6 +495,41 @@ curl -s -X POST $BASE/api/v1/qubes/Q-1003/commands \
 
 ---
 
+## 3b. Protocols
+
+> **Protocols** are seeded by migration 002. Adding a new protocol only requires a DB `INSERT INTO protocols` — no code change needed. The UI reads these to render gateway connection forms and sensor address forms dynamically.
+
+### 3b.1 List all active protocols
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/protocols | jq '[.[] | {id, label, default_port}]'
+# Expected: 4 protocols — modbus_tcp (502), opcua (4840), snmp (161), mqtt (1883)
+# Each has connection_params_schema and addr_params_schema for UI rendering
+```
+
+### 3b.2 Verify protocol schemas
+```bash
+# Modbus schema includes host, port, unit_id, register_offset
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/protocols | jq '.[] | select(.id=="modbus_tcp") | {label, addr_params_schema}'
+
+# SNMP per-sensor address params (device_ip, community, version)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/protocols | jq '.[] | select(.id=="snmp") | .addr_params_schema'
+
+# MQTT gateway connection params (broker URL, base_topic, username, password)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/protocols | jq '.[] | select(.id=="mqtt") | .connection_params_schema'
+```
+
+### 3b.3 No auth → 401
+```bash
+curl -s $BASE/api/v1/protocols | jq .
+# Expected: 401 {"error":"missing or invalid Authorization header"}
+```
+
+---
+
 ## 4. Templates (device catalog)
 
 > **Templates** are the device catalog — a template describes one type of device (e.g. "Schneider PM5100") with all its registers/OIDs/nodes. `is_global=true` means the IoT team owns it and all orgs can use it. `is_global=false` means your org created it for a custom device. When you add a sensor to a gateway, you pick a template — the template's register map becomes the CSV file on the Qube. Adding a new protocol type like BACnet would mean adding a new template with that protocol and extending the gateway image for it.
@@ -503,8 +538,11 @@ curl -s -X POST $BASE/api/v1/qubes/Q-1003/commands \
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
   $BASE/api/v1/templates | jq '[.[] | {name,protocol,is_global}]'
-# Expected: global templates from migration 003
-# Schneider PM5100, Generic OPC-UA, GXT RT UPS, Generic MQTT JSON Sensor, APC UPS Battery
+# Expected: 11 global templates seeded by migration 003:
+# Modbus:  Schneider PM5100, Schneider PM2100, Generic Modbus Register, Eastron SDM630
+# SNMP:    APC Smart-UPS, Liebert GXT RT UPS, Vertiv ITA2 UPS
+# OPC-UA:  Generic OPC-UA Power Meter, Generic OPC-UA Temperature
+# MQTT:    Generic MQTT JSON Sensor, MQTT Energy Monitor (Shelly EM)
 ```
 
 ### 4.2 Filter by protocol
@@ -1472,6 +1510,53 @@ curl -s -X POST $BASE/api/v1/templates \
 # Regular admin can see it: GET /api/v1/templates?protocol=snmp
 # Regular admin CANNOT delete it: DELETE returns 403
 # Superadmin can patch OIDs: PATCH /api/v1/templates/{id}/registers
+```
+
+---
+
+## 13c. Registry — Docker image configuration (superadmin only)
+
+> The registry controls which Docker images Qubes pull. Three modes: `github` (single GHCR repo), `gitlab` (separate repos per service), `custom` (per-image overrides). Switching mode takes effect on the next conf-agent sync — no restart needed.
+
+### 13c.1 Get current registry settings
+```bash
+curl -s -H "Authorization: Bearer $SA_TOKEN" \
+  $BASE/api/v1/admin/registry | jq '{mode, github_base, resolved}'
+# Expected: mode:"github", github_base, resolved:{conf_agent, modbus, opcua, snmp, mqtt_gw, influx_sql}
+```
+
+### 13c.2 Non-superadmin cannot access
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE/api/v1/admin/registry | jq .
+# Expected: 403 {"error":"forbidden"}
+```
+
+### 13c.3 Switch to GitLab mode
+```bash
+curl -s -X PUT $BASE/api/v1/admin/registry \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"gitlab"}' | jq '{updated, "mode":.settings.mode, "modbus":.settings.resolved.modbus}'
+# Expected: mode:gitlab, images use registry.gitlab.com/iot-team4/product/ prefix
+```
+
+### 13c.4 Override individual image (custom)
+```bash
+curl -s -X PUT $BASE/api/v1/admin/registry \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"custom","img_modbus":"myregistry.io/modbus-gw:v2.1","img_snmp":"myregistry.io/snmp-gw:v2.1"}' | jq '.settings.resolved'
+# Expected: modbus and snmp use the overridden images; others empty (set remaining manually)
+```
+
+### 13c.5 Restore to GitHub mode
+```bash
+curl -s -X PUT $BASE/api/v1/admin/registry \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"github"}' | jq '.settings.mode'
+# Expected: "github"
 ```
 
 ---

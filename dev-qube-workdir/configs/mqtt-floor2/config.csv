@@ -16,3 +16,8 @@
       Value: ["FIELD", "humidity"]
       Output: ["FIXED", "influxdb"]
       Tags: ["FIXED", "floor=2"]
+    - Device: ["FIXED", "Temp_Sensor_1"]
+      Reading: ["FIXED", "pressure"]
+      Value: ["FIELD", "pressure"]
+      Output: ["FIXED", "influxdb"]
+      Tags: ["FIXED", "floor=2"]

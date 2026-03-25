@@ -44,6 +44,9 @@ func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
 		r.Get("/api/v1/templates/{id}", getTemplateHandler(pool))
 		r.Get("/api/v1/templates/{id}/preview", previewTemplateHandler(pool))
 
+		// Protocols — read (all authenticated)
+		r.Get("/api/v1/protocols", listProtocolsHandler(pool))
+
 		// Telemetry — read (all authenticated)
 		r.Get("/api/v1/data/readings", readingsHandler(pool))
 		r.Get("/api/v1/data/sensors/{id}/latest", latestReadingHandler(pool))
@@ -125,4 +128,3 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
-// Note: protocols endpoint added inline below
