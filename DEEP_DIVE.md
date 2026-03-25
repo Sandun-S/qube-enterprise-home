@@ -1,123 +1,242 @@
-# Qube Enterprise: Deep Dive Architecture & Code Workflows
+# Qube Enterprise: Exhaustive Deep Dive & Code Implementation Guide
 
-This document provides a highly technical, deep-level explanation of the core workflows in the Qube Enterprise system. It details the exact files, functions, and logic used for device provisioning, authentication, configuration synchronization, CSV/Docker Compose generation, and telemetry ingestion.
-
----
-
-## 1. Authentication & Token Lifecycle
-
-The system utilizes two distinct authentication mechanisms running on different ports:
-
-### User Login & Cloud API Auth (JWT, Port 8080)
-The Cloud Management API is designed for human users (frontend).
-*   **Logic Location:** `cloud/internal/api/auth.go` (`loginHandler`, `registerHandler`)
-*   **Authentication:** Uses PostgreSQL's built-in `crypt()` function with the Blowfish cipher to verify passwords, ensuring compatibility with Go's `bcrypt`.
-*   **Token Generation:** `makeJWT(secret, userID, orgID, role)` generates a JSON Web Token signed via HS256 (`JWT_SECRET`).
-*   **Payload:** Includes `user_id`, `org_id`, `role` (superadmin, admin, editor, viewer), and an `exp` claim set to **24 hours**.
-*   **Lifecycle:** The token expires daily. Clients must send it in the `Authorization: Bearer <token>` header. It's verified in `cloud/internal/api/middleware.go` by `jwtMiddleware` and checked against required roles by `requireRole`.
-
-### Qube Device Auth & TP-API (HMAC, Port 8081)
-Qubes communicate exclusively with the Telemetry/Provisioning API (TP-API). They do *not* use JWTs. They use a deterministic HMAC token that **does not expire**.
-*   **Logic Location:** `cloud/internal/api/qubes.go` (`claimQubeHandler`) and `cloud/internal/tpapi/sync.go` (`deviceRegisterHandler`).
-
-#### The Token Generation & Retrieval Flow
-1.  **Factory Flash:** During manufacturing, `scripts/write-to-database.sh` generates a unique `device_id` (e.g., "Qube-1302") and a `register_key` (e.g., "4D4L-R4KY-ZTQ5"). These are written to the physical device at `/boot/mit.txt` and inserted into the enterprise Postgres database.
-2.  **User Claims Device:** A user enters the `register_key` in the portal. The Cloud API (`claimQubeHandler`) links the device to their `org_id` and retrieves their `org_secret`.
-    *   **Generation:** It computes the `QUBE_TOKEN` using: `hmac.New(sha256.New, []byte(orgSecret))`. The signed string is `qubeID + ":" + orgSecret`. This hash is saved to `qubes.auth_token_hash`.
-3.  **Qube Self-Registration:** When the Qube boots, the `conf-agent` (`conf-agent/main.go`) reads `/boot/mit.txt`.
-    *   If `/opt/qube/.env` doesn't have a `QUBE_TOKEN`, it calls `POST /v1/device/register` on the TP-API (unauthenticated).
-    *   It sends its `device_id` and `register_key`.
-    *   The TP-API (`deviceRegisterHandler`) checks if the device is claimed. If so, it computes the *exact same* HMAC token using the `org_secret` and returns it to the Qube.
-4.  **Persistence:** The `conf-agent` saves this token to `/opt/qube/.env` (`QUBE_TOKEN=<token>`). It never changes unless the device is re-claimed.
-5.  **Verification:** Every subsequent TP-API call passes through `qubeAuthMiddleware` (`cloud/internal/tpapi/router.go`), which dynamically recomputes the HMAC using the `X-Qube-ID` header and verifies it against the `Authorization` header.
+This document provides a line-by-line, struct-by-struct analysis of the core workflows in the Qube Enterprise system. It details exact files, functions, SQL queries, and logic used for device provisioning, authentication, configuration synchronization, CSV/Docker Compose generation, and telemetry ingestion.
 
 ---
 
-## 2. Configuration Hashing & State Sync
+## 1. Authentication, Tokens, and the "Claim" Flow
 
-The system uses a declarative "state-reconciliation" model, driven by configuration hashes.
+The system manages two distinct authentication realms.
 
-### Hash Generation (Cloud Side)
-Whenever an entity affecting a Qube's configuration is modified (gateway added, sensor updated, template patched), the hash is recomputed.
-*   **Logic Location:** `cloud/internal/api/hash.go` (`recomputeConfigHash`)
-*   **The Process:**
-    1.  It queries the database for all active `gateways` belonging to the `qube_id`.
-    2.  For each gateway, it fetches its active `sensors`.
-    3.  It builds a canonical Go struct containing this nested data:
+### A. Cloud API Authentication (Port 8080)
+Used strictly by the web frontend for human operators.
+
+*   **Location:** `cloud/internal/api/auth.go`
+*   **Database:** `users` table.
+*   **Password Hashing:** Relies purely on PostgreSQL's `pgcrypto` extension for maximum security and DB-level compatibility.
+    *   **Registration Query (`registerHandler`):**
+        ```sql
+        INSERT INTO users (org_id, email, password_hash, role)
+        VALUES ($1, $2, crypt($3, gen_salt('bf',12)), 'admin') RETURNING id
+        ```
+    *   **Login Query (`loginHandler`):**
+        ```sql
+        SELECT id, org_id, role, (password_hash = crypt($2, password_hash)) AS pw_match
+        FROM users WHERE email=$1
+        ```
+*   **Token (JWT):** If `pw_match` is true, a JWT is created via `makeJWT()`. It contains `user_id`, `org_id`, `role`, and an `exp` (expiration) set to exactly 24 hours (`time.Now().Add(24 * time.Hour).Unix()`). The token must be passed as `Authorization: Bearer <token>`.
+
+### B. Device Authentication (Port 8081)
+Qube devices communicate with the TP-API using permanent, deterministic HMAC tokens.
+
+*   **Location:** `cloud/internal/api/qubes.go` (Cloud side) & `cloud/internal/tpapi/router.go` (TP-API side).
+*   **The Initial State:** A Qube arrives from the factory with `/boot/mit.txt` containing:
+    ```yaml
+    deviceid: Qube-1302
+    register: 4D4L-R4KY-ZTQ5
+    ```
+
+**The "Claim" Action (Cloud Side):**
+When a user submits the `register_key` in the UI, `claimQubeHandler` executes:
+1.  **Lookup:**
+    ```sql
+    SELECT id, org_id FROM qubes WHERE register_key=$1
+    ```
+2.  **Secret Retrieval:** Fetches the `org_secret` from the `organisations` table.
+3.  **HMAC Generation:**
+    ```go
+    func computeHMAC(qubeID, orgSecret string) string {
+        mac := hmac.New(sha256.New, []byte(orgSecret))
+        mac.Write([]byte(qubeID + ":" + orgSecret))
+        return hex.EncodeToString(mac.Sum(nil))
+    }
+    ```
+4.  **Storage:** The resulting hash is saved to `qubes.auth_token_hash`.
+
+**Device Self-Registration (Qube Side):**
+When `conf-agent` starts, it reads `/boot/mit.txt`. If it lacks a token, it calls the *public* `/v1/device/register` TP-API endpoint.
+1.  **The API Check (`deviceRegisterHandler`):**
+    ```sql
+    SELECT q.org_id, COALESCE(o.org_secret, ''), (q.org_id IS NOT NULL) AS claimed
+    FROM qubes q LEFT JOIN organisations o ON o.id = q.org_id
+    WHERE q.id=$1 AND q.register_key=$2
+    ```
+2.  **The Return:** If `claimed` is true, the TP-API computes the *exact same* HMAC using the same `computeHMAC()` function and returns it.
+3.  **Persistence:** The `conf-agent` writes it to `/opt/qube/.env`.
+
+**Request Authentication:**
+Every subsequent TP-API call passes through `qubeAuthMiddleware`. It extracts `X-Qube-ID` and `Authorization: Bearer <token>`, looks up the `org_secret`, re-runs `computeHMAC()`, and asserts equality via `hmac.Equal()`.
+
+---
+
+## 2. Configuration Hashing: The "State Engine"
+
+The cloud manages the desired state of a Qube via a unified SHA-256 hash. Any change to a gateway or sensor triggers a recomputation.
+
+*   **Location:** `cloud/internal/api/hash.go` (`recomputeConfigHash`)
+*   **The Data Collection Phase:**
+    1.  Fetch all active gateways for the Qube:
+        ```sql
+        SELECT g.id, g.name, g.protocol, g.host, g.port, g.config_json, g.service_image
+        FROM gateways g WHERE g.qube_id=$1 AND g.status='active'
+        ```
+    2.  For *each* gateway, fetch active sensors:
+        ```sql
+        SELECT id, name, template_id, address_params, tags_json
+        FROM sensors WHERE gateway_id=$1 AND status='active'
+        ```
+*   **The Serialization Phase:**
+    The results are packed into a canonical map:
+    ```go
+    canonical, err := json.Marshal(map[string]any{
+        "qube_id":  qubeID,
+        "gateways": gateways, // The slice of gwRow structs populated above
+    })
+    ```
+*   **The Hashing Phase:**
+    ```go
+    sum := sha256.Sum256(canonical)
+    hash := hex.EncodeToString(sum[:])
+    ```
+*   **Storage:** The `hash` and `canonical` JSON are updated in the `config_state` table.
+
+---
+
+## 3. The `conf-agent` Polling & Execution Loop
+
+The edge agent runs a relentless reconciliation loop.
+
+*   **Location:** `conf-agent/main.go`
+*   **The `runCycle()` Loop (every 30s):**
+    1.  `sendHeartbeat()`: POST to `/v1/heartbeat`. Updates `last_seen` in the DB.
+    2.  `executeCommands()`: POST to `/v1/commands/poll`. Fetches pending shell commands (e.g., `restart_service`), executes via `os/exec`, and POSTs the stdout/stderr back to `/v1/commands/{id}/ack`.
+    3.  `getState()`: GET `/v1/sync/state`. Returns the cloud's SHA-256 hash.
+    4.  **The Check:** If `state.Hash == localHash`, it aborts the cycle.
+    5.  `getConfig()`: GET `/v1/sync/config`. Downloads the entire configuration payload if there's a mismatch.
+    6.  `applyConfig()`: Writes the downloaded `docker_compose_yml`, `csv_files`, and `sensor_map` to `/opt/qube/configs/...`.
+    7.  `deployDocker()`: The critical deployment step.
         ```go
-        map[string]any{
-            "qube_id":  qubeID,
-            "gateways": []gwRow{...}, // Includes protocol, host, config_json, service_image, and sensors
+        swarmOut, _ := exec.Command("docker", "info", "--format", "{{.Swarm.LocalNodeState}}").Output()
+        isSwarm := strings.TrimSpace(string(swarmOut)) == "active"
+        if isSwarm {
+            // Production Qube
+            exec.Command("docker", "stack", "deploy", "-c", composePath, "--with-registry-auth", "qube")
+        } else {
+            // Dev VM
+            exec.Command("docker", "compose", "-f", composePath, "up", "-d", "--remove-orphans")
         }
         ```
-    4.  It serializes this struct to JSON, computes a SHA-256 hash (`sha256.Sum256`), and encodes it as a hex string.
-    5.  It updates the `config_state` table with this new `hash` and the raw `config_snapshot` JSON.
-
-### Polling & Syncing (Qube Side)
-The `conf-agent` (`conf-agent/main.go`) runs a continuous loop (`runCycle`) every `POLL_INTERVAL` (default 30s).
-1.  **State Check:** It calls `GET /v1/sync/state` and compares the cloud `hash` with its local hash (`/opt/qube/.config_hash`).
-2.  **Config Download:** If there's a mismatch, it calls `GET /v1/sync/config`.
-3.  **Application:** The `applyConfig` function writes the payload to disk (Docker Compose YAML, CSVs, Env files) and triggers a deployment.
 
 ---
 
-## 3. Dynamic CSV and Docker Compose Generation
+## 4. Server-Side Rendering: CSVs and Docker Compose
 
-The `GET /v1/sync/config` endpoint (`cloud/internal/tpapi/sync.go` -> `syncConfigHandler`) is the engine that translates abstract cloud state into concrete edge files.
+When the `conf-agent` calls `/v1/sync/config`, the TP-API dynamically generates the files.
 
-### CSV Generation
-The handler fetches all active `services` and their `service_csv_rows` (the individual sensor registers/nodes). It passes these to `renderGatewayFiles` and `renderGatewayConfig`.
-*   **Modbus TCP:** Generates `configs/<service>/config.csv` with the header `#Equipment,Reading,RegType,Address,type,Output,Table,Tags`.
-*   **OPC-UA:** Generates `#Table,Device,Reading,OpcNode,Type,Freq,Output,Tags`.
-*   **SNMP:** Generates a main `devices.csv` outlining IP addresses and template filenames. Crucially, it also dynamically generates individual OID map files (e.g., `configs/<service>/maps/gxt-rt-ups.csv`) containing `field_name,OID` pairs, based on the template's JSON arrays.
-*   **MQTT:** Generates `configs/<service>/config.csv` which is actually a YAML file (`mapping.yml` format). It groups rows by `Topic` and defines complex JSONPath extraction rules (e.g., extracting `$.data.voltage` from an incoming MQTT payload).
-*   **Gateway Config (`configs.yml`):** Generates the specific connection settings (broker URL, poll frequency, credentials) for the gateway binary to read.
+*   **Location:** `cloud/internal/tpapi/sync.go`
+*   **The Data Gathering:** Similar to hashing, it queries active `services` and their associated `service_csv_rows`.
 
-### Sensor Map Generation
-Crucially, during CSV generation, the TP-API builds `sensor_map.json`:
+### A. CSV File Generation (`renderGatewayFiles`)
+Each protocol demands a different configuration file format.
+
+1.  **Modbus TCP (`config.csv`):**
+    Outputs a flat CSV matching the legacy Modbus gateway format:
+    ```csv
+    #Equipment,Reading,RegType,Address,type,Output,Table,Tags
+    Main_Meter,voltage_a,HoldingRegister,40001,float32,influxdb,Measurements,site=HQ
+    ```
+
+2.  **SNMP (`devices.csv` & `maps/*.csv`):**
+    Generates a master `devices.csv` file mapping IPs to template files.
+    ```csv
+    #Table, Device, SNMP csv, Community, Version, Output, Tags
+    Measurements,10.0.0.50,gxt-rt-ups.csv,public,2c,influxdb,name=UPS_A
+    ```
+    *Crucially*, it also iterates through the raw `_oids` JSON payload from the database and writes a separate OID mapping file for each template (e.g., `maps/gxt-rt-ups.csv`):
+    ```csv
+    battery_voltage,.1.3.6.1.4.1.476.1.42.3.5.1.23.1.2.1.1.2
+    ```
+
+3.  **MQTT (`mapping.yml`):**
+    Groups rows by topic and generates a YAML file utilizing JSONPath extraction.
+    ```yaml
+    - Topic: "sensors/temp/+"
+      Table: "Measurements"
+      Mapping:
+        - Device: ["FIXED", "TempSensor"]
+          Reading: ["FIXED", "temperature"]
+          Value: ["FIELD", "data.temp_c"] # Translates to gjson path "data.temp_c"
+          Output: ["FIXED", "influxdb"]
+    ```
+
+### B. Gateway Config Generation (`renderGatewayConfig`)
+Generates the `configs.yml` for the gateway binary itself (connection settings).
+Example for Modbus:
+```yaml
+loglevel: "info"
+modbus:
+  server: "tcp://192.168.1.100:502"
+  readingsfile: "config.csv"
+  freqsec: 20
+```
+
+### C. Docker Compose Generation (`buildFullComposeYML`)
+Dynamically constructs the Swarm-compatible YAML string.
+1.  **Base:** Adds `enterprise-conf-agent` and `enterprise-influx-to-sql` attached to the `qube-net` overlay.
+2.  **Gateways:** Iterates through `services`. For each:
+    *   Looks up the image via `imageForService(pool, protocol)`.
+    *   Creates a `service` block with volume mounts mapping the generated CSVs into the container:
+        ```yaml
+        volumes:
+          - /opt/qube/configs/panel-a/configs.yml:/app/configs.yml:ro
+          - /opt/qube/configs/panel-a/config.csv:/app/config.csv:ro
+        ```
+
+### D. The Bridge Map (`sensor_map.json`)
+The TP-API builds a map linking the gateway's string output (`Equipment.Reading`) back to the cloud's UUID `sensor_id`. This is critical for the telemetry pipeline.
 ```json
 {
-  "UPS_Main.Battery_Voltage": "uuid-sensor-001"
+  "Main_Meter.voltage_a": "550e8400-e29b-41d4-a716-446655440000"
 }
 ```
-This maps the gateway's output format (`Equipment.Reading` or `Device.Reading`) back to the cloud's internal UUID. The `conf-agent` writes this to `/opt/qube/sensor_map.json`.
-
-### Docker Compose Generation
-The `buildFullComposeYML` function constructs the deployment YAML.
-1.  **Base Layer:** It injects the `enterprise-conf-agent` and `enterprise-influx-to-sql` services, ensuring they share the `qube-net` overlay network.
-2.  **Dynamic Gateways:** It loops over the active `services`.
-    *   It determines the Docker image via `imageForService`, checking the `registry_config` table (supporting GitHub/GitLab registries).
-    *   It defines volume mounts linking the generated `/opt/qube/configs/<service>/...` files into the container's `/app/...` directory as read-only (`:ro`).
-3.  **Deployment Execution:**
-    *   The `conf-agent` (`deployDocker`) detects the environment using `docker info`.
-    *   If `Swarm` is active (Production Qube): It runs `docker stack deploy -c docker-compose.yml qube`.
-    *   If not (Dev mode): It runs `docker compose up -d`.
 
 ---
 
-## 4. Telemetry Pipeline (Data Ingestion)
+## 5. The Edge Data Pipeline: Ingestion to Cloud
 
-Data flows from the edge gateways back to the cloud via a specific pipeline designed to bridge the legacy Qube Lite architecture with the new Enterprise backend.
+Data collection relies on legacy containers passing data to new Enterprise bridges.
 
-1.  **Gateways to Core-Switch:** The individual protocol gateways (Modbus, MQTT, etc.) poll their devices. They format the data as JSON and POST it to the local `core-switch` container (`http://core-switch:8585/batch`).
-2.  **Core-Switch to InfluxDB:** The `core-switch` (a legacy component left untouched) converts this JSON into InfluxDB Line Protocol. It writes to a local InfluxDB v1 container, tagging the data with `device=<Equipment>` and `reading=<Reading>`.
-3.  **The Enterprise Bridge (`enterprise-influx-to-sql`):**
-    *   **Logic Location:** `enterprise-influx-to-sql/main.go`
-    *   This service runs a polling loop (every 60s).
-    *   It queries the local InfluxDB v1 using InfluxQL (`SELECT mean(value) FROM "Measurements" ... GROUP BY time(1m), device, reading`).
-    *   **Resolution:** It loads `/config/sensor_map.json` (placed there by the `conf-agent`). It concatenates the InfluxDB tags (`rec.Equipment + "." + rec.Reading`) and looks up the corresponding `sensor_id` UUID.
-    *   It batches these resolved readings into a JSON payload.
-4.  **TP-API to Postgres:**
-    *   The bridge POSTs the batch to the TP-API: `/v1/telemetry/ingest`.
-    *   **Logic Location:** `cloud/internal/tpapi/telemetry.go` (`telemetryIngestHandler`)
-    *   The TP-API verifies the HMAC token, parses the batch, and performs a bulk `INSERT INTO sensor_readings` in the Cloud PostgreSQL database, making the live data available to the frontend via the Cloud API (`:8080`).
+### Step 1: Gateway -> Core-Switch
+A protocol gateway (e.g., `mqtt-gateway`) reads data.
+*   **Location:** `mqtt-gateway/main.go`
+*   **Process:** The MQTT gateway uses `gjson.Get(jsonStr, rule.JSONPath)` to extract values based on the generated `mapping.yml`.
+*   It POSTs a JSON payload to the local `core-switch` container (`http://coreswitch:8080/ingest`).
 
----
+### Step 2: Core-Switch -> Local InfluxDB
+The legacy `core-switch` container (untouched by this enterprise code) receives the JSON. It transforms it into InfluxDB Line Protocol and writes it to a local InfluxDB v1 container.
+*   **Crucial Format:** It translates the payload into tags: `device=Main_Meter` and `reading=voltage_a`.
 
-## 5. Remote Command Execution
+### Step 3: Local InfluxDB -> TP-API (`enterprise-influx-to-sql`)
+This is the Enterprise data bridge running on the Qube.
+*   **Location:** `enterprise-influx-to-sql/main.go`
+*   **The Loop (`runTransfer`):** Runs every 60s.
+    1.  Loads `/config/sensor_map.json` (written by the `conf-agent`).
+    2.  Executes an InfluxQL query against the local InfluxDB:
+        ```sql
+        SELECT mean(value) FROM "Measurements"
+        WHERE time >= '...' AND time < '...'
+        GROUP BY time(1m), device, reading ORDER BY time ASC
+        ```
+    3.  **The Resolution:** It loops through the results. For every record, it reconstructs the key:
+        ```go
+        key := rec.Equipment + "." + rec.Reading // e.g., "Main_Meter.voltage_a"
+        sensorID, ok := sensorMap[key]
+        ```
+    4.  If matched, it appends the `Reading` struct to a batch.
+    5.  It POSTs the batch to `POST /v1/telemetry/ingest` on the TP-API.
 
-The `conf-agent` also supports executing ad-hoc shell commands sent from the cloud.
-1.  **Queueing:** An Editor/Admin calls `POST /api/v1/qubes/{id}/commands` with a command like `restart_service`. This is inserted into `qube_commands`.
-2.  **Polling:** The `conf-agent` calls `POST /v1/commands/poll` on the TP-API every cycle.
-3.  **Execution:** The TP-API returns pending commands. The `conf-agent` (`execCommand` in `main.go`) executes them. For example, `restart_service` translates to `docker service update --force qube_<service>` (Swarm) or `docker compose restart <service>` (Compose).
-4.  **Acknowledgment:** The agent POSTs the execution output back to `/v1/commands/{id}/ack`, updating the status in the database.
+### Step 4: TP-API -> Cloud PostgreSQL
+*   **Location:** `cloud/internal/tpapi/telemetry.go`
+*   The TP-API receives the `[]Reading` payload.
+*   It performs a bulk, batched `INSERT` into the `sensor_readings` table.
+*   The data is now available globally via the Cloud API `GET /api/v1/data/readings` endpoints.
