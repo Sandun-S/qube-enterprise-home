@@ -143,8 +143,7 @@ jobs:
     name: Deploy to cloud VM
     runs-on: ubuntu-latest
     needs: [cloud-api, test]
-    # if: github.ref == 'refs/heads/main'
-    if: false  # enable when CLOUD_VM_HOST is set
+    if: github.ref == 'refs/heads/main'
     steps:
       - name: Lowercase repo name
         run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
