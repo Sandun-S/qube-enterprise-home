@@ -11,7 +11,9 @@
       "Bash(for dir:*)",
       "Bash(do echo:*)",
       "Read(//mnt/d/Sandun/Projects/qube-enterprise-home/**)",
-      "Bash(done)"
+      "Bash(done)",
+      "Bash(grep -E \"\\\\.\\(md|txt\\)$\")",
+      "Bash(find /mnt/d/Sandun/Projects/qube-enterprise-home -name *webhook* -o -name *hook*)"
     ]
   }
 }
