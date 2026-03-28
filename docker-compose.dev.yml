@@ -1,10 +1,20 @@
-# docker-compose.dev.yml — Qube Enterprise Local Dev Stack
-# Run: docker compose -f docker-compose.dev.yml up -d
+# docker-compose.dev.yml — Qube Enterprise v2 Local Dev Stack
+# Run: docker compose -f docker-compose.dev.yml up -d --build
 #
-# INFLUXDB v1 — matches real Qube Lite core-switch which writes to InfluxDB v1
-# line protocol: {Table},device={Equipment},reading={Reading} value={Value}
+# v2 changes from v1:
+#   - TimescaleDB for telemetry (qubedata database)
+#   - SQLite shared volume (qube-data) instead of CSV files
+#   - No MQTT broker (removed — no Grafana on Qube)
+#   - WebSocket for cloud→qube communication (fallback: HTTP polling)
+#   - Reader containers instead of gateway containers
 #
-# Ports: 8080=Cloud API, 8081=TP-API, 5432=Postgres, 8086=InfluxDB v1, 1883=MQTT, 8888=Test UI
+# Ports:
+#   8080 = Cloud API + WebSocket (/ws)
+#   8081 = TP-API (polling fallback)
+#   5432 = PostgreSQL (qubedb + qubedata)
+#   8086 = InfluxDB v1
+#   8585 = Core-Switch (simulated, for reader → coreswitch)
+#   8888 = Test UI
 
 version: "3.8"
 
@@ -15,12 +25,14 @@ networks:
 volumes:
   postgres_data:
   influxdb_data:
-  mosquitto_data:
+  qube_data:       # Shared SQLite volume (replaces CSV files)
 
 services:
 
+  # ── PostgreSQL (Management DB + Telemetry DB) ──────────────────
+  # Same instance, two databases: qubedb (management) + qubedata (TimescaleDB)
   postgres:
-    image: postgres:16-alpine
+    image: timescale/timescaledb:latest-pg16
     restart: unless-stopped
     networks: [qube_dev]
     ports: ["5432:5432"]
@@ -30,14 +42,18 @@ services:
       POSTGRES_DB: qubedb
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      # Management DB migrations
       - ./cloud/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
-      - ./cloud/migrations/002_gateways_sensors.sql:/docker-entrypoint-initdb.d/002_gateways_sensors.sql:ro
-      - ./cloud/migrations/003_device_catalog.sql:/docker-entrypoint-initdb.d/003_device_catalog.sql:ro
+      - ./cloud/migrations/002_global_data.sql:/docker-entrypoint-initdb.d/002_global_data.sql:ro
+      - ./cloud/migrations/003_test_seeds.sql:/docker-entrypoint-initdb.d/003_test_seeds.sql:ro
+      # Telemetry DB setup (creates qubedata database + TimescaleDB hypertable)
+      - ./cloud/migrations-telemetry/001_timescale_init.sql:/docker-entrypoint-initdb.d/010_timescale_init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U qubeadmin -d qubedb"]
       interval: 5s
       retries: 10
 
+  # ── Cloud API + TP-API + WebSocket Server ──────────────────────
   cloud-api:
     build: {context: ./cloud, dockerfile: Dockerfile}
     restart: unless-stopped
@@ -45,20 +61,15 @@ services:
     ports: ["8080:8080", "8081:8081"]
     environment:
       DATABASE_URL: postgres://qubeadmin:qubepass@postgres:5432/qubedb?sslmode=disable
+      TELEMETRY_DATABASE_URL: postgres://qubeadmin:qubepass@postgres:5432/qubedata?sslmode=disable
       JWT_SECRET: dev-jwt-secret-change-in-production
       QUBE_IMAGE_REGISTRY: "ghcr.io/sandun-s/qube-enterprise-home"
-      # GitLab mode — uncomment these instead:
+      # GitLab production — change only this line:
       # QUBE_IMAGE_REGISTRY: "registry.gitlab.com/iot-team4/product"
-      # QUBE_IMG_CONF_AGENT: "registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest"
-      # QUBE_IMG_INFLUX_SQL: "registry.gitlab.com/iot-team4/product/enterprise-influx-to-sql:arm64.latest"
-      # QUBE_IMG_MQTT_GW:    "registry.gitlab.com/iot-team4/product/mqtt-gateway:arm64.latest"
-      # QUBE_IMG_MODBUS:     "registry.gitlab.com/iot-team4/product/modbus-gateway:arm64.latest"
-      # QUBE_IMG_OPCUA:      "registry.gitlab.com/iot-team4/product/opc-ua-gateway:arm64.latest"
-      # QUBE_IMG_SNMP:       "registry.gitlab.com/iot-team4/product/snmp-gateway:arm64.latest"
     depends_on:
       postgres: {condition: service_healthy}
 
-  # InfluxDB v1 — matches real Qube Lite core-switch (NOT v2)
+  # ── InfluxDB v1 (Edge data buffer — matches real Qube) ────────
   influxdb:
     image: influxdb:1.8
     restart: unless-stopped
@@ -70,48 +81,43 @@ services:
       INFLUXDB_ADMIN_ENABLED: "true"
       INFLUXDB_HTTP_AUTH_ENABLED: "false"
 
-  mosquitto:
-    image: eclipse-mosquitto:2.0
-    restart: unless-stopped
-    networks: [qube_dev]
-    ports: ["1883:1883"]
-    volumes:
-      - mosquitto_data:/mosquitto/data
-      - ./test/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
-
+  # ── Enterprise Conf-Agent (simulated Qube) ────────────────────
+  # In dev: connects to cloud-api via WebSocket, manages SQLite
   conf-agent:
     build: {context: ./conf-agent, dockerfile: Dockerfile}
     restart: unless-stopped
     networks: [qube_dev]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - ./dev-qube-workdir:/opt/qube
-      - ./test/mit.txt:/boot/mit.txt:ro   # simulates /boot/mit.txt on real Qube
+      - qube_data:/opt/qube/data               # SQLite shared volume
+      - ./test/mit.txt:/boot/mit.txt:ro
     environment:
-      TPAPI_URL: http://cloud-api:8081
+      CLOUD_WS_URL: ws://cloud-api:8080/ws      # WebSocket primary
+      TPAPI_URL: http://cloud-api:8081           # HTTP polling fallback
+      SQLITE_PATH: /opt/qube/data/qube.db
       WORK_DIR: /opt/qube
       POLL_INTERVAL: "30"
-      # QUBE_ID and QUBE_TOKEN are NOT set here in production mode.
-      # The agent reads /boot/mit.txt and self-registers automatically.
-      # For dev without mit.txt, set QUBE_ID + QUBE_TOKEN manually:
-      # QUBE_ID: Q-1001
-      # QUBE_TOKEN: ""
+      # QUBE_ID and QUBE_TOKEN auto-obtained from /boot/mit.txt self-registration
     depends_on: [cloud-api]
 
+  # ── Enterprise Influx-to-SQL ───────────────────────────────────
+  # Reads sensor_map from SQLite (not sensor_map.json anymore)
   enterprise-influx-to-sql:
     build: {context: ./enterprise-influx-to-sql, dockerfile: Dockerfile}
     restart: unless-stopped
     networks: [qube_dev]
-    volumes: [./dev-qube-workdir:/config]
+    volumes:
+      - qube_data:/opt/qube/data:ro             # SQLite read-only
     environment:
+      SQLITE_PATH: /opt/qube/data/qube.db
       TPAPI_URL: http://cloud-api:8081
       QUBE_ID: Q-1001
       QUBE_TOKEN: ""
       INFLUX_URL: http://influxdb:8086
       INFLUX_DB: edgex
-      SENSOR_MAP_PATH: /config/sensor_map.json
     depends_on: [cloud-api, influxdb]
 
+  # ── Test UI ────────────────────────────────────────────────────
   test-ui:
     image: nginx:alpine
     restart: unless-stopped
@@ -119,6 +125,7 @@ services:
     ports: ["8888:80"]
     volumes: [./test-ui:/usr/share/nginx/html:ro]
 
+  # ── Simulators (optional, use: docker compose --profile simulators up) ──
   modbus-sim:
     image: oitc/modbus-server:latest
     networks: [qube_dev]
@@ -131,9 +138,7 @@ services:
     ports: ["161:161/udp"]
     profiles: [simulators]
 
-  # ── InfluxDB data seeder (run once to test the pipeline) ──────────────────
-  # Injects fake sensor readings into InfluxDB matching the sensor_map.json format
-  # Run: docker compose -f docker-compose.dev.yml run --rm influx-seeder
+  # ── InfluxDB seeder (run once: docker compose run --rm influx-seeder) ──
   influx-seeder:
     image: influxdb:1.8
     networks: [qube_dev]
@@ -145,8 +150,8 @@ services:
       - |
         sleep 3
         echo 'Seeding test data into InfluxDB...'
-        curl -s -X POST 'http://influxdb:8086/query' --data-urlencode 'q=CREATE DATABASE "qube-db"' || true
-        curl -s -X POST 'http://influxdb:8086/write?db=qube-db&precision=s' --data-binary \
+        curl -s -X POST 'http://influxdb:8086/query' --data-urlencode 'q=CREATE DATABASE "edgex"' || true
+        curl -s -X POST 'http://influxdb:8086/write?db=edgex&precision=s' --data-binary \
           'Measurements,device=Main_Meter,reading=active_power_w value=1250.5
         Measurements,device=Main_Meter,reading=voltage_v value=231.2
         Measurements,device=Main_Meter,reading=current_a value=5.4
@@ -154,3 +159,21 @@ services:
         Measurements,device=Panel_B_Meter,reading=active_power_w value=875.0
         Measurements,device=Panel_B_Meter,reading=voltage_v value=229.8'
         echo 'Done! Check enterprise-influx-to-sql logs.'
+
+  # ══════════════════════════════════════════════════════════════
+  # NOTE: Reader containers are NOT in docker-compose.dev.yml.
+  # In production, readers are managed by conf-agent via Docker Swarm.
+  # For dev testing, you can add them manually:
+  #
+  #   modbus-reader-test:
+  #     build: {context: ./modbus-reader, dockerfile: Dockerfile}
+  #     networks: [qube_dev]
+  #     volumes:
+  #       - qube_data:/opt/qube/data:ro
+  #     environment:
+  #       READER_ID: "<uuid from cloud API>"
+  #       SQLITE_PATH: /opt/qube/data/qube.db
+  #       CORESWITCH_URL: http://core-switch:8585
+  #
+  # Or test readers standalone by running them locally with Go.
+  # ══════════════════════════════════════════════════════════════

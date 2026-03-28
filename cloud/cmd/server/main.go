@@ -14,28 +14,43 @@ import (
 func main() {
 	dbURL := getenv("DATABASE_URL",
 		"postgres://qubeadmin:qubepass@127.0.0.1:5432/qubedb?sslmode=disable")
+	telemetryDBURL := getenv("TELEMETRY_DATABASE_URL",
+		"postgres://qubeadmin:qubepass@127.0.0.1:5432/qubedata?sslmode=disable")
 	jwtSecret := getenv("JWT_SECRET", "dev-jwt-secret-change-in-production")
 
-	pool, err := pgxpool.New(context.Background(), dbURL)
-	if err != nil {
-		log.Fatalf("cannot connect to database: %v", err)
-	}
-	if err := pool.Ping(context.Background()); err != nil {
-		log.Fatalf("database ping failed: %v", err)
-	}
-	log.Println("Database connected")
+	ctx := context.Background()
 
-	// TP-API on :8081 (Qube-facing — no JWT, uses HMAC token)
+	// Management database (qubedb)
+	pool, err := pgxpool.New(ctx, dbURL)
+	if err != nil {
+		log.Fatalf("cannot connect to management database: %v", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		log.Fatalf("management database ping failed: %v", err)
+	}
+	log.Println("Management database connected (qubedb)")
+
+	// Telemetry database (qubedata — TimescaleDB)
+	telemetryPool, err := pgxpool.New(ctx, telemetryDBURL)
+	if err != nil {
+		log.Fatalf("cannot connect to telemetry database: %v", err)
+	}
+	if err := telemetryPool.Ping(ctx); err != nil {
+		log.Fatalf("telemetry database ping failed: %v", err)
+	}
+	log.Println("Telemetry database connected (qubedata)")
+
+	// TP-API on :8081 (Qube-facing — HMAC auth)
 	go func() {
 		log.Println("TP-API  listening on :8081")
-		if err := http.ListenAndServe(":8081", tpapi.NewRouter(pool)); err != nil {
+		if err := http.ListenAndServe(":8081", tpapi.NewRouter(pool, telemetryPool)); err != nil {
 			log.Fatalf("TP-API failed: %v", err)
 		}
 	}()
 
-	// Cloud API on :8080 (user/UI facing — JWT auth)
+	// Cloud API on :8080 (user/UI facing — JWT auth + WebSocket)
 	log.Println("Cloud API listening on :8080")
-	if err := http.ListenAndServe(":8080", api.NewRouter(pool, jwtSecret)); err != nil {
+	if err := http.ListenAndServe(":8080", api.NewRouter(pool, telemetryPool, jwtSecret)); err != nil {
 		log.Fatalf("Cloud API failed: %v", err)
 	}
 }

@@ -1,16 +1,16 @@
--- 001_init.sql — Qube Enterprise Schema
--- Everything in one place, no ALTER TABLE patches.
+-- 001_init.sql — Qube Enterprise v2 Management Database (qubedb)
+-- Run order: 001 → 002 → 003
+-- This file creates the core schema. No seed data here.
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ===================== ORGANISATIONS =====================
 CREATE TABLE organisations (
-    id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    name           TEXT NOT NULL,
-    mqtt_namespace TEXT NOT NULL DEFAULT '',
-    org_secret     TEXT NOT NULL DEFAULT encode(gen_random_bytes(32), 'hex'),
-    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name       TEXT NOT NULL,
+    org_secret TEXT NOT NULL DEFAULT encode(gen_random_bytes(32), 'hex'),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- ===================== USERS =====================
@@ -26,105 +26,228 @@ CREATE TABLE users (
 
 -- ===================== QUBES =====================
 CREATE TABLE qubes (
-    id              TEXT PRIMARY KEY,
-    org_id          UUID REFERENCES organisations(id) ON DELETE SET NULL,
-    auth_token_hash TEXT,
-    last_seen       TIMESTAMPTZ,
-    status          TEXT NOT NULL DEFAULT 'unclaimed'
-                    CHECK (status IN ('online', 'offline', 'unclaimed')),
-    location_label  TEXT NOT NULL DEFAULT '',
-    claimed_at      TIMESTAMPTZ,
-    config_version  INT NOT NULL DEFAULT 0,
-    -- Device identity — written by image-install.sh at flash time
-    -- register_key: customer enters this to claim device (was reg_number in MySQL)
-    -- maintain_key: IoT team maintenance access (was mntn_key in MySQL)
-    -- device_type:  hardware variant (rasp4, rasp4_v2, neo5, etc.)
-    register_key    TEXT UNIQUE,
-    maintain_key    TEXT,
-    device_type     TEXT NOT NULL DEFAULT 'arm64',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    id               TEXT PRIMARY KEY,          -- Q-1001, Q-1002, ...
+    org_id           UUID REFERENCES organisations(id) ON DELETE SET NULL,
+    auth_token_hash  TEXT,                      -- HMAC token (bcrypt hash)
+    last_seen        TIMESTAMPTZ,
+    status           TEXT NOT NULL DEFAULT 'unclaimed'
+                     CHECK (status IN ('online', 'offline', 'unclaimed')),
+    location_label   TEXT NOT NULL DEFAULT '',
+    claimed_at       TIMESTAMPTZ,
+    config_version   INT NOT NULL DEFAULT 0,
+    -- Device identity (written by write-to-database.sh at flash time)
+    register_key     TEXT UNIQUE,
+    maintain_key     TEXT,
+    device_type      TEXT NOT NULL DEFAULT 'arm64',
+    -- v2: WebSocket + polling
+    ws_connected     BOOLEAN NOT NULL DEFAULT FALSE,
+    poll_interval_sec INT NOT NULL DEFAULT 30,
+    capabilities     JSONB NOT NULL DEFAULT '[]',    -- ["modbus","snmp","opcua","mqtt","http"]
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_qubes_register_key ON qubes(register_key);
+CREATE INDEX idx_qubes_org ON qubes(org_id);
+
+-- ===================== PROTOCOLS =====================
+-- Defines available protocols. UI renders dynamic forms from schemas.
+CREATE TABLE protocols (
+    id                       TEXT PRIMARY KEY,    -- "modbus_tcp", "snmp", "mqtt", "opcua", "http"
+    label                    TEXT NOT NULL,
+    description              TEXT NOT NULL DEFAULT '',
+    reader_standard          TEXT NOT NULL DEFAULT 'endpoint'
+                             CHECK (reader_standard IN ('endpoint', 'multi_target')),
+    is_active                BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE INDEX idx_qubes_register_key ON qubes(register_key);
+-- ===================== READER TEMPLATES =====================
+-- One per protocol (usually). Defines the Docker container + connection schema.
+CREATE TABLE reader_templates (
+    id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    protocol            TEXT NOT NULL REFERENCES protocols(id),
+    name                TEXT NOT NULL,
+    description         TEXT NOT NULL DEFAULT '',
+    image_suffix        TEXT NOT NULL,           -- "modbus-reader", "snmp-reader", etc.
+    connection_schema   JSONB NOT NULL DEFAULT '{}',  -- JSON Schema for connection params
+    env_defaults        JSONB NOT NULL DEFAULT '{}',  -- Default env vars for the container
+    version             INT NOT NULL DEFAULT 1,
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_reader_templates_protocol ON reader_templates(protocol);
+
+-- ===================== DEVICE TEMPLATES =====================
+-- Many per protocol. Defines what data to collect (registers, OIDs, etc.)
+CREATE TABLE device_templates (
+    id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    org_id                UUID REFERENCES organisations(id) ON DELETE CASCADE,  -- NULL = global
+    protocol              TEXT NOT NULL REFERENCES protocols(id),
+    name                  TEXT NOT NULL,
+    manufacturer          TEXT NOT NULL DEFAULT '',
+    model                 TEXT NOT NULL DEFAULT '',
+    description           TEXT NOT NULL DEFAULT '',
+    sensor_config         JSONB NOT NULL DEFAULT '{}',  -- registers/oids/nodes/json_paths
+    sensor_params_schema  JSONB NOT NULL DEFAULT '{}',  -- JSON Schema for per-sensor params
+    is_global             BOOLEAN NOT NULL DEFAULT FALSE,
+    version               INT NOT NULL DEFAULT 1,
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_device_templates_protocol ON device_templates(protocol);
+CREATE INDEX idx_device_templates_org ON device_templates(org_id);
+CREATE INDEX idx_device_templates_global ON device_templates(is_global) WHERE is_global = TRUE;
+
+-- ===================== READERS (was gateways) =====================
+-- One Docker container per reader. Created when user adds a reader to a Qube.
+CREATE TABLE readers (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id         TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,
+    protocol        TEXT NOT NULL REFERENCES protocols(id),
+    template_id     UUID REFERENCES reader_templates(id),
+    config_json     JSONB NOT NULL DEFAULT '{}',    -- Connection config (host, port, etc.)
+    status          TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'disabled')),
+    version         INT NOT NULL DEFAULT 1,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_readers_qube ON readers(qube_id);
+CREATE UNIQUE INDEX idx_readers_qube_protocol_name ON readers(qube_id, protocol, name);
+
+-- ===================== SENSORS =====================
+-- Linked to a reader + device template. Simplified from v1.
+CREATE TABLE sensors (
+    id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    reader_id       UUID NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
+    name            TEXT NOT NULL,                 -- Equipment name in DataIn
+    template_id     UUID REFERENCES device_templates(id),
+    config_json     JSONB NOT NULL DEFAULT '{}',   -- Merged: template.sensor_config + user params
+    tags_json       JSONB NOT NULL DEFAULT '{}',   -- User-defined tags
+    output          TEXT NOT NULL DEFAULT 'influxdb'
+                    CHECK (output IN ('influxdb', 'live', 'influxdb,live')),
+    table_name      TEXT NOT NULL DEFAULT 'Measurements',
+    status          TEXT NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'disabled')),
+    version         INT NOT NULL DEFAULT 1,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_sensors_reader ON sensors(reader_id);
+
+-- ===================== CONTAINERS =====================
+-- Docker containers managed by conf-agent. One per reader + infra containers.
+CREATE TABLE containers (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    reader_id   UUID UNIQUE REFERENCES readers(id) ON DELETE CASCADE,  -- NULL for infra containers
+    name        TEXT NOT NULL,           -- Docker service name
+    image       TEXT NOT NULL,           -- Full image path
+    env_json    JSONB NOT NULL DEFAULT '{}',
+    status      TEXT NOT NULL DEFAULT 'active'
+                CHECK (status IN ('active', 'disabled')),
+    version     INT NOT NULL DEFAULT 1,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_containers_qube ON containers(qube_id);
 
 -- ===================== CONFIG STATE =====================
+-- Tracks config hash per Qube for sync detection.
 CREATE TABLE config_state (
     qube_id          TEXT PRIMARY KEY REFERENCES qubes(id) ON DELETE CASCADE,
     hash             TEXT NOT NULL DEFAULT '',
+    config_version   INT NOT NULL DEFAULT 0,
     config_snapshot  JSONB NOT NULL DEFAULT '{}',
     generated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+-- ===================== SWARM HISTORY =====================
+-- Audit trail of docker-compose deployments.
+CREATE TABLE swarm_history (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    compose_yml TEXT NOT NULL,
+    config_hash TEXT NOT NULL,
+    deployed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_swarm_history_qube ON swarm_history(qube_id);
+
 -- ===================== QUBE COMMANDS =====================
+-- Remote commands dispatched via WebSocket or polled via TP-API.
 CREATE TABLE qube_commands (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     command     TEXT NOT NULL,
     payload     JSONB NOT NULL DEFAULT '{}',
     status      TEXT NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending', 'executed', 'failed', 'timeout')),
+                CHECK (status IN ('pending', 'sent', 'executed', 'failed', 'timeout')),
     result      JSONB,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    sent_at     TIMESTAMPTZ,
     executed_at TIMESTAMPTZ
 );
 CREATE INDEX idx_qube_commands_pending ON qube_commands(qube_id, status)
-    WHERE status = 'pending';
+    WHERE status IN ('pending', 'sent');
 
--- ===================== SUPERADMIN ORG (IoT team internal) =====================
-INSERT INTO organisations (id, name) VALUES
-    ('00000000-0000-0000-0000-000000000001', 'IoT Team Internal');
+-- ===================== DISCOVERY SESSIONS =====================
+-- Auto-discovery of unknown devices on a Qube's network.
+CREATE TABLE discovery_sessions (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    protocol    TEXT NOT NULL REFERENCES protocols(id),
+    status      TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    params_json JSONB NOT NULL DEFAULT '{}',    -- Scan parameters (IP range, etc.)
+    results     JSONB NOT NULL DEFAULT '[]',    -- Discovered devices
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
+);
+CREATE INDEX idx_discovery_qube ON discovery_sessions(qube_id);
 
--- Password: iotteam2024
-INSERT INTO users (org_id, email, password_hash, role) VALUES
-    ('00000000-0000-0000-0000-000000000001',
-     'iotteam@internal.local',
-     crypt('iotteam2024', gen_salt('bf', 12)),
-     'superadmin');
+-- ===================== CORESWITCH SETTINGS =====================
+-- Per-Qube core-switch configuration.
+CREATE TABLE coreswitch_settings (
+    qube_id    TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    key        TEXT NOT NULL,
+    value_json TEXT NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (qube_id, key)
+);
 
--- ===================== PRE-REGISTERED TEST QUBES =====================
--- Factory-provisioned devices — not yet claimed by any org.
--- In production these are inserted by write-to-database.sh at flash time.
--- These test keys match test/mit.txt for local dev.
-INSERT INTO qubes (id, register_key, maintain_key, device_type) VALUES
-    ('Q-1001', 'TEST-Q1001-REG', 'TEST-Q1001-MNT', 'rasp4_v2'),
-    ('Q-1002', 'TEST-Q1002-REG', 'TEST-Q1002-MNT', 'rasp4_v2'),
-    ('Q-1003', 'TEST-Q1003-REG', 'TEST-Q1003-MNT', 'rasp4_v2'),
-    ('Q-1004', 'TEST-Q1004-REG', 'TEST-Q1004-MNT', 'rasp4_v2'),
-    ('Q-1005', 'TEST-Q1005-REG', 'TEST-Q1005-MNT', 'rasp4_v2'),
-    ('Q-1006', 'TEST-Q1006-REG', 'TEST-Q1006-MNT', 'rasp4_v2'),
-    ('Q-1007', 'TEST-Q1007-REG', 'TEST-Q1007-MNT', 'rasp4_v2'),
-    ('Q-1008', 'TEST-Q1008-REG', 'TEST-Q1008-MNT', 'rasp4_v2'),
-    ('Q-1009', 'TEST-Q1009-REG', 'TEST-Q1009-MNT', 'rasp4_v2'),
-    ('Q-1010', 'TEST-Q1010-REG', 'TEST-Q1010-MNT', 'rasp4_v2'),
-    ('Q-1011', 'TEST-Q1011-REG', 'TEST-Q1011-MNT', 'rasp4_v2'),
-    ('Q-1012', 'TEST-Q1012-REG', 'TEST-Q1012-MNT', 'rasp4_v2'),
-    ('Q-1013', 'TEST-Q1013-REG', 'TEST-Q1013-MNT', 'rasp4_v2'),
-    ('Q-1014', 'TEST-Q1014-REG', 'TEST-Q1014-MNT', 'rasp4_v2'),
-    ('Q-1015', 'TEST-Q1015-REG', 'TEST-Q1015-MNT', 'rasp4_v2'),
-    ('Q-1016', 'TEST-Q1016-REG', 'TEST-Q1016-MNT', 'rasp4_v2'),
-    ('Q-1017', 'TEST-Q1017-REG', 'TEST-Q1017-MNT', 'rasp4_v2'),
-    ('Q-1018', 'TEST-Q1018-REG', 'TEST-Q1018-MNT', 'rasp4_v2'),
-    ('Q-1019', 'TEST-Q1019-REG', 'TEST-Q1019-MNT', 'rasp4_v2'),
-    ('Q-1020', 'TEST-Q1020-REG', 'TEST-Q1020-MNT', 'rasp4_v2');
+-- ===================== TELEMETRY SETTINGS =====================
+-- Per-Qube influx-to-sql upload configuration (replaces uploads.csv).
+CREATE TABLE telemetry_settings (
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id      TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    device       TEXT NOT NULL,            -- Equipment name in InfluxDB
+    reading      TEXT NOT NULL DEFAULT '*',
+    agg_time_min INT NOT NULL DEFAULT 1,
+    agg_func     TEXT NOT NULL DEFAULT 'AVG'
+                 CHECK (agg_func IN ('SUM', 'AVG', 'MAX', 'MIN', 'LAST')),
+    sensor_id    UUID REFERENCES sensors(id) ON DELETE SET NULL,
+    tag_names    TEXT,                     -- Pipe-separated tag dimensions
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX idx_telemetry_settings_qube ON telemetry_settings(qube_id);
 
-INSERT INTO config_state (qube_id) VALUES
-    ('Q-1001'),
-    ('Q-1002'),
-    ('Q-1003'),
-    ('Q-1004'),
-    ('Q-1005'),
-    ('Q-1006'),
-    ('Q-1007'),
-    ('Q-1008'),
-    ('Q-1009'),
-    ('Q-1010'),
-    ('Q-1011'),
-    ('Q-1012'),
-    ('Q-1013'),
-    ('Q-1014'),
-    ('Q-1015'),
-    ('Q-1016'),
-    ('Q-1017'),
-    ('Q-1018'),
-    ('Q-1019'),
-    ('Q-1020');
+-- ===================== WEBSOCKET DELIVERY LOG =====================
+-- Tracks WebSocket message delivery for reliability.
+CREATE TABLE ws_delivery_log (
+    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    message_type TEXT NOT NULL,            -- "config_push", "command", "ack"
+    payload     JSONB NOT NULL DEFAULT '{}',
+    delivered   BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    delivered_at TIMESTAMPTZ
+);
+CREATE INDEX idx_ws_delivery_pending ON ws_delivery_log(qube_id, delivered)
+    WHERE delivered = FALSE;
+
+-- ===================== REGISTRY CONFIG =====================
+-- Docker image registry settings.
+CREATE TABLE registry_config (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

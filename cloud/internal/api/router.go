@@ -9,55 +9,61 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
+func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "service": "cloud-api"})
+		writeJSON(w, 200, map[string]string{"status": "ok", "service": "cloud-api", "version": "2"})
 	})
 
 	// ── Public ──────────────────────────────────────────────────────────────
 	r.Post("/api/v1/auth/register", registerHandler(pool, jwtSecret))
 	r.Post("/api/v1/auth/login", loginHandler(pool, jwtSecret))
 
+	// ── WebSocket endpoint (Qube connections) ───────────────────────────────
+	// TODO: Phase 2 — WebSocket handler for bidirectional cloud↔qube communication
+	// r.Get("/ws", wsHandler(pool))
+
 	// ── Protected (JWT required) ─────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
 		r.Use(jwtMiddleware(jwtSecret))
 
-		// Qubes — read (all authenticated)
+		// ── Qubes ──
 		r.Get("/api/v1/qubes", listQubesHandler(pool))
 		r.Get("/api/v1/qubes/{id}", getQubeHandler(pool))
 		r.Get("/api/v1/qubes/{id}/sensors", listAllSensorsForQubeHandler(pool))
-		r.Get("/api/v1/qubes/{id}/gateways", listGatewaysHandler(pool))
+		r.Get("/api/v1/qubes/{id}/readers", listReadersHandler(pool))
+		r.Get("/api/v1/qubes/{id}/containers", listContainersHandler(pool))
 
-		// Gateways — read (all authenticated)
-		r.Get("/api/v1/gateways/{gateway_id}/sensors", listSensorsHandler(pool))
+		// ── Readers ──
+		r.Get("/api/v1/readers/{reader_id}", getReaderHandler(pool))
+		r.Get("/api/v1/readers/{reader_id}/sensors", listSensorsHandler(pool))
 
-		// Sensor rows — read (all authenticated)
-		r.Get("/api/v1/sensors/{sensor_id}/rows", listSensorRowsHandler(pool))
+		// ── Device Templates ──
+		r.Get("/api/v1/device-templates", listDeviceTemplatesHandler(pool))
+		r.Get("/api/v1/device-templates/{id}", getDeviceTemplateHandler(pool))
 
-		// Templates — read (all authenticated)
-		r.Get("/api/v1/templates", listTemplatesHandler(pool))
-		r.Get("/api/v1/templates/{id}", getTemplateHandler(pool))
-		r.Get("/api/v1/templates/{id}/preview", previewTemplateHandler(pool))
+		// ── Reader Templates ──
+		r.Get("/api/v1/reader-templates", listReaderTemplatesHandler(pool))
+		r.Get("/api/v1/reader-templates/{id}", getReaderTemplateHandler(pool))
 
-		// Protocols — read (all authenticated)
+		// ── Protocols ──
 		r.Get("/api/v1/protocols", listProtocolsHandler(pool))
 
-		// Telemetry — read (all authenticated)
-		r.Get("/api/v1/data/readings", readingsHandler(pool))
-		r.Get("/api/v1/data/sensors/{id}/latest", latestReadingHandler(pool))
+		// ── Telemetry (queries go to telemetry database) ──
+		r.Get("/api/v1/data/readings", readingsHandler(pool, telemetryPool))
+		r.Get("/api/v1/data/sensors/{id}/latest", latestReadingHandler(pool, telemetryPool))
 
-		// Commands — read (all authenticated)
+		// ── Commands ──
 		r.Get("/api/v1/commands/{id}", getCommandHandler(pool))
 
-		// All authenticated users
+		// ── Profile ──
 		r.Get("/api/v1/users/me", getMeHandler(pool))
 
-		// Editor+ — write operations (editor, admin, superadmin)
+		// ── Editor+ (editor, admin, superadmin) ──────────────────────────────
 		r.Group(func(r chi.Router) {
 			r.Use(requireRole("admin", "editor", "superadmin"))
 
@@ -65,27 +71,24 @@ func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
 			r.Put("/api/v1/qubes/{id}", updateQubeHandler(pool))
 			r.Post("/api/v1/qubes/{id}/commands", sendCommandHandler(pool))
 
-			// Gateways — create/delete
-			r.Post("/api/v1/qubes/{id}/gateways", createGatewayHandler(pool))
-			r.Delete("/api/v1/gateways/{gateway_id}", deleteGatewayHandler(pool))
+			// Readers — CRUD
+			r.Post("/api/v1/qubes/{id}/readers", createReaderHandler(pool))
+			r.Put("/api/v1/readers/{reader_id}", updateReaderHandler(pool))
+			r.Delete("/api/v1/readers/{reader_id}", deleteReaderHandler(pool))
 
-			// Sensors — create/delete
-			r.Post("/api/v1/gateways/{gateway_id}/sensors", createSensorHandler(pool))
+			// Sensors — CRUD
+			r.Post("/api/v1/readers/{reader_id}/sensors", createSensorHandler(pool))
+			r.Put("/api/v1/sensors/{sensor_id}", updateSensorHandler(pool))
 			r.Delete("/api/v1/sensors/{sensor_id}", deleteSensorHandler(pool))
 
-			// Sensor rows — write
-			r.Post("/api/v1/sensors/{sensor_id}/rows", addSensorRowHandler(pool))
-			r.Put("/api/v1/sensors/{sensor_id}/rows/{row_id}", updateSensorRowHandler(pool))
-			r.Delete("/api/v1/sensors/{sensor_id}/rows/{row_id}", deleteSensorRowHandler(pool))
-
-			// Templates — create/update/delete
-			r.Post("/api/v1/templates", createTemplateHandler(pool))
-			r.Put("/api/v1/templates/{id}", updateTemplateHandler(pool))
-			r.Delete("/api/v1/templates/{id}", deleteTemplateHandler(pool))
-			r.Patch("/api/v1/templates/{id}/registers", patchTemplateRegistersHandler(pool))
+			// Device Templates — CRUD
+			r.Post("/api/v1/device-templates", createDeviceTemplateHandler(pool))
+			r.Put("/api/v1/device-templates/{id}", updateDeviceTemplateHandler(pool))
+			r.Delete("/api/v1/device-templates/{id}", deleteDeviceTemplateHandler(pool))
+			r.Patch("/api/v1/device-templates/{id}/config", patchDeviceTemplateConfigHandler(pool))
 		})
 
-		// Admin+ only
+		// ── Admin+ ───────────────────────────────────────────────────────────
 		r.Group(func(r chi.Router) {
 			r.Use(requireRole("admin", "superadmin"))
 			r.Get("/api/v1/users", listUsersHandler(pool))
@@ -95,11 +98,16 @@ func NewRouter(pool *pgxpool.Pool, jwtSecret string) http.Handler {
 			r.Post("/api/v1/qubes/claim", claimQubeHandler(pool))
 		})
 
-		// Superadmin only — registry configuration
+		// ── Superadmin ───────────────────────────────────────────────────────
 		r.Group(func(r chi.Router) {
 			r.Use(requireRole("superadmin"))
 			r.Get("/api/v1/admin/registry", getRegistryHandler(pool))
 			r.Put("/api/v1/admin/registry", updateRegistryHandler(pool))
+
+			// Reader Templates — managed by IoT team
+			r.Post("/api/v1/reader-templates", createReaderTemplateHandler(pool))
+			r.Put("/api/v1/reader-templates/{id}", updateReaderTemplateHandler(pool))
+			r.Delete("/api/v1/reader-templates/{id}", deleteReaderTemplateHandler(pool))
 		})
 	})
 
