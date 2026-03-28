@@ -22,6 +22,7 @@ func listQubesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		rows, err := pool.Query(context.Background(),
 			`SELECT q.id, q.last_seen, q.status, q.location_label,
 			        q.claimed_at, q.config_version,
+			        q.ws_connected, q.poll_interval_sec,
 			        cs.hash
 			 FROM qubes q
 			 LEFT JOIN config_state cs ON cs.qube_id = q.id
@@ -38,21 +39,25 @@ func listQubesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			var (
 				id, status, location, configHash string
 				lastSeen, claimedAt              *time.Time
-				configVersion                    int
+				configVersion, pollInterval      int
+				wsConnected                      bool
 			)
 			if err := rows.Scan(&id, &lastSeen, &status, &location,
-				&claimedAt, &configVersion, &configHash); err != nil {
+				&claimedAt, &configVersion,
+				&wsConnected, &pollInterval,
+				&configHash); err != nil {
 				continue
 			}
-			liveStatus := liveStatus(status, lastSeen)
 			result = append(result, map[string]any{
-				"id":             id,
-				"status":         liveStatus,
-				"location_label": location,
-				"last_seen":      lastSeen,
-				"claimed_at":     claimedAt,
-				"config_version": configVersion,
-				"config_hash":    configHash,
+				"id":               id,
+				"status":           liveStatus(status, lastSeen),
+				"location_label":   location,
+				"last_seen":        lastSeen,
+				"claimed_at":       claimedAt,
+				"config_version":   configVersion,
+				"config_hash":      configHash,
+				"ws_connected":     wsConnected,
+				"poll_interval_sec": pollInterval,
 			})
 		}
 		writeJSON(w, http.StatusOK, result)
@@ -69,22 +74,30 @@ func getQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var (
 			id, status, location, configHash string
 			lastSeen, claimedAt              *time.Time
-			configVersion                    int
+			configVersion, pollInterval      int
+			wsConnected                      bool
 			hashUpdated                      time.Time
+			capabilitiesRaw                  []byte
 		)
 		err := pool.QueryRow(context.Background(),
 			`SELECT q.id, q.last_seen, q.status, q.location_label,
 			        q.claimed_at, q.config_version,
+			        q.ws_connected, q.poll_interval_sec, q.capabilities,
 			        cs.hash, cs.generated_at
 			 FROM qubes q
 			 LEFT JOIN config_state cs ON cs.qube_id = q.id
 			 WHERE q.id=$1 AND q.org_id=$2`, qubeID, orgID,
 		).Scan(&id, &lastSeen, &status, &location,
-			&claimedAt, &configVersion, &configHash, &hashUpdated)
+			&claimedAt, &configVersion,
+			&wsConnected, &pollInterval, &capabilitiesRaw,
+			&configHash, &hashUpdated)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "qube not found")
 			return
 		}
+
+		var capabilities any
+		json.Unmarshal(capabilitiesRaw, &capabilities)
 
 		// Recent commands
 		cmdRows, _ := pool.Query(context.Background(),
@@ -104,34 +117,31 @@ func getQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id":             id,
-			"status":         liveStatus(status, lastSeen),
-			"location_label": location,
-			"last_seen":      lastSeen,
-			"claimed_at":     claimedAt,
-			"config_version": configVersion,
-			"config_hash":    configHash,
-			"hash_updated":   hashUpdated,
-			"recent_commands": cmds,
+			"id":               id,
+			"status":           liveStatus(status, lastSeen),
+			"location_label":   location,
+			"last_seen":        lastSeen,
+			"claimed_at":       claimedAt,
+			"config_version":   configVersion,
+			"config_hash":      configHash,
+			"hash_updated":     hashUpdated,
+			"ws_connected":     wsConnected,
+			"poll_interval_sec": pollInterval,
+			"capabilities":     capabilities,
+			"recent_commands":  cmds,
 		})
 	}
 }
 
 // --- CLAIM QUBE ---
 
-// claimQubeHandler — customer claims their device using the register_key
-// printed on the device box / data sheet (generated at flash time by image-install.sh).
-// This replaces the old "claim by qube_id" flow — customers never know the internal qube_id,
-// they only know the register_key (e.g. "4D4L-R4KY-ZTQ5").
 func claimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 
 		var req struct {
-			// Primary: claim by register_key (what customer has on device box)
 			RegisterKey string `json:"register_key"`
-			// Legacy / dev: still accept qube_id directly for testing
-			QubeID      string `json:"qube_id"`
+			QubeID      string `json:"qube_id"` // legacy/dev fallback
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "register_key required")
@@ -144,7 +154,6 @@ func claimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var currentOrg *string
 
 		if req.RegisterKey != "" {
-			// Production flow: look up by register_key
 			err := pool.QueryRow(ctx,
 				`SELECT id, org_id FROM qubes WHERE register_key=$1`, req.RegisterKey,
 			).Scan(&qubeID, &currentOrg)
@@ -154,7 +163,6 @@ func claimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 				return
 			}
 		} else if req.QubeID != "" {
-			// Dev/test fallback: look up by qube_id directly
 			err := pool.QueryRow(ctx,
 				`SELECT id, org_id FROM qubes WHERE id=$1`, req.QubeID,
 			).Scan(&qubeID, &currentOrg)
@@ -173,7 +181,6 @@ func claimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Get org secret to generate HMAC token
 		var orgSecret string
 		if err := pool.QueryRow(ctx,
 			`SELECT org_secret FROM organisations WHERE id=$1`, orgID,
@@ -182,8 +189,6 @@ func claimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Generate the QUBE_TOKEN (HMAC of device_id + org_secret)
-		// This is what the conf-agent uses to authenticate to TP-API
 		authToken := computeHMAC(qubeID, orgSecret)
 
 		_, err := pool.Exec(ctx,
@@ -198,16 +203,14 @@ func claimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		// Initialise config state
-		hash := computeConfigHash(qubeID, 1, "")
 		pool.Exec(ctx,
-			`UPDATE config_state SET hash=$1, generated_at=NOW() WHERE qube_id=$2`,
-			hash, qubeID)
+			`UPDATE config_state SET hash='', config_version=1, generated_at=NOW() WHERE qube_id=$1`,
+			qubeID)
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"qube_id":      qubeID,
-			"auth_token":   authToken,
-			"message":      fmt.Sprintf("Device %s claimed. The device will self-configure within the next poll cycle.", qubeID),
-			"next_step":    "The device conf-agent will automatically retrieve this token on its next poll. No manual action required.",
+			"qube_id":    qubeID,
+			"auth_token": authToken,
+			"message":    fmt.Sprintf("Device %s claimed. The device will self-configure within the next sync cycle.", qubeID),
 		})
 	}
 }
@@ -219,29 +222,30 @@ func updateQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		qubeID := chi.URLParam(r, "id")
 		var req struct {
-			LocationLabel string `json:"location_label"`
+			LocationLabel   *string `json:"location_label"`
+			PollIntervalSec *int    `json:"poll_interval_sec"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
 		ctx := context.Background()
-		tag, err := pool.Exec(ctx,
-			`UPDATE qubes SET location_label=$1, config_version=config_version+1
-			 WHERE id=$2 AND org_id=$3`, req.LocationLabel, qubeID, orgID)
-		if err != nil || tag.RowsAffected() == 0 {
-			writeError(w, http.StatusNotFound, "qube not found")
-			return
+
+		if req.LocationLabel != nil {
+			pool.Exec(ctx,
+				`UPDATE qubes SET location_label=$1 WHERE id=$2 AND org_id=$3`,
+				*req.LocationLabel, qubeID, orgID)
 		}
-		// Recalculate hash (any change triggers resync)
-		var cv int
-		_ = pool.QueryRow(ctx, `SELECT config_version FROM qubes WHERE id=$1`, qubeID).Scan(&cv)
-		newHash := computeConfigHash(qubeID, cv, req.LocationLabel)
-		_, _ = pool.Exec(ctx,
-			`UPDATE config_state SET hash=$1, generated_at=NOW() WHERE qube_id=$2`, newHash, qubeID)
+		if req.PollIntervalSec != nil {
+			pool.Exec(ctx,
+				`UPDATE qubes SET poll_interval_sec=$1 WHERE id=$2 AND org_id=$3`,
+				*req.PollIntervalSec, qubeID, orgID)
+		}
+
+		hash, _ := recomputeConfigHash(ctx, pool, qubeID)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"message":  "updated — Conf-Agent will pick up change within poll interval",
-			"new_hash": newHash,
+			"message":  "updated — conf-agent will sync",
+			"new_hash": hash,
 		})
 	}
 }
@@ -262,10 +266,4 @@ func computeHMAC(qubeID, orgSecret string) string {
 	mac := hmac.New(sha256.New, []byte(orgSecret))
 	mac.Write([]byte(qubeID + ":" + orgSecret))
 	return hex.EncodeToString(mac.Sum(nil))
-}
-
-func computeConfigHash(qubeID string, version int, location string) string {
-	data := fmt.Sprintf("qube=%s:v=%d:loc=%s", qubeID, version, location)
-	sum := sha256.Sum256([]byte(data))
-	return hex.EncodeToString(sum[:])
 }

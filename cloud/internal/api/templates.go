@@ -10,16 +10,20 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// GET /api/v1/templates — list global + org templates, filterable by protocol
-func listTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// ═══════════════════════════════════════════════════════════════════════════════
+// DEVICE TEMPLATES — what data to collect (registers, OIDs, nodes, json_paths)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/v1/device-templates
+func listDeviceTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
-		protocol := r.URL.Query().Get("protocol") // optional filter
+		protocol := r.URL.Query().Get("protocol")
 
-		query := `SELECT id, org_id, name, protocol, description,
-		                 config_json, influx_fields_json, ui_mapping_json,
-		                 is_global, created_at
-		          FROM sensor_templates
+		query := `SELECT id, org_id, protocol, name, manufacturer, model, description,
+		                 sensor_config, sensor_params_schema,
+		                 is_global, version, created_at
+		          FROM device_templates
 		          WHERE (is_global = TRUE OR org_id = $1)`
 		args := []any{orgID}
 
@@ -38,94 +42,91 @@ func listTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 		result := make([]map[string]any, 0)
 		for rows.Next() {
-			var id, name, protocol, description string
+			var id, protocol, name, manufacturer, model, description string
 			var orgIDPtr *string
-			var cfgRaw, fieldsRaw, uiRaw []byte
+			var sensorCfgRaw, paramsSchemaRaw []byte
 			var isGlobal bool
+			var version int
 			var createdAt time.Time
-			if err := rows.Scan(&id, &orgIDPtr, &name, &protocol, &description,
-				&cfgRaw, &fieldsRaw, &uiRaw, &isGlobal, &createdAt); err != nil {
+			if err := rows.Scan(&id, &orgIDPtr, &protocol, &name, &manufacturer, &model,
+				&description, &sensorCfgRaw, &paramsSchemaRaw,
+				&isGlobal, &version, &createdAt); err != nil {
 				continue
 			}
-			var cfg, fields, ui any
-			json.Unmarshal(cfgRaw, &cfg)
-			json.Unmarshal(fieldsRaw, &fields)
-			json.Unmarshal(uiRaw, &ui)
+			var sensorCfg, paramsSchema any
+			json.Unmarshal(sensorCfgRaw, &sensorCfg)
+			json.Unmarshal(paramsSchemaRaw, &paramsSchema)
 			result = append(result, map[string]any{
-				"id":                 id,
-				"org_id":             orgIDPtr,
-				"name":               name,
-				"protocol":           protocol,
-				"description":        description,
-				"config_json":        cfg,
-				"influx_fields_json": fields,
-				"ui_mapping_json":    ui,
-				"is_global":          isGlobal,
-				"created_at":         createdAt,
+				"id": id, "org_id": orgIDPtr, "protocol": protocol,
+				"name": name, "manufacturer": manufacturer, "model": model,
+				"description": description,
+				"sensor_config": sensorCfg, "sensor_params_schema": paramsSchema,
+				"is_global": isGlobal, "version": version, "created_at": createdAt,
 			})
 		}
 		writeJSON(w, http.StatusOK, result)
 	}
 }
 
-// GET /api/v1/templates/:id — full template detail including all registers/nodes/OIDs
-func getTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// GET /api/v1/device-templates/:id
+func getDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		tmplID := chi.URLParam(r, "id")
 
-		var id, name, protocol, description string
+		var id, protocol, name, manufacturer, model, description string
 		var orgIDPtr *string
-		var cfgRaw, fieldsRaw, uiRaw []byte
+		var sensorCfgRaw, paramsSchemaRaw []byte
 		var isGlobal bool
+		var version int
 		var createdAt time.Time
 
 		err := pool.QueryRow(context.Background(),
-			`SELECT id, org_id, name, protocol, description, config_json,
-			        influx_fields_json, ui_mapping_json, is_global, created_at
-			 FROM sensor_templates
+			`SELECT id, org_id, protocol, name, manufacturer, model, description,
+			        sensor_config, sensor_params_schema,
+			        is_global, version, created_at
+			 FROM device_templates
 			 WHERE id=$1 AND (is_global=TRUE OR org_id=$2)`, tmplID, orgID,
-		).Scan(&id, &orgIDPtr, &name, &protocol, &description,
-			&cfgRaw, &fieldsRaw, &uiRaw, &isGlobal, &createdAt)
+		).Scan(&id, &orgIDPtr, &protocol, &name, &manufacturer, &model, &description,
+			&sensorCfgRaw, &paramsSchemaRaw, &isGlobal, &version, &createdAt)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "template not found")
+			writeError(w, http.StatusNotFound, "device template not found")
 			return
 		}
-		var cfg, fields, ui any
-		json.Unmarshal(cfgRaw, &cfg)
-		json.Unmarshal(fieldsRaw, &fields)
-		json.Unmarshal(uiRaw, &ui)
+		var sensorCfg, paramsSchema any
+		json.Unmarshal(sensorCfgRaw, &sensorCfg)
+		json.Unmarshal(paramsSchemaRaw, &paramsSchema)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"id": id, "org_id": orgIDPtr, "name": name, "protocol": protocol,
-			"description": description, "config_json": cfg,
-			"influx_fields_json": fields, "ui_mapping_json": ui,
-			"is_global": isGlobal, "created_at": createdAt,
+			"id": id, "org_id": orgIDPtr, "protocol": protocol,
+			"name": name, "manufacturer": manufacturer, "model": model,
+			"description": description,
+			"sensor_config": sensorCfg, "sensor_params_schema": paramsSchema,
+			"is_global": isGlobal, "version": version, "created_at": createdAt,
 		})
 	}
 }
 
-// POST /api/v1/templates — create template (org-scoped, or global if admin+superadmin role)
-// IoT team uses this to add new device types to the catalog.
-func createTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// POST /api/v1/device-templates
+func createDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		role, _ := r.Context().Value(ctxRole).(string)
 
 		var req struct {
-			Name             string `json:"name"`
-			Protocol         string `json:"protocol"`
-			Description      string `json:"description"`
-			ConfigJSON       any    `json:"config_json"`
-			InfluxFieldsJSON any    `json:"influx_fields_json"`
-			UIMappingJSON    any    `json:"ui_mapping_json"`
-			// IsGlobal can only be set true by superadmin role
-			IsGlobal         bool   `json:"is_global"`
+			Name              string `json:"name"`
+			Protocol          string `json:"protocol"`
+			Manufacturer      string `json:"manufacturer"`
+			Model             string `json:"model"`
+			Description       string `json:"description"`
+			SensorConfig      any    `json:"sensor_config"`
+			SensorParamsSchema any   `json:"sensor_params_schema"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 			req.Name == "" || req.Protocol == "" {
 			writeError(w, http.StatusBadRequest, "name and protocol are required")
 			return
 		}
+
 		var protoExists bool
 		pool.QueryRow(context.Background(),
 			`SELECT EXISTS(SELECT 1 FROM protocols WHERE id=$1 AND is_active=TRUE)`,
@@ -135,85 +136,86 @@ func createTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Superadmin always creates global templates (IoT team internal role)
 		isGlobal := role == "superadmin"
 
-		cfg, _    := json.Marshal(req.ConfigJSON)
-		fields, _ := json.Marshal(req.InfluxFieldsJSON)
-		ui, _     := json.Marshal(req.UIMappingJSON)
-		if cfg == nil    { cfg = []byte("{}") }
-		if fields == nil { fields = []byte("{}") }
-		if ui == nil     { ui = []byte("{}") }
+		sensorCfg, _ := json.Marshal(req.SensorConfig)
+		paramsSchema, _ := json.Marshal(req.SensorParamsSchema)
+		if sensorCfg == nil {
+			sensorCfg = []byte("{}")
+		}
+		if paramsSchema == nil {
+			paramsSchema = []byte("{}")
+		}
 
 		var id string
 		err := pool.QueryRow(context.Background(),
-			`INSERT INTO sensor_templates
-			 (org_id, name, protocol, description, config_json, influx_fields_json, ui_mapping_json, is_global)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id`,
-			orgID, req.Name, req.Protocol, req.Description, cfg, fields, ui, isGlobal,
+			`INSERT INTO device_templates
+			 (org_id, protocol, name, manufacturer, model, description,
+			  sensor_config, sensor_params_schema, is_global)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+			orgID, req.Protocol, req.Name, req.Manufacturer, req.Model,
+			req.Description, sensorCfg, paramsSchema, isGlobal,
 		).Scan(&id)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create template")
+			writeError(w, http.StatusInternalServerError, "failed to create device template")
 			return
 		}
 		writeJSON(w, http.StatusCreated, map[string]any{
-			"id":        id,
-			"is_global": isGlobal,
-			"message":   "template created",
+			"id": id, "is_global": isGlobal, "message": "device template created",
 		})
 	}
 }
 
-// PUT /api/v1/templates/:id — update full template (name, description, full config_json replacement)
-// IoT team uses this to update the entire register map / OID list for a device type.
-func updateTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// PUT /api/v1/device-templates/:id
+func updateDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		role, _ := r.Context().Value(ctxRole).(string)
 		tmplID := chi.URLParam(r, "id")
 
-		// Check ownership — global templates only editable by superadmin
 		var existingOrgID *string
 		var isGlobal bool
 		err := pool.QueryRow(context.Background(),
-			`SELECT org_id, is_global FROM sensor_templates WHERE id=$1`, tmplID,
+			`SELECT org_id, is_global FROM device_templates WHERE id=$1`, tmplID,
 		).Scan(&existingOrgID, &isGlobal)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "template not found")
+			writeError(w, http.StatusNotFound, "device template not found")
 			return
 		}
 		if role != "superadmin" {
 			if isGlobal {
-				writeError(w, http.StatusForbidden, "global templates can only be updated by superadmin")
+				writeError(w, http.StatusForbidden, "global templates only editable by superadmin")
 				return
 			}
 			if existingOrgID == nil || *existingOrgID != orgID {
-				writeError(w, http.StatusForbidden, "cannot update another org's template")
+				writeError(w, http.StatusForbidden, "not your template")
 				return
 			}
 		}
 
 		var req struct {
-			Name             string `json:"name"`
-			Description      string `json:"description"`
-			ConfigJSON       any    `json:"config_json"`
-			InfluxFieldsJSON any    `json:"influx_fields_json"`
-			UIMappingJSON    any    `json:"ui_mapping_json"`
+			Name               string `json:"name"`
+			Manufacturer       string `json:"manufacturer"`
+			Model              string `json:"model"`
+			Description        string `json:"description"`
+			SensorConfig       any    `json:"sensor_config"`
+			SensorParamsSchema any    `json:"sensor_params_schema"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
 
-		cfg, _    := json.Marshal(req.ConfigJSON)
-		fields, _ := json.Marshal(req.InfluxFieldsJSON)
-		ui, _     := json.Marshal(req.UIMappingJSON)
+		sensorCfg, _ := json.Marshal(req.SensorConfig)
+		paramsSchema, _ := json.Marshal(req.SensorParamsSchema)
 
 		_, err = pool.Exec(context.Background(),
-			`UPDATE sensor_templates
-			 SET name=$1, description=$2, config_json=$3, influx_fields_json=$4, ui_mapping_json=$5
-			 WHERE id=$6`,
-			req.Name, req.Description, cfg, fields, ui, tmplID)
+			`UPDATE device_templates
+			 SET name=$1, manufacturer=$2, model=$3, description=$4,
+			     sensor_config=$5, sensor_params_schema=$6, version=version+1
+			 WHERE id=$7`,
+			req.Name, req.Manufacturer, req.Model, req.Description,
+			sensorCfg, paramsSchema, tmplID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "update failed")
 			return
@@ -222,10 +224,8 @@ func updateTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-// PATCH /api/v1/templates/:id/registers — add or update individual register/node/OID entries
-// without replacing the whole config_json. Useful for IoT team to fix one register.
-// Body: {"action":"add"|"update"|"delete", "index":0, "entry":{...register object...}}
-func patchTemplateRegistersHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// PATCH /api/v1/device-templates/:id/config — add/update/delete entries in sensor_config
+func patchDeviceTemplateConfigHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		role, _ := r.Context().Value(ctxRole).(string)
@@ -236,13 +236,13 @@ func patchTemplateRegistersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var cfgRaw []byte
 		var protocol string
 		err := pool.QueryRow(context.Background(),
-			`SELECT org_id, is_global, config_json, protocol FROM sensor_templates WHERE id=$1`, tmplID,
+			`SELECT org_id, is_global, sensor_config, protocol FROM device_templates WHERE id=$1`,
+			tmplID,
 		).Scan(&existingOrgID, &isGlobal, &cfgRaw, &protocol)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "template not found")
+			writeError(w, http.StatusNotFound, "device template not found")
 			return
 		}
-		// superadmin can edit any template (global or org-scoped)
 		if role != "superadmin" {
 			if isGlobal {
 				writeError(w, http.StatusForbidden, "global templates only editable by superadmin")
@@ -256,23 +256,26 @@ func patchTemplateRegistersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 		var req struct {
 			Action string `json:"action"` // "add", "update", "delete"
-			Index  int    `json:"index"`  // for update/delete: 0-based index in array
-			Entry  any    `json:"entry"`  // the register/node/OID object
+			Index  int    `json:"index"`
+			Entry  any    `json:"entry"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
 
-		// Determine the array key based on protocol
 		arrayKey := protocolArrayKey(protocol)
 
 		var cfg map[string]any
 		json.Unmarshal(cfgRaw, &cfg)
-		if cfg == nil { cfg = map[string]any{} }
+		if cfg == nil {
+			cfg = map[string]any{}
+		}
 
 		arr, _ := cfg[arrayKey].([]any)
-		if arr == nil { arr = []any{} }
+		if arr == nil {
+			arr = []any{}
+		}
 
 		switch req.Action {
 		case "add":
@@ -298,7 +301,8 @@ func patchTemplateRegistersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		newCfg, _ := json.Marshal(cfg)
 
 		_, err = pool.Exec(context.Background(),
-			`UPDATE sensor_templates SET config_json=$1 WHERE id=$2`, newCfg, tmplID)
+			`UPDATE device_templates SET sensor_config=$1, version=version+1 WHERE id=$2`,
+			newCfg, tmplID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "update failed")
 			return
@@ -307,16 +311,16 @@ func patchTemplateRegistersHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var result any
 		json.Unmarshal(newCfg, &result)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"updated":      true,
-			"action":       req.Action,
+			"updated":       true,
+			"action":        req.Action,
 			"total_entries": len(arr),
-			"config_json":  result,
+			"sensor_config": result,
 		})
 	}
 }
 
-// DELETE /api/v1/templates/:id
-func deleteTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// DELETE /api/v1/device-templates/:id
+func deleteDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		role, _ := r.Context().Value(ctxRole).(string)
@@ -325,10 +329,10 @@ func deleteTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var existingOrgID *string
 		var isGlobal bool
 		err := pool.QueryRow(context.Background(),
-			`SELECT org_id, is_global FROM sensor_templates WHERE id=$1`, tmplID,
+			`SELECT org_id, is_global FROM device_templates WHERE id=$1`, tmplID,
 		).Scan(&existingOrgID, &isGlobal)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "template not found")
+			writeError(w, http.StatusNotFound, "device template not found")
 			return
 		}
 		if isGlobal && role != "superadmin" {
@@ -341,7 +345,7 @@ func deleteTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		_, err = pool.Exec(context.Background(),
-			`DELETE FROM sensor_templates WHERE id=$1`, tmplID)
+			`DELETE FROM device_templates WHERE id=$1`, tmplID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "delete failed")
 			return
@@ -350,46 +354,174 @@ func deleteTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-// GET /api/v1/templates/:id/preview — preview the CSV that would be generated
-// for a given set of address_params. Useful for IoT team to validate a template.
-func previewTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// ═══════════════════════════════════════════════════════════════════════════════
+// READER TEMPLATES — container config (Docker image, connection schema)
+// Managed by IoT team (superadmin only)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// GET /api/v1/reader-templates
+func listReaderTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		protocol := r.URL.Query().Get("protocol")
+
+		query := `SELECT id, protocol, name, description, image_suffix,
+		                 connection_schema, env_defaults, version, created_at
+		          FROM reader_templates`
+		args := []any{}
+		if protocol != "" {
+			query += " WHERE protocol = $1"
+			args = append(args, protocol)
+		}
+		query += " ORDER BY protocol ASC, name ASC"
+
+		rows, err := pool.Query(context.Background(), query, args...)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		defer rows.Close()
+
+		result := make([]map[string]any, 0)
+		for rows.Next() {
+			var id, protocol, name, description, imageSuffix string
+			var connSchemaRaw, envDefaultsRaw []byte
+			var version int
+			var createdAt time.Time
+			if err := rows.Scan(&id, &protocol, &name, &description, &imageSuffix,
+				&connSchemaRaw, &envDefaultsRaw, &version, &createdAt); err != nil {
+				continue
+			}
+			var connSchema, envDefaults any
+			json.Unmarshal(connSchemaRaw, &connSchema)
+			json.Unmarshal(envDefaultsRaw, &envDefaults)
+			result = append(result, map[string]any{
+				"id": id, "protocol": protocol, "name": name,
+				"description": description, "image_suffix": imageSuffix,
+				"connection_schema": connSchema, "env_defaults": envDefaults,
+				"version": version, "created_at": createdAt,
+			})
+		}
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
+// GET /api/v1/reader-templates/:id
+func getReaderTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		tmplID := chi.URLParam(r, "id")
 
-		var protocol string
-		var cfgRaw []byte
+		var id, protocol, name, description, imageSuffix string
+		var connSchemaRaw, envDefaultsRaw []byte
+		var version int
+		var createdAt time.Time
+
 		err := pool.QueryRow(context.Background(),
-			`SELECT protocol, config_json FROM sensor_templates
-			 WHERE id=$1 AND (is_global=TRUE OR org_id=$2)`, tmplID, orgID,
-		).Scan(&protocol, &cfgRaw)
+			`SELECT id, protocol, name, description, image_suffix,
+			        connection_schema, env_defaults, version, created_at
+			 FROM reader_templates WHERE id=$1`, tmplID,
+		).Scan(&id, &protocol, &name, &description, &imageSuffix,
+			&connSchemaRaw, &envDefaultsRaw, &version, &createdAt)
 		if err != nil {
-			writeError(w, http.StatusNotFound, "template not found")
+			writeError(w, http.StatusNotFound, "reader template not found")
 			return
 		}
-
-		// Parse address_params from query string or body
-		var addrParams any = map[string]any{"unit_id": 1}
-		if ap := r.URL.Query().Get("address_params"); ap != "" {
-			json.Unmarshal([]byte(ap), &addrParams)
-		}
-
-		csvRows, csvType, err := generateCSVRows(
-			"preview-sensor-id", "PreviewSensor", protocol, cfgRaw,
-			addrParams, map[string]any{"preview": "true"},
-			[]byte("{}"), "192.168.1.1", 502,
-		)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "preview failed: "+err.Error())
-			return
-		}
-
+		var connSchema, envDefaults any
+		json.Unmarshal(connSchemaRaw, &connSchema)
+		json.Unmarshal(envDefaultsRaw, &envDefaults)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"protocol":  protocol,
-			"csv_type":  csvType,
-			"row_count": len(csvRows),
-			"rows":      csvRows,
+			"id": id, "protocol": protocol, "name": name,
+			"description": description, "image_suffix": imageSuffix,
+			"connection_schema": connSchema, "env_defaults": envDefaults,
+			"version": version, "created_at": createdAt,
 		})
+	}
+}
+
+// POST /api/v1/reader-templates (superadmin only)
+func createReaderTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Protocol         string `json:"protocol"`
+			Name             string `json:"name"`
+			Description      string `json:"description"`
+			ImageSuffix      string `json:"image_suffix"`
+			ConnectionSchema any    `json:"connection_schema"`
+			EnvDefaults      any    `json:"env_defaults"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
+			req.Name == "" || req.Protocol == "" || req.ImageSuffix == "" {
+			writeError(w, http.StatusBadRequest, "name, protocol, and image_suffix are required")
+			return
+		}
+
+		connSchema, _ := json.Marshal(req.ConnectionSchema)
+		envDefaults, _ := json.Marshal(req.EnvDefaults)
+		if connSchema == nil {
+			connSchema = []byte("{}")
+		}
+		if envDefaults == nil {
+			envDefaults = []byte("{}")
+		}
+
+		var id string
+		err := pool.QueryRow(context.Background(),
+			`INSERT INTO reader_templates (protocol, name, description, image_suffix, connection_schema, env_defaults)
+			 VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+			req.Protocol, req.Name, req.Description, req.ImageSuffix, connSchema, envDefaults,
+		).Scan(&id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create reader template")
+			return
+		}
+		writeJSON(w, http.StatusCreated, map[string]any{"id": id, "message": "reader template created"})
+	}
+}
+
+// PUT /api/v1/reader-templates/:id (superadmin only)
+func updateReaderTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tmplID := chi.URLParam(r, "id")
+
+		var req struct {
+			Name             string `json:"name"`
+			Description      string `json:"description"`
+			ImageSuffix      string `json:"image_suffix"`
+			ConnectionSchema any    `json:"connection_schema"`
+			EnvDefaults      any    `json:"env_defaults"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+
+		connSchema, _ := json.Marshal(req.ConnectionSchema)
+		envDefaults, _ := json.Marshal(req.EnvDefaults)
+
+		tag, err := pool.Exec(context.Background(),
+			`UPDATE reader_templates
+			 SET name=$1, description=$2, image_suffix=$3,
+			     connection_schema=$4, env_defaults=$5, version=version+1
+			 WHERE id=$6`,
+			req.Name, req.Description, req.ImageSuffix, connSchema, envDefaults, tmplID)
+		if err != nil || tag.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "reader template not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"updated": true, "id": tmplID})
+	}
+}
+
+// DELETE /api/v1/reader-templates/:id (superadmin only)
+func deleteReaderTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		tmplID := chi.URLParam(r, "id")
+		tag, err := pool.Exec(context.Background(),
+			`DELETE FROM reader_templates WHERE id=$1`, tmplID)
+		if err != nil || tag.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "reader template not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"deleted": true})
 	}
 }
 
@@ -397,10 +529,17 @@ func previewTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 func protocolArrayKey(protocol string) string {
 	switch protocol {
-	case "modbus_tcp": return "registers"
-	case "opcua":      return "nodes"
-	case "snmp":       return "oids"
-	case "mqtt":       return "readings"
-	default:           return "entries"
+	case "modbus_tcp":
+		return "registers"
+	case "opcua":
+		return "nodes"
+	case "snmp":
+		return "oids"
+	case "mqtt":
+		return "json_paths"
+	case "http":
+		return "json_paths"
+	default:
+		return "entries"
 	}
 }

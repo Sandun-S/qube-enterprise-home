@@ -21,33 +21,39 @@ const (
 	ctxOrgID  ctxKey = "tp_org_id"
 )
 
-func NewRouter(pool *pgxpool.Pool) http.Handler {
+func NewRouter(pool, telemetryPool *pgxpool.Pool) http.Handler {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "service": "tp-api"})
+		writeJSON(w, 200, map[string]string{"status": "ok", "service": "tp-api", "version": "2"})
 	})
 
-	// Public — device self-registration (no auth needed, uses register_key for identity)
-	// Called by conf-agent on first boot using credentials from /boot/mit.txt
+	// Public — device self-registration (no auth, uses register_key)
 	r.Post("/v1/device/register", deviceRegisterHandler(pool))
 
 	r.Group(func(r chi.Router) {
 		r.Use(qubeAuthMiddleware(pool))
+
+		// Sync — config state + SQLite data download
 		r.Get("/v1/sync/state", syncStateHandler(pool))
 		r.Get("/v1/sync/config", syncConfigHandler(pool))
+
+		// Heartbeat
 		r.Post("/v1/heartbeat", heartbeatHandler(pool))
+
+		// Commands
 		r.Post("/v1/commands/poll", pollCommandsHandler(pool))
 		r.Post("/v1/commands/{id}/ack", ackCommandHandler(pool))
-		r.Post("/v1/telemetry/ingest", telemetryIngestHandler(pool))
+
+		// Telemetry — writes to telemetry database (qubedata)
+		r.Post("/v1/telemetry/ingest", telemetryIngestHandler(telemetryPool))
 	})
 
 	return r
 }
 
-// qubeAuthMiddleware validates X-Qube-ID + Authorization: Bearer <hmac_token>
 func qubeAuthMiddleware(pool *pgxpool.Pool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

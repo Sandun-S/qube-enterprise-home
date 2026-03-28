@@ -3,152 +3,100 @@ package tpapi
 import (
 	"bytes"
 	"context"
-	"os"
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
-	"strings"
+	"os"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// GET /v1/sync/state — conf-agent polls this to check for config changes
 func syncStateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		qubeID, _ := r.Context().Value(ctxQubeID).(string)
 		var hash string
+		var configVersion int
 		var updatedAt time.Time
 		err := pool.QueryRow(context.Background(),
-			`SELECT hash, generated_at FROM config_state WHERE qube_id=$1`, qubeID,
-		).Scan(&hash, &updatedAt)
+			`SELECT hash, config_version, generated_at FROM config_state WHERE qube_id=$1`, qubeID,
+		).Scan(&hash, &configVersion, &updatedAt)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "config state not found")
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"qube_id":    qubeID,
-			"hash":       hash,
-			"updated_at": updatedAt,
+			"qube_id":        qubeID,
+			"hash":           hash,
+			"config_version": configVersion,
+			"updated_at":     updatedAt,
 		})
 	}
 }
 
+// GET /v1/sync/config — conf-agent downloads full config when hash changes
+// v2: Returns JSON data that conf-agent writes to SQLite + docker-compose.yml
+// No more CSV files — all config lives in SQLite on the Qube.
 func syncConfigHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		qubeID, _ := r.Context().Value(ctxQubeID).(string)
 		ctx := context.Background()
 
 		var hash, location string
+		var configVersion int
 		err := pool.QueryRow(ctx,
-			`SELECT cs.hash, q.location_label
+			`SELECT cs.hash, cs.config_version, q.location_label
 			 FROM config_state cs JOIN qubes q ON q.id=cs.qube_id
 			 WHERE cs.qube_id=$1`, qubeID,
-		).Scan(&hash, &location)
+		).Scan(&hash, &configVersion, &location)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "config not found")
 			return
 		}
 
-		// Load all active services + their gateway details
-		svcRows, err := pool.Query(ctx,
-			`SELECT svc.id, svc.gateway_id, svc.name, svc.image, svc.port, svc.env_json,
-			        g.protocol, g.host, g.port AS gw_port, g.config_json, g.name AS gw_name
-			 FROM services svc
-			 JOIN gateways g ON g.id = svc.gateway_id
-			 WHERE svc.qube_id=$1 AND svc.status='active' AND g.status='active'
-			 ORDER BY svc.created_at ASC`, qubeID)
+		// Load all readers + their sensors
+		readers, err := loadReadersForQube(ctx, pool, qubeID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "db error loading services")
+			writeError(w, http.StatusInternalServerError, "error loading readers")
 			return
 		}
-		defer svcRows.Close()
 
-		var services []svcMeta
-		for svcRows.Next() {
-			var s svcMeta
-			var envRaw, gwCfgRaw []byte
-			if err := svcRows.Scan(&s.ID, &s.GwID, &s.Name, &s.Image, &s.Port,
-				&envRaw, &s.Protocol, &s.Host, &s.GwPort, &gwCfgRaw, &s.GwName); err != nil {
-				continue
-			}
-			json.Unmarshal(envRaw, &s.EnvJSON)
-			json.Unmarshal(gwCfgRaw, &s.GwCfgJSON)
-			if s.EnvJSON == nil { s.EnvJSON = map[string]any{} }
-			if s.GwCfgJSON == nil { s.GwCfgJSON = map[string]any{} }
-			services = append(services, s)
-		}
-		svcRows.Close()
-
-		// Build CSV files and sensor_map for each service
-		csvFiles := map[string]string{}
-		sensorMap := map[string]string{}
-
-		for _, svc := range services {
-			rows, err := pool.Query(ctx,
-				`SELECT cr.row_data, cr.csv_type, s.id, s.name
-				 FROM service_csv_rows cr
-				 JOIN sensors s ON s.id = cr.sensor_id
-				 WHERE cr.service_id=$1
-				 ORDER BY cr.row_order ASC`, svc.ID)
-			if err != nil { continue }
-
-			var entries []csvEntry
-			for rows.Next() {
-				var e csvEntry
-				var rawData []byte
-				if err := rows.Scan(&rawData, &e.CSVType, &e.SensorID, &e.SensorName); err == nil {
-					json.Unmarshal(rawData, &e.Data)
-					if e.Data == nil { e.Data = map[string]any{} }
-					entries = append(entries, e)
-				}
-			}
-			rows.Close()
-
-			if len(entries) == 0 { continue }
-
-			// Render the main data file (registers.csv / nodes.csv / devices.csv / topics)
-			mainFile, extraFiles := renderGatewayFiles(svc.Protocol, svc.Name, entries)
-			csvFiles[fmt.Sprintf("configs/%s/config.csv", svc.Name)] = mainFile
-
-			// Extra files (e.g. per-device SNMP OID files)
-			for path, content := range extraFiles {
-				csvFiles[path] = content
-			}
-
-			// Also write configs.yml for this gateway
-			cfgYML := renderGatewayConfig(svc)
-			csvFiles[fmt.Sprintf("configs/%s/configs.yml", svc.Name)] = cfgYML
-
-			// Build sensor_map: "Equipment.Reading" → sensor_id
-			for _, e := range entries {
-				if reading, ok := e.Data["Reading"].(string); ok && reading != "" {
-					key := fmt.Sprintf("%s.%s", e.SensorName, reading)
-					sensorMap[key] = e.SensorID
-				}
-				// OPC-UA uses Device field
-				if reading, ok := e.Data["Reading"].(string); ok {
-					if device, ok2 := e.Data["Device"].(string); ok2 {
-						key := fmt.Sprintf("%s.%s", device, reading)
-						sensorMap[key] = e.SensorID
-					}
-				}
-			}
+		// Load containers
+		containers, err := loadContainersForQube(ctx, pool, qubeID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "error loading containers")
+			return
 		}
 
-		composeYML := buildFullComposeYML(pool, qubeID, location, services)
-		envFiles := map[string]string{}
+		// Load coreswitch settings
+		csSettings, err := loadCoreSwitchSettings(ctx, pool, qubeID)
+		if err != nil {
+			csSettings = map[string]string{}
+		}
+
+		// Load telemetry settings
+		telemetrySettings, err := loadTelemetrySettings(ctx, pool, qubeID)
+		if err != nil {
+			telemetrySettings = []map[string]any{}
+		}
+
+		// Build docker-compose.yml
+		composeYML := buildComposeYML(pool, qubeID, location, containers)
 
 		writeJSON(w, http.StatusOK, map[string]any{
-			"hash":               hash,
-			"docker_compose_yml": composeYML,
-			"csv_files":          csvFiles,
-			"env_files":          envFiles,
-			"sensor_map":         sensorMap,
+			"hash":                hash,
+			"config_version":      configVersion,
+			"docker_compose_yml":  composeYML,
+			"readers":             readers,
+			"containers":          containers,
+			"coreswitch_settings": csSettings,
+			"telemetry_settings":  telemetrySettings,
 		})
 	}
 }
 
+// POST /v1/heartbeat
 func heartbeatHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		qubeID, _ := r.Context().Value(ctxQubeID).(string)
@@ -166,281 +114,178 @@ func heartbeatHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
-// ─── Service metadata ─────────────────────────────────────────────────────────
+// ─── Data loaders ────────────────────────────────────────────────────────────
 
-type svcMeta struct {
-	ID        string
-	GwID      string
-	GwName    string
-	Name      string
-	Image     string
-	Port      int
-	EnvJSON   map[string]any
-	Protocol  string
-	Host      string
-	GwPort    int
-	GwCfgJSON map[string]any
+type readerConfig struct {
+	ID       string           `json:"id"`
+	Name     string           `json:"name"`
+	Protocol string           `json:"protocol"`
+	Config   any              `json:"config_json"`
+	Sensors  []sensorConfig   `json:"sensors"`
 }
 
-type csvEntry struct {
-	Data       map[string]any
-	CSVType    string
-	SensorID   string
-	SensorName string
+type sensorConfig struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Config    any    `json:"config_json"`
+	Tags      any    `json:"tags_json"`
+	Output    string `json:"output"`
+	TableName string `json:"table_name"`
 }
 
-// ─── Gateway configs.yml generator ───────────────────────────────────────────
-// Generates the configs.yml that the real gateway binary reads.
-// Each gateway reads its own configs.yml at startup.
+type containerConfig struct {
+	ID       string `json:"id"`
+	ReaderID *string `json:"reader_id"`
+	Name     string `json:"name"`
+	Image    string `json:"image"`
+	Env      any    `json:"env_json"`
+	Protocol string `json:"protocol"`
+}
 
-func renderGatewayConfig(svc svcMeta) string {
-	var b bytes.Buffer
-	switch svc.Protocol {
-	case "modbus_tcp":
-		// server URL: tcp://host:port  (real gateway format)
-		port := svc.GwPort
-		if port == 0 { port = 502 }
-		server := fmt.Sprintf("tcp://%s:%d", svc.Host, port)
-		freqSec := 20
-		if v, ok := svc.GwCfgJSON["freq_sec"].(float64); ok && int(v) > 0 { freqSec = int(v) }
-		singleRead := 120
-		if v, ok := svc.GwCfgJSON["single_read_count"].(float64); ok && int(v) > 0 { singleRead = int(v) }
-		fmt.Fprintf(&b, `loglevel: "info"
-modbus:
-  server: "%s"
-  readingsfile: "config.csv"
-  freqsec: %d
-  singlereadcount: %d
-http:
-  data: "http://core-switch:8585/batch"
-  alerts: "http://core-switch:8585/alerts"
-`, server, freqSec, singleRead)
-
-	case "opcua":
-		// OpcEndPoint: full endpoint URL stored in host field
-		// e.g. opc.tcp://192.168.1.18:52520/OPCUA/N4OpcUaServer
-		endpoint := svc.Host
-		fmt.Fprintf(&b, `LogLevel: "Info"
-OpcUA:
-  OpcEndPoint: "%s"
-  PointsFile: "config.csv"
-HTTP:
-  Data: "http://core-switch:8585/batch"
-  Alerts: "http://core-switch:8585/alerts"
-`, endpoint)
-
-	case "snmp":
-		fetchInterval := 15
-		if v, ok := svc.GwCfgJSON["fetch_interval"].(float64); ok { fetchInterval = int(v) }
-		workerCount := 2
-		if v, ok := svc.GwCfgJSON["worker_count"].(float64); ok { workerCount = int(v) }
-		fmt.Fprintf(&b, `loglevel: "INFO"
-snmp:
-  fetch_interval: %d
-  connect_timeout: 10
-  worker_count: %d
-  devices_file: "config.csv"
-  maps_folder: "./maps"
-http:
-  data_url: "http://core-switch:8585/v3/batch"
-  alerts_url: "http://core-switch:8585/v3/alerts"
-`, fetchInterval, workerCount)
-
-	case "mqtt":
-		brokerURL := strVal(svc.GwCfgJSON["broker_url"], fmt.Sprintf("tcp://%s:%d", svc.Host, svc.GwPort))
-		username  := strVal(svc.GwCfgJSON["username"], "")
-		password  := strVal(svc.GwCfgJSON["password"], "")
-		fmt.Fprintf(&b, `LogLevel: "Info"
-MappingFile: "config.csv"
-MQTT:
-  Host: "%s"
-  Port: %d
-  User: "%s"
-  Pass: "%s"
-HTTP:
-  Data: "http://core-switch:8080/v3/data"
-  Alerts: "http://core-switch:8080/v3/alerts"
-  IdleTO: 5
-  MaxIdle: 3
-`, brokerURL, svc.GwPort, username, password)
+func loadReadersForQube(ctx context.Context, pool *pgxpool.Pool, qubeID string) ([]readerConfig, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT rd.id, rd.name, rd.protocol, rd.config_json
+		 FROM readers rd
+		 WHERE rd.qube_id=$1 AND rd.status='active'
+		 ORDER BY rd.created_at ASC`, qubeID)
+	if err != nil {
+		return nil, err
 	}
-	return b.String()
+	defer rows.Close()
+
+	var readers []readerConfig
+	for rows.Next() {
+		var rd readerConfig
+		var cfgRaw []byte
+		if err := rows.Scan(&rd.ID, &rd.Name, &rd.Protocol, &cfgRaw); err != nil {
+			continue
+		}
+		json.Unmarshal(cfgRaw, &rd.Config)
+
+		// Load sensors
+		srows, _ := pool.Query(ctx,
+			`SELECT id, name, config_json, tags_json, output, table_name
+			 FROM sensors WHERE reader_id=$1 AND status='active'
+			 ORDER BY created_at ASC`, rd.ID)
+		for srows.Next() {
+			var s sensorConfig
+			var sCfgRaw, sTagsRaw []byte
+			if err := srows.Scan(&s.ID, &s.Name, &sCfgRaw, &sTagsRaw, &s.Output, &s.TableName); err == nil {
+				json.Unmarshal(sCfgRaw, &s.Config)
+				json.Unmarshal(sTagsRaw, &s.Tags)
+				rd.Sensors = append(rd.Sensors, s)
+			}
+		}
+		srows.Close()
+		readers = append(readers, rd)
+	}
+	return readers, nil
 }
 
-// ─── CSV/config file renderers ────────────────────────────────────────────────
-// Returns (main file content, map of extra files)
+func loadContainersForQube(ctx context.Context, pool *pgxpool.Pool, qubeID string) ([]containerConfig, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT c.id, c.reader_id, c.name, c.image, c.env_json,
+		        COALESCE(rd.protocol, '') AS protocol
+		 FROM containers c
+		 LEFT JOIN readers rd ON rd.id = c.reader_id
+		 WHERE c.qube_id=$1 AND c.status='active'
+		 ORDER BY c.created_at ASC`, qubeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-func renderGatewayFiles(protocol, svcName string, rows []csvEntry) (string, map[string]string) {
-	var b bytes.Buffer
-	extraFiles := map[string]string{}
-
-	switch protocol {
-
-	case "modbus_tcp":
-		// Real format: #Equipment,Reading,RegType,Address,type,Output,Table,Tags
-		// Equipment = sensor/device name; Table = InfluxDB measurement name
-		// Tags are pipe-separated; gateway converts | → , before forwarding to core-switch
-		b.WriteString("#Equipment,Reading,RegType,Address,type,Output,Table,Tags\n")
-		for _, r := range rows {
-			fmt.Fprintf(&b, "%s,%s,%s,%v,%s,%s,%s,%s\n",
-				sv(r.Data, "Equipment"),
-				sv(r.Data, "Reading"),
-				sv(r.Data, "RegType"),
-				r.Data["Address"],
-				sv(r.Data, "Type"),
-				sv(r.Data, "Output"),
-				sv(r.Data, "Table"),
-				sv(r.Data, "Tags"))
+	var containers []containerConfig
+	for rows.Next() {
+		var c containerConfig
+		var envRaw []byte
+		if err := rows.Scan(&c.ID, &c.ReaderID, &c.Name, &c.Image, &envRaw, &c.Protocol); err != nil {
+			continue
 		}
+		json.Unmarshal(envRaw, &c.Env)
+		containers = append(containers, c)
+	}
+	return containers, nil
+}
 
-	case "opcua":
-		// Real format: #Table,Device,Reading,OpcNode,Type,Freq,Output,Tags
-		b.WriteString("#Table,Device,Reading,OpcNode,Type,Freq,Output,Tags\n")
-		for _, r := range rows {
-			fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%v,%s,%s\n",
-				sv(r.Data, "Table"), sv(r.Data, "Device"),
-				sv(r.Data, "Reading"), sv(r.Data, "OpcNode"),
-				sv(r.Data, "Type"), r.Data["Freq"],
-				sv(r.Data, "Output"), sv(r.Data, "Tags"))
-		}
+func loadCoreSwitchSettings(ctx context.Context, pool *pgxpool.Pool, qubeID string) (map[string]string, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT key, value_json FROM coreswitch_settings WHERE qube_id=$1`, qubeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
 
-	case "snmp":
-		// Real devices.csv format: #Table, Device, SNMP csv, Community, Version, Output, Tags
-		// Device = IP address of the SNMP device (from addr_params.device_ip)
-		// SNMP csv = template map filename (e.g. gxt-rt-ups.csv) — stored in template config_json.map_file
-		// OID map file: field_name,OID  — two columns, NO header line
-		b.WriteString("#Table, Device, SNMP csv, Community, Version, Output, Tags\n")
-
-		writtenMaps := map[string]bool{}
-		for _, r := range rows {
-			snmpFile := sv(r.Data, "SNMP_csv")
-			deviceIP  := sv(r.Data, "DeviceIP")
-			if deviceIP == "" { deviceIP = "0.0.0.0" }
-
-			// tags: always include name=SensorName
-			tags := sv(r.Data, "Tags")
-
-			fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s\n",
-				sv(r.Data, "Table"), deviceIP,
-				snmpFile,
-				sv(r.Data, "Community"), sv(r.Data, "Version"),
-				sv(r.Data, "Output"), tags)
-
-			// Write OID map file once per unique template map file
-			// Format: field_name,OID  (no header — matches real gateway maps/*.csv)
-			if !writtenMaps[snmpFile] {
-				writtenMaps[snmpFile] = true
-				if oids, ok := r.Data["_oids"].([]any); ok {
-					var oidBuf bytes.Buffer
-					for _, o := range oids {
-						om, ok := o.(map[string]any)
-						if !ok { continue }
-						fmt.Fprintf(&oidBuf, "%s,%s\n",
-							sv(om, "field_key"), sv(om, "oid"))
-					}
-					extraPath := fmt.Sprintf("configs/%s/maps/%s", svcName, snmpFile)
-					extraFiles[extraPath] = oidBuf.String()
-				}
-			}
-		}
-
-	case "mqtt":
-		// mqtt-reader uses mapping.yml YAML format
-		// Group by topic
-		type topicGroup struct {
-			Topic    string
-			Table    string
-			Readings []csvEntry
-		}
-		topicMap := map[string]*topicGroup{}
-		var topicOrder []string
-		for _, r := range rows {
-			topic := sv(r.Data, "Topic")
-			if _, ok := topicMap[topic]; !ok {
-				topicMap[topic] = &topicGroup{
-					Topic: topic,
-					Table: sv(r.Data, "Table"),
-				}
-				topicOrder = append(topicOrder, topic)
-			}
-			topicMap[topic].Readings = append(topicMap[topic].Readings, r)
-		}
-		sort.Strings(topicOrder)
-		// Write mapping.yml format
-		for _, topic := range topicOrder {
-			grp := topicMap[topic]
-			fmt.Fprintf(&b, "- Topic: %q\n", grp.Topic)
-			fmt.Fprintf(&b, "  Table: %q\n", grp.Table)
-			b.WriteString("  Mapping:\n")
-			for _, r := range grp.Readings {
-				b.WriteString("    - Device: [\"FIXED\", ")
-				fmt.Fprintf(&b, "%q]\n", sv(r.Data, "Device"))
-				b.WriteString("      Reading: [\"FIXED\", ")
-				fmt.Fprintf(&b, "%q]\n", sv(r.Data, "Reading"))
-				// JSON path extraction if specified
-				if jp := sv(r.Data, "JSONPath"); jp != "" && jp != "$.value" {
-					// Strip "$." prefix for mqtt-reader FIELD format
-					field := strings.TrimPrefix(jp, "$.")
-					b.WriteString("      Value: [\"FIELD\", ")
-					fmt.Fprintf(&b, "%q]\n", field)
-				} else {
-					b.WriteString("      Value: [\"FIELD\", \"value\"]\n")
-				}
-				b.WriteString("      Output: [\"FIXED\", \"influxdb\"]\n")
-				if tags := sv(r.Data, "Tags"); tags != "" {
-					b.WriteString("      Tags: [\"FIXED\", ")
-					fmt.Fprintf(&b, "%q]\n", tags)
-				}
-			}
-		}
-
-	default:
-		for _, r := range rows {
-			line, _ := json.Marshal(r.Data)
-			b.Write(line)
-			b.WriteByte('\n')
+	settings := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if rows.Scan(&k, &v) == nil {
+			settings[k] = v
 		}
 	}
-
-	return b.String(), extraFiles
+	return settings, nil
 }
 
-func sv(m map[string]any, key string) string {
-	if v, ok := m[key]; ok { return fmt.Sprintf("%v", v) }
-	return ""
+func loadTelemetrySettings(ctx context.Context, pool *pgxpool.Pool, qubeID string) ([]map[string]any, error) {
+	rows, err := pool.Query(ctx,
+		`SELECT device, reading, agg_time_min, agg_func, sensor_id, tag_names
+		 FROM telemetry_settings WHERE qube_id=$1
+		 ORDER BY device ASC`, qubeID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var settings []map[string]any
+	for rows.Next() {
+		var device, reading, aggFunc string
+		var aggTime int
+		var sensorID, tagNames *string
+		if err := rows.Scan(&device, &reading, &aggTime, &aggFunc, &sensorID, &tagNames); err != nil {
+			continue
+		}
+		settings = append(settings, map[string]any{
+			"device":       device,
+			"reading":      reading,
+			"agg_time_min": aggTime,
+			"agg_func":     aggFunc,
+			"sensor_id":    sensorID,
+			"tag_names":    tagNames,
+		})
+	}
+	return settings, nil
 }
 
-func strVal(v any, def string) string {
-	if s, ok := v.(string); ok && s != "" { return s }
-	return def
-}
+// ─── Docker Compose Builder (v2) ─────────────────────────────────────────────
+// Generates docker-compose.yml for Swarm deployment.
+// v2 changes:
+//   - No CSV volume mounts — readers read from shared SQLite
+//   - Shared qube-data volume for SQLite
+//   - READER_ID + SQLITE_PATH + CORESWITCH_URL env vars
+//   - No MQTT broker service (removed from Qube)
 
-// ─── Docker Swarm Stack Compose Builder ──────────────────────────────────────
-// Generates docker-compose.yml for `docker stack deploy -c docker-compose.yml qube`
-// Matches the real Qube Lite swarm format exactly:
-//   - networks: qube-net external overlay
-//   - deploy: replicas + restart_policy blocks
-//   - host-path volumes for config files
-//   - standard logging config
-//
-// The conf-agent writes this file to /opt/qube/docker-compose.yml
-// then runs: docker stack deploy -c /opt/qube/docker-compose.yml qube
-// Resulting service names: qube_<service-name> (same as real Qube Lite)
-
-func buildFullComposeYML(pool *pgxpool.Pool, qubeID, location string, services []svcMeta) string {
+func buildComposeYML(pool *pgxpool.Pool, qubeID, location string, containers []containerConfig) string {
 	var b bytes.Buffer
 	loc := location
-	if loc == "" { loc = "unset" }
+	if loc == "" {
+		loc = "unset"
+	}
 
-	// Header — matches real Qube Lite format
+	confAgentImage := imageForService(pool, "conf_agent")
+	influxSQLImage := imageForService(pool, "influx_sql")
+
 	fmt.Fprintf(&b, `version: "3.8"
-# Generated by Qube Enterprise TP-API
+# Generated by Qube Enterprise v2 TP-API
 # Qube: %s | Location: %s
 # Deploy: docker stack deploy -c docker-compose.yml qube
 
 networks:
   qube-net:
     external: true
+
+volumes:
+  qube-data:
+    driver: local
 
 services:
 
@@ -453,8 +298,14 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /opt/qube:/opt/qube
+      - qube-data:/opt/qube/data
     environment:
       - QUBE_ID=%s
+      - SQLITE_PATH=/opt/qube/data/qube.db
+      - TPAPI_URL=${TPAPI_URL}
+      - QUBE_TOKEN=${QUBE_TOKEN}
+      - CLOUD_WS_URL=${CLOUD_WS_URL}
+      - POLL_INTERVAL=${POLL_INTERVAL:-30}
     logging:
       driver: "local"
       options:
@@ -474,11 +325,11 @@ services:
     volumes:
       - /etc/timezone:/etc/timezone:ro
       - /etc/localtime:/etc/localtime:ro
-      - /opt/qube/sensor_map.json:/config/sensor_map.json:ro
+      - qube-data:/opt/qube/data:ro
     environment:
       - INFLUX_URL=http://influxdb:8086
-      - INFLUX_DB=qube-db
-      - SENSOR_MAP_PATH=/config/sensor_map.json
+      - INFLUX_DB=edgex
+      - SQLITE_PATH=/opt/qube/data/qube.db
       - TPAPI_URL=${TPAPI_URL}
       - QUBE_ID=%s
       - QUBE_TOKEN=${QUBE_TOKEN}
@@ -492,35 +343,26 @@ services:
       restart_policy:
         condition: any
 
-`, qubeID, loc, imageForService(pool, "conf_agent"), qubeID, imageForService(pool, "influx_sql"), qubeID)
+`, qubeID, loc, confAgentImage, qubeID, influxSQLImage, qubeID)
 
-	// One service block per gateway — each gateway = one container
-	// Multiple gateways of same protocol = multiple separate containers with different names
-	// e.g. two Modbus gateways → qube_panel-a-modbus and qube_panel-b-modbus
-	for _, svc := range services {
-		image := svc.Image
-		if image == "" { image = defaultImageForProtocol(pool, svc.Protocol) }
-
-		fmt.Fprintf(&b, "  # Gateway: %s (%s) → %s\n", svc.GwName, svc.Protocol, svc.Host)
-		fmt.Fprintf(&b, "  %s:\n", svc.Name)
-		fmt.Fprintf(&b, "    image: %s\n", image)
-		fmt.Fprintf(&b, "    hostname: %s\n", svc.Name)
+	// One service per reader container
+	for _, c := range containers {
+		fmt.Fprintf(&b, "  # Reader: %s (%s)\n", c.Name, c.Protocol)
+		fmt.Fprintf(&b, "  %s:\n", c.Name)
+		fmt.Fprintf(&b, "    image: %s\n", c.Image)
+		fmt.Fprintf(&b, "    hostname: %s\n", c.Name)
 		fmt.Fprintf(&b, "    networks:\n      - qube-net\n")
 		fmt.Fprintf(&b, "    volumes:\n")
 		fmt.Fprintf(&b, "      - /etc/timezone:/etc/timezone:ro\n")
 		fmt.Fprintf(&b, "      - /etc/localtime:/etc/localtime:ro\n")
-		// configs.yml — gateway connection settings (server IP, port, poll interval)
-		fmt.Fprintf(&b, "      - /opt/qube/configs/%s/configs.yml:/app/configs.yml:ro\n", svc.Name)
-		// config.csv — main data file (registers/nodes/devices depending on protocol)
-		fmt.Fprintf(&b, "      - /opt/qube/configs/%s/config.csv:/app/config.csv:ro\n", svc.Name)
-		// SNMP: mount maps/ folder containing per-device-type OID CSV files
-		if svc.Protocol == "snmp" {
-			fmt.Fprintf(&b, "      - /opt/qube/configs/%s/maps:/app/maps:ro\n", svc.Name)
-		}
+		fmt.Fprintf(&b, "      - qube-data:/opt/qube/data:ro\n")
+		fmt.Fprintf(&b, "    environment:\n")
 
-		// SNMP gateways may have per-device OID files in the same folder
-		if svc.Protocol == "snmp" {
-			fmt.Fprintf(&b, "      - /opt/qube/configs/%s:/app/oids:ro\n", svc.Name)
+		// Write env vars from container config
+		if envMap, ok := c.Env.(map[string]any); ok {
+			for k, v := range envMap {
+				fmt.Fprintf(&b, "      - %s=%v\n", k, v)
+			}
 		}
 
 		fmt.Fprintf(&b, "    logging:\n")
@@ -537,41 +379,25 @@ services:
 	return b.String()
 }
 
-// defaultImageForProtocol returns the Docker image for a gateway protocol.
-// Override the registry at startup via QUBE_IMAGE_REGISTRY env var.
-// Default: ghcr.io/sandun-s (change to your registry in production)
-func defaultImageForProtocol(pool *pgxpool.Pool, protocol string) string {
-	// Map protocol to registry_config service key
-	keyMap := map[string]string{
-		"modbus_tcp": "modbus",
-		"opcua":      "opcua",
-		"snmp":       "snmp",
-		"mqtt":       "mqtt_gw",
-	}
-	if key, ok := keyMap[protocol]; ok {
-		return imageForService(pool, key)
-	}
-	return "busybox:latest"
-}
-
-// imageForService resolves a Docker image from registry_config table.
-// Switch with: PUT /api/v1/admin/registry {"mode":"github"} or {"mode":"gitlab"}
+// imageForService resolves Docker image from registry_config
 func imageForService(pool *pgxpool.Pool, serviceKey string) string {
-	// Try DB lookup first
 	rows, err := pool.Query(context.Background(),
 		`SELECT key, value FROM registry_config`)
 	if err == nil {
 		defer rows.Close()
 		cfg := map[string]string{}
 		for rows.Next() {
-			var k, v string; rows.Scan(&k, &v)
+			var k, v string
+			rows.Scan(&k, &v)
 			cfg[k] = v
 		}
 		mode := cfg["mode"]
 		switch mode {
 		case "github":
 			base := cfg["github_base"]
-			if base == "" { base = "ghcr.io/sandun-s/qube-enterprise-home" }
+			if base == "" {
+				base = "ghcr.io/sandun-s/qube-enterprise-home"
+			}
 			shortNames := map[string]string{
 				"conf_agent": "conf-agent",
 				"influx_sql": "influx-to-sql",
@@ -582,9 +408,13 @@ func imageForService(pool *pgxpool.Pool, serviceKey string) string {
 			return base + "/" + serviceKey + ":arm64.latest"
 		case "gitlab", "custom":
 			imgKey := "img_" + serviceKey
-			if v, ok := cfg[imgKey]; ok && v != "" { return v }
+			if v, ok := cfg[imgKey]; ok && v != "" {
+				return v
+			}
 			base := cfg["gitlab_base"]
-			if base == "" { base = "registry.gitlab.com/iot-team4/product" }
+			if base == "" {
+				base = "registry.gitlab.com/iot-team4/product"
+			}
 			prefixMap := map[string]string{
 				"conf_agent": "enterprise-conf-agent",
 				"influx_sql": "enterprise-influx-to-sql",
@@ -595,9 +425,10 @@ func imageForService(pool *pgxpool.Pool, serviceKey string) string {
 			return base + "/" + serviceKey + ":arm64.latest"
 		}
 	}
-	// Fallback: env var
 	reg := os.Getenv("QUBE_IMAGE_REGISTRY")
-	if reg == "" { reg = "ghcr.io/sandun-s/qube-enterprise-home" }
+	if reg == "" {
+		reg = "ghcr.io/sandun-s/qube-enterprise-home"
+	}
 	shortNames := map[string]string{
 		"conf_agent": "conf-agent",
 		"influx_sql": "influx-to-sql",
@@ -608,23 +439,13 @@ func imageForService(pool *pgxpool.Pool, serviceKey string) string {
 	return reg + "/" + serviceKey + ":arm64.latest"
 }
 
-
-// ─── Device Self-Registration ─────────────────────────────────────────────────
-// POST /v1/device/register — called by conf-agent on startup using /boot/mit.txt credentials
-// No auth required — uses device_id + register_key to identify the device.
-// Returns QUBE_TOKEN if the device has been claimed by a customer, or "pending" if not yet.
-//
-// Flow:
-//   1. Device boots, conf-agent reads /boot/mit.txt → gets device_id + register_key
-//   2. Calls this endpoint
-//   3a. If claimed → gets QUBE_TOKEN, saves to /opt/qube/.env, starts normal sync
-//   3b. If not claimed yet → gets "pending", polls every 60s until customer claims it
+// ─── Device Self-Registration ────────────────────────────────────────────────
 
 func deviceRegisterHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
-			DeviceID    string `json:"device_id"`    // from /boot/mit.txt → deviceid field
-			RegisterKey string `json:"register_key"` // from /boot/mit.txt → register field
+			DeviceID    string `json:"device_id"`
+			RegisterKey string `json:"register_key"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 			req.DeviceID == "" || req.RegisterKey == "" {
@@ -634,7 +455,6 @@ func deviceRegisterHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 		ctx := context.Background()
 
-		// Look up the device by device_id AND register_key — both must match
 		var orgID *string
 		var orgSecret string
 		var claimed bool
@@ -650,14 +470,11 @@ func deviceRegisterHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		).Scan(&orgID, &orgSecret, &claimed)
 
 		if err != nil {
-			// Device not found — could be wrong device_id or register_key
 			writeError(w, http.StatusUnauthorized, "device not found or invalid register key")
 			return
 		}
 
 		if !claimed || orgID == nil {
-			// Device exists but customer hasn't claimed it yet
-			// Conf-agent will retry every 60s
 			writeJSON(w, http.StatusAccepted, map[string]any{
 				"status":     "pending",
 				"device_id":  req.DeviceID,
@@ -667,11 +484,8 @@ func deviceRegisterHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Device is claimed — generate the QUBE_TOKEN
-		// Same HMAC formula as claimQubeHandler so tokens are consistent
 		authToken := computeHMAC(req.DeviceID, orgSecret)
 
-		// Update last_seen so we know the device is online
 		pool.Exec(ctx,
 			`UPDATE qubes SET last_seen=NOW(), status='online' WHERE id=$1`, req.DeviceID)
 
@@ -679,8 +493,7 @@ func deviceRegisterHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			"status":     "claimed",
 			"device_id":  req.DeviceID,
 			"qube_token": authToken,
-			"tpapi_url":  "",  // conf-agent already knows this — it called this endpoint
-			"message":    "Device claimed. Save qube_token to /opt/qube/.env and begin sync.",
+			"message":    "Device claimed. Save qube_token and begin sync.",
 		})
 	}
 }

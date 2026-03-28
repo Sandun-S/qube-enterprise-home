@@ -10,7 +10,7 @@ import (
 )
 
 // GET /api/v1/data/readings?sensor_id=uuid&field=field_key&from=iso&to=iso
-func readingsHandler(pool *pgxpool.Pool) http.HandlerFunc {
+func readingsHandler(pool, telemetryPool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		sensorID := r.URL.Query().Get("sensor_id")
@@ -23,12 +23,12 @@ func readingsHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Verify sensor belongs to org
+		// Verify sensor belongs to org (management DB)
 		var count int
 		pool.QueryRow(context.Background(),
 			`SELECT COUNT(*) FROM sensors s
-			 JOIN gateways g ON g.id=s.gateway_id
-			 JOIN qubes q ON q.id=g.qube_id
+			 JOIN readers rd ON rd.id=s.reader_id
+			 JOIN qubes q ON q.id=rd.qube_id
 			 WHERE s.id=$1 AND q.org_id=$2`, sensorID, orgID).Scan(&count)
 		if count == 0 {
 			writeError(w, http.StatusNotFound, "sensor not found")
@@ -48,6 +48,7 @@ func readingsHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
+		// Query telemetry DB (qubedata — TimescaleDB)
 		query := `SELECT time, field_key, value, unit FROM sensor_readings
 		          WHERE sensor_id=$1 AND time BETWEEN $2 AND $3`
 		args := []any{sensorID, from, to}
@@ -57,9 +58,9 @@ func readingsHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 		query += " ORDER BY time ASC LIMIT 10000"
 
-		rows, err := pool.Query(context.Background(), query, args...)
+		rows, err := telemetryPool.Query(context.Background(), query, args...)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "db error")
+			writeError(w, http.StatusInternalServerError, "telemetry db error")
 			return
 		}
 		defer rows.Close()
@@ -88,30 +89,31 @@ func readingsHandler(pool *pgxpool.Pool) http.HandlerFunc {
 }
 
 // GET /api/v1/data/sensors/:id/latest
-func latestReadingHandler(pool *pgxpool.Pool) http.HandlerFunc {
+func latestReadingHandler(pool, telemetryPool *pgxpool.Pool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		sensorID := chi.URLParam(r, "id")
 
-		// Verify ownership
+		// Verify ownership (management DB)
 		var sensorName string
 		err := pool.QueryRow(context.Background(),
 			`SELECT s.name FROM sensors s
-			 JOIN gateways g ON g.id=s.gateway_id
-			 JOIN qubes q ON q.id=g.qube_id
+			 JOIN readers rd ON rd.id=s.reader_id
+			 JOIN qubes q ON q.id=rd.qube_id
 			 WHERE s.id=$1 AND q.org_id=$2`, sensorID, orgID).Scan(&sensorName)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "sensor not found")
 			return
 		}
 
-		rows, err := pool.Query(context.Background(),
+		// Query telemetry DB
+		rows, err := telemetryPool.Query(context.Background(),
 			`SELECT DISTINCT ON (field_key) time, field_key, value, unit
 			 FROM sensor_readings
 			 WHERE sensor_id=$1
 			 ORDER BY field_key, time DESC`, sensorID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "db error")
+			writeError(w, http.StatusInternalServerError, "telemetry db error")
 			return
 		}
 		defer rows.Close()

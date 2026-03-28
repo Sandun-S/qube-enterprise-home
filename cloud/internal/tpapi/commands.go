@@ -16,7 +16,7 @@ func pollCommandsHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 		rows, err := pool.Query(context.Background(),
 			`SELECT id, command, payload FROM qube_commands
-			 WHERE qube_id=$1 AND status='pending'
+			 WHERE qube_id=$1 AND status IN ('pending', 'sent')
 			 ORDER BY created_at ASC LIMIT 10`,
 			qubeID)
 		if err != nil {
@@ -31,6 +31,7 @@ func pollCommandsHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			Payload any    `json:"payload"`
 		}
 		cmds := make([]cmd, 0)
+		var ids []string
 		for rows.Next() {
 			var c cmd
 			var raw []byte
@@ -39,13 +40,21 @@ func pollCommandsHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			}
 			json.Unmarshal(raw, &c.Payload)
 			cmds = append(cmds, c)
+			ids = append(ids, c.ID)
 		}
 
-		// Timeout any commands older than 2 minutes
-		_, _ = pool.Exec(context.Background(),
+		// Mark polled commands as "sent"
+		for _, id := range ids {
+			pool.Exec(context.Background(),
+				`UPDATE qube_commands SET status='sent', sent_at=NOW()
+				 WHERE id=$1 AND status='pending'`, id)
+		}
+
+		// Timeout old commands
+		pool.Exec(context.Background(),
 			`UPDATE qube_commands SET status='timeout'
-			 WHERE qube_id=$1 AND status='pending'
-			 AND created_at < NOW() - INTERVAL '2 minutes'`, qubeID)
+			 WHERE qube_id=$1 AND status IN ('pending', 'sent')
+			 AND created_at < NOW() - INTERVAL '5 minutes'`, qubeID)
 
 		writeJSON(w, http.StatusOK, map[string]any{"commands": cmds})
 	}
@@ -75,7 +84,7 @@ func ackCommandHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		result, _ := json.Marshal(req.Result)
 		tag, err := pool.Exec(context.Background(),
 			`UPDATE qube_commands SET status=$1, result=$2, executed_at=$3
-			 WHERE id=$4 AND qube_id=$5 AND status='pending'`,
+			 WHERE id=$4 AND qube_id=$5 AND status IN ('pending', 'sent')`,
 			req.Status, result, time.Now(), cmdID, qubeID)
 		if err != nil || tag.RowsAffected() == 0 {
 			writeError(w, http.StatusNotFound, "command not found or already acknowledged")

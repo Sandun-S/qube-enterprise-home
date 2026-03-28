@@ -11,70 +11,66 @@ import (
 )
 
 // recomputeConfigHash rebuilds the SHA-256 config hash for a Qube by
-// serialising all active gateways + services + sensors into a canonical JSON
-// blob, then storing the result in config_state. Call this after every
-// mutation that would change what Conf-Agent deploys.
+// serialising all active readers + sensors into canonical JSON,
+// then storing the result in config_state. Call after every mutation
+// that changes what conf-agent deploys (or writes to SQLite).
 func recomputeConfigHash(ctx context.Context, pool *pgxpool.Pool, qubeID string) (string, error) {
 	type sensorRow struct {
-		ID            string `json:"id"`
-		Name          string `json:"name"`
-		TemplateID    string `json:"template_id"`
-		AddressParams any    `json:"address_params"`
-		TagsJSON      any    `json:"tags_json"`
+		ID        string `json:"id"`
+		Name      string `json:"name"`
+		Config    any    `json:"config_json"`
+		Tags      any    `json:"tags_json"`
+		Output    string `json:"output"`
+		TableName string `json:"table_name"`
 	}
-	type gwRow struct {
-		ID           string      `json:"id"`
-		Name         string      `json:"name"`
-		Protocol     string      `json:"protocol"`
-		Host         string      `json:"host"`
-		Port         int         `json:"port"`
-		ConfigJSON   any         `json:"config_json"`
-		ServiceImage string      `json:"service_image"`
-		Sensors      []sensorRow `json:"sensors"`
+	type readerRow struct {
+		ID       string      `json:"id"`
+		Name     string      `json:"name"`
+		Protocol string      `json:"protocol"`
+		Config   any         `json:"config_json"`
+		Sensors  []sensorRow `json:"sensors"`
 	}
 
 	rows, err := pool.Query(ctx,
-		`SELECT g.id, g.name, g.protocol, g.host, g.port, g.config_json, g.service_image
-		 FROM gateways g
-		 WHERE g.qube_id=$1 AND g.status='active'
-		 ORDER BY g.created_at ASC`, qubeID)
+		`SELECT rd.id, rd.name, rd.protocol, rd.config_json
+		 FROM readers rd
+		 WHERE rd.qube_id=$1 AND rd.status='active'
+		 ORDER BY rd.created_at ASC`, qubeID)
 	if err != nil {
-		return "", fmt.Errorf("query gateways: %w", err)
+		return "", fmt.Errorf("query readers: %w", err)
 	}
 	defer rows.Close()
 
-	var gateways []gwRow
+	var readers []readerRow
 	for rows.Next() {
-		var gw gwRow
-		var cfgRaw, imgRaw []byte
-		if err := rows.Scan(&gw.ID, &gw.Name, &gw.Protocol,
-			&gw.Host, &gw.Port, &cfgRaw, &imgRaw); err != nil {
+		var rd readerRow
+		var cfgRaw []byte
+		if err := rows.Scan(&rd.ID, &rd.Name, &rd.Protocol, &cfgRaw); err != nil {
 			continue
 		}
-		json.Unmarshal(cfgRaw, &gw.ConfigJSON)
-		gw.ServiceImage = string(imgRaw)
+		json.Unmarshal(cfgRaw, &rd.Config)
 
-		// Fetch sensors for this gateway
+		// Fetch sensors for this reader
 		srows, _ := pool.Query(ctx,
-			`SELECT id, name, template_id, address_params, tags_json
-			 FROM sensors WHERE gateway_id=$1 AND status='active' ORDER BY created_at ASC`,
-			gw.ID)
+			`SELECT id, name, config_json, tags_json, output, table_name
+			 FROM sensors WHERE reader_id=$1 AND status='active'
+			 ORDER BY created_at ASC`, rd.ID)
 		for srows.Next() {
 			var s sensorRow
-			var apRaw, tagsRaw []byte
-			if err := srows.Scan(&s.ID, &s.Name, &s.TemplateID, &apRaw, &tagsRaw); err == nil {
-				json.Unmarshal(apRaw, &s.AddressParams)
-				json.Unmarshal(tagsRaw, &s.TagsJSON)
-				gw.Sensors = append(gw.Sensors, s)
+			var sCfgRaw, sTagsRaw []byte
+			if err := srows.Scan(&s.ID, &s.Name, &sCfgRaw, &sTagsRaw, &s.Output, &s.TableName); err == nil {
+				json.Unmarshal(sCfgRaw, &s.Config)
+				json.Unmarshal(sTagsRaw, &s.Tags)
+				rd.Sensors = append(rd.Sensors, s)
 			}
 		}
 		srows.Close()
-		gateways = append(gateways, gw)
+		readers = append(readers, rd)
 	}
 
 	canonical, err := json.Marshal(map[string]any{
-		"qube_id":  qubeID,
-		"gateways": gateways,
+		"qube_id": qubeID,
+		"readers": readers,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)
@@ -83,8 +79,11 @@ func recomputeConfigHash(ctx context.Context, pool *pgxpool.Pool, qubeID string)
 	sum := sha256.Sum256(canonical)
 	hash := hex.EncodeToString(sum[:])
 
+	// Update config_state with new hash + version bump
 	_, err = pool.Exec(ctx,
-		`UPDATE config_state SET hash=$1, generated_at=NOW(), config_snapshot=$2 WHERE qube_id=$3`,
+		`UPDATE config_state
+		 SET hash=$1, config_version=config_version+1, generated_at=NOW(), config_snapshot=$2
+		 WHERE qube_id=$3`,
 		hash, canonical, qubeID)
 	if err != nil {
 		return "", fmt.Errorf("update config_state: %w", err)

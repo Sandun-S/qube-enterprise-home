@@ -11,12 +11,14 @@ import (
 )
 
 var validCommands = map[string]bool{
-	"ping":           true,
-	"restart_qube":   true,
-	"restart_service": true,
-	"reload_config":  true,
-	"get_logs":       true,
-	"list_containers": true,
+	"ping":             true,
+	"restart_qube":     true,
+	"restart_reader":   true,
+	"stop_container":   true,
+	"reload_config":    true,
+	"get_logs":         true,
+	"list_containers":  true,
+	"update_sqlite":    true,
 }
 
 func sendCommandHandler(pool *pgxpool.Pool) http.HandlerFunc {
