@@ -1,305 +1,149 @@
-// mqtt-gateway — Qube Enterprise Edge Service
-// Reads topics.csv injected by Conf-Agent, subscribes to an MQTT broker,
-// extracts values via JSON path, and HTTP POSTs to Coreswitch.
-// Uses only stdlib + paho.mqtt.golang + gjson.
+// mqtt-reader — Qube Enterprise MQTT Reader (v2)
+//
+// Reads config from shared SQLite → subscribes to MQTT topics → extracts values
+// via JSON path → POSTs to coreswitch.
+//
+// Config changes are handled by conf-agent stopping this container; Swarm recreates
+// it and the new instance reads fresh config from SQLite on startup.
+//
+// Env vars:
+//   READER_ID      — UUID of this reader in SQLite
+//   SQLITE_PATH    — Path to shared SQLite database (read-only)
+//   CORESWITCH_URL — Core-switch HTTP endpoint
+//   LOG_LEVEL      — debug, info, warn, error (default: info)
 package main
 
 import (
-	"bytes"
-	"encoding/csv"
-	"encoding/json"
 	"fmt"
-	"io"
-	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
+	"github.com/qube-enterprise/pkg/coreswitch"
+	"github.com/qube-enterprise/pkg/logger"
+	"github.com/qube-enterprise/pkg/sqliteconfig"
 	"github.com/tidwall/gjson"
 )
 
-// ─── Config ───────────────────────────────────────────────────────────────────
-
-type Config struct {
-	BrokerURL      string
-	BaseTopic      string
-	MQTTUsername   string
-	MQTTPassword   string
-	MQTTQOS        byte
-	CSVPath        string
-	CoreSwitchURL  string
-	ServiceName    string
-	ReconnectDelay time.Duration
+// topicRule maps one sensor config entry to an MQTT subscription.
+type topicRule struct {
+	sensor   sqliteconfig.SensorConfig
+	topic    string
+	jsonPath string
+	fieldKey string
 }
 
-func loadConfig() Config {
-	qos, _ := strconv.Atoi(getenv("MQTT_QOS", "1"))
-	return Config{
-		BrokerURL:      getenv("MQTT_BROKER_URL", "tcp://localhost:1883"),
-		BaseTopic:      getenv("MQTT_BASE_TOPIC", ""),
-		MQTTUsername:   getenv("MQTT_USERNAME", ""),
-		MQTTPassword:   getenv("MQTT_PASSWORD", ""),
-		MQTTQOS:        byte(qos),
-		CSVPath:        getenv("CSV_PATH", "/config/config.csv"),
-		CoreSwitchURL:  getenv("CORESWITCH_URL", "http://coreswitch:8080"),
-		ServiceName:    getenv("SERVICE_NAME", "mqtt-gateway"),
-		ReconnectDelay: 10 * time.Second,
+func main() {
+	log := logger.New("mqtt-reader")
+
+	readerID := os.Getenv("READER_ID")
+	sqlitePath := os.Getenv("SQLITE_PATH")
+	coreSwitchURL := getenv("CORESWITCH_URL", "http://core-switch:8585")
+
+	if readerID == "" || sqlitePath == "" {
+		log.Fatal("READER_ID and SQLITE_PATH are required")
 	}
-}
 
-func getenv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// ─── Topic Rule (one row from CSV) ───────────────────────────────────────────
-
-type TopicRule struct {
-	SensorName string // Column: SensorName
-	Topic      string // Column: Topic
-	JSONPath   string // Column: JSONPath   (gjson path, e.g. "data.voltage")
-	FieldKey   string // Column: FieldKey
-	Table      string // Column: Table
-	Tags       string // Column: Tags
-}
-
-func loadCSV(path string) ([]TopicRule, error) {
-	f, err := os.Open(path)
+	// ── Load config from SQLite ──────────────────────────────────────────
+	db, err := sqliteconfig.OpenReadOnly(sqlitePath)
 	if err != nil {
-		return nil, fmt.Errorf("open csv: %w", err)
+		log.Fatalf("Failed to open SQLite: %v", err)
 	}
-	defer f.Close()
 
-	r := csv.NewReader(f)
-	r.TrimLeadingSpace = true
-	header, err := r.Read()
+	readerCfg, sensors, err := sqliteconfig.LoadReaderConfig(db, readerID)
+	db.Close()
+
 	if err != nil {
-		return nil, fmt.Errorf("read header: %w", err)
+		log.Fatalf("Failed to load reader config: %v", err)
 	}
 
-	// Build column index map (case-insensitive)
-	idx := map[string]int{}
-	for i, h := range header {
-		idx[strings.ToLower(strings.TrimSpace(h))] = i
-	}
-	col := func(row []string, name string) string {
-		if i, ok := idx[strings.ToLower(name)]; ok && i < len(row) {
-			return strings.TrimSpace(row[i])
-		}
-		return ""
-	}
+	log.Infof("Loaded reader: name=%s protocol=%s sensors=%d",
+		readerCfg.Name, readerCfg.Protocol, len(sensors))
 
-	var rules []TopicRule
-	for {
-		row, err := r.Read()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			log.Printf("[csv] skipping bad row: %v", err)
-			continue
-		}
-		topic := col(row, "topic")
-		if topic == "" {
-			continue
-		}
-		rules = append(rules, TopicRule{
-			SensorName: col(row, "sensorname"),
-			Topic:      topic,
-			JSONPath:   normalisePath(col(row, "jsonpath")),
-			FieldKey:   col(row, "fieldkey"),
-			Table:      col(row, "table"),
-			Tags:       col(row, "tags"),
-		})
-	}
-	log.Printf("[csv] loaded %d topic rules from %s", len(rules), path)
-	return rules, nil
-}
-
-// normalisePath strips leading "$." from gjson paths coming from the CSV.
-func normalisePath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.TrimPrefix(path, "$.")
-	path = strings.TrimPrefix(path, "$[")
-	return path
-}
-
-// ─── Coreswitch Payload ───────────────────────────────────────────────────────
-
-type Reading struct {
-	SensorName string            `json:"sensor_name"`
-	Table      string            `json:"table"`
-	Tags       map[string]string `json:"tags"`
-	Fields     map[string]any    `json:"fields"`
-	Timestamp  int64             `json:"timestamp_ms"`
-}
-
-// ─── Gateway ─────────────────────────────────────────────────────────────────
-
-type Gateway struct {
-	cfg    Config
-	rules  []TopicRule
-	mu     sync.RWMutex
-	client *http.Client
-}
-
-func newGateway(cfg Config, rules []TopicRule) *Gateway {
-	return &Gateway{
-		cfg:   cfg,
-		rules: rules,
-		client: &http.Client{Timeout: 10 * time.Second},
-	}
-}
-
-func (g *Gateway) updateRules(rules []TopicRule) {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.rules = rules
-}
-
-func (g *Gateway) matchingRules(topic string) []TopicRule {
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	var matched []TopicRule
-	for _, r := range g.rules {
-		if mqttTopicMatch(r.Topic, topic) {
-			matched = append(matched, r)
-		}
-	}
-	return matched
-}
-
-// handleMessage is called by paho for every incoming MQTT message.
-func (g *Gateway) handleMessage(_ mqtt.Client, msg mqtt.Message) {
-	topic := msg.Topic()
-	payload := msg.Payload()
-
-	rules := g.matchingRules(topic)
-	if len(rules) == 0 {
+	if len(sensors) == 0 {
+		log.Warn("No sensors configured — exiting")
 		return
 	}
 
-	// Parse payload as JSON once
-	jsonStr := string(payload)
-	isJSON := gjson.Valid(jsonStr)
+	// ── Parse reader connection config ───────────────────────────────────
+	brokerURL := getString(readerCfg.Config, "broker_url", "tcp://localhost:1883")
+	username := getString(readerCfg.Config, "username", "")
+	password := getString(readerCfg.Config, "password", "")
+	qos := getInt(readerCfg.Config, "qos", 1)
 
-	// Group rules by sensor name (one POST per sensor per message)
-	type sensorKey struct{ name, table, tags string }
-	grouped := map[sensorKey]map[string]any{}
+	log.Infof("MQTT broker: %s (qos=%d)", brokerURL, qos)
 
-	for _, rule := range rules {
-		var value any
-
-		if rule.JSONPath == "" || rule.JSONPath == "." {
-			// Whole payload as string
-			value = string(payload)
-		} else if isJSON {
-			result := gjson.Get(jsonStr, rule.JSONPath)
-			if !result.Exists() {
-				log.Printf("[mqtt] path %q not found in message on topic %s", rule.JSONPath, topic)
+	// ── Build topic rules from sensors ───────────────────────────────────
+	var rules []topicRule
+	for _, s := range sensors {
+		paths, ok := s.Config["json_paths"].([]any)
+		if !ok {
+			log.Warnf("Sensor %s has no json_paths array", s.Name)
+			continue
+		}
+		for _, p := range paths {
+			pm, ok := p.(map[string]any)
+			if !ok {
 				continue
 			}
-			value = result.Value()
-		} else {
-			// Non-JSON payload — use raw string
-			value = string(payload)
-		}
-
-		sk := sensorKey{name: rule.SensorName, table: rule.Table, tags: rule.Tags}
-		if grouped[sk] == nil {
-			grouped[sk] = map[string]any{}
-		}
-		grouped[sk][rule.FieldKey] = value
-	}
-
-	// Send one reading per sensor
-	for sk, fields := range grouped {
-		reading := Reading{
-			SensorName: sk.name,
-			Table:      sk.table,
-			Tags:       parseTags(sk.tags),
-			Fields:     fields,
-			Timestamp:  time.Now().UnixMilli(),
-		}
-		if err := g.postToCoreswitch(reading); err != nil {
-			log.Printf("[coreswitch] POST failed for %s: %v", sk.name, err)
-		} else {
-			log.Printf("[coreswitch] sent %s fields=%v", sk.name, fieldKeys(fields))
+			topic := getString(pm, "topic", "")
+			if topic == "" {
+				continue
+			}
+			rules = append(rules, topicRule{
+				sensor:   s,
+				topic:    topic,
+				jsonPath: normalisePath(getString(pm, "json_path", ".")),
+				fieldKey: getString(pm, "field_key", "value"),
+			})
 		}
 	}
-}
 
-func (g *Gateway) postToCoreswitch(reading Reading) error {
-	body, err := json.Marshal(reading)
-	if err != nil {
-		return fmt.Errorf("marshal: %w", err)
-	}
-	resp, err := g.client.Post(g.cfg.CoreSwitchURL+"/ingest", "application/json", bytes.NewReader(body))
-	if err != nil {
-		return fmt.Errorf("http post: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode >= 300 {
-		b, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("coreswitch returned %d: %s", resp.StatusCode, b)
-	}
-	return nil
-}
-
-// ─── Main ─────────────────────────────────────────────────────────────────────
-
-func main() {
-	cfg := loadConfig()
-	log.Printf("[mqtt-gateway] starting — broker=%s csv=%s coreswitch=%s",
-		cfg.BrokerURL, cfg.CSVPath, cfg.CoreSwitchURL)
-
-	rules, err := loadCSV(cfg.CSVPath)
-	if err != nil {
-		log.Fatalf("[csv] failed to load: %v", err)
+	if len(rules) == 0 {
+		log.Warn("No topic rules configured — exiting")
+		return
 	}
 
-	gw := newGateway(cfg, rules)
+	// ── Core-switch client ───────────────────────────────────────────────
+	csClient := coreswitch.NewClient(coreSwitchURL, "mqtt-reader")
 
-	// Build unique topic subscription list from rules
+	// ── Connect to MQTT broker ───────────────────────────────────────────
 	topics := uniqueTopics(rules)
 
 	opts := mqtt.NewClientOptions().
-		AddBroker(cfg.BrokerURL).
-		SetClientID("qube-mqtt-gateway-" + cfg.ServiceName).
+		AddBroker(brokerURL).
+		SetClientID(fmt.Sprintf("qube-mqtt-reader-%s", readerID[:8])).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
-		SetConnectRetryInterval(cfg.ReconnectDelay).
+		SetConnectRetryInterval(10 * time.Second).
 		SetOnConnectHandler(func(c mqtt.Client) {
-			log.Printf("[mqtt] connected to %s", cfg.BrokerURL)
-			// Subscribe to all topics
+			log.Infof("Connected to MQTT broker %s", brokerURL)
 			filters := map[string]byte{}
 			for _, t := range topics {
-				filters[t] = cfg.MQTTQOS
-				log.Printf("[mqtt] subscribing: %s", t)
+				filters[t] = byte(qos)
+				log.Infof("Subscribing: %s", t)
 			}
 			if len(filters) > 0 {
-				token := c.SubscribeMultiple(filters, gw.handleMessage)
+				token := c.SubscribeMultiple(filters, func(_ mqtt.Client, msg mqtt.Message) {
+					handleMessage(log, csClient, rules, readerCfg.Name, msg)
+				})
 				token.Wait()
 				if token.Error() != nil {
-					log.Printf("[mqtt] subscribe error: %v", token.Error())
+					log.Warnf("Subscribe error: %v", token.Error())
 				}
 			}
 		}).
 		SetConnectionLostHandler(func(_ mqtt.Client, err error) {
-			log.Printf("[mqtt] connection lost: %v — will reconnect", err)
+			log.Warnf("MQTT connection lost: %v — will reconnect", err)
 		})
 
-	if cfg.MQTTUsername != "" {
-		opts.SetUsername(cfg.MQTTUsername)
+	if username != "" {
+		opts.SetUsername(username)
 	}
-	if cfg.MQTTPassword != "" {
-		opts.SetPassword(cfg.MQTTPassword)
+	if password != "" {
+		opts.SetPassword(password)
 	}
 
 	client := mqtt.NewClient(opts)
@@ -309,89 +153,105 @@ func main() {
 		if token.Error() == nil {
 			break
 		}
-		log.Printf("[mqtt] connect failed: %v — retrying in %s", token.Error(), cfg.ReconnectDelay)
-		time.Sleep(cfg.ReconnectDelay)
+		log.Warnf("MQTT connect failed: %v — retrying in 10s", token.Error())
+		time.Sleep(10 * time.Second)
 	}
 
-	log.Printf("[mqtt-gateway] running — subscribed to %d topics", len(topics))
-
-	// Watch CSV for changes (Conf-Agent may update it)
-	go watchCSV(cfg.CSVPath, gw, client, cfg)
+	log.Infof("Running — subscribed to %d topics for %d rules", len(topics), len(rules))
 
 	// Block forever
 	select {}
 }
 
-// watchCSV polls the CSV file every 30s. If it changes (by size/mtime),
-// it reloads the rules and re-subscribes.
-func watchCSV(path string, gw *Gateway, client mqtt.Client, cfg Config) {
-	var lastMod time.Time
-	var lastSize int64
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-	for range ticker.C {
-		info, err := os.Stat(path)
-		if err != nil {
-			continue
-		}
-		if info.ModTime() == lastMod && info.Size() == lastSize {
-			continue
-		}
-		lastMod = info.ModTime()
-		lastSize = info.Size()
+func handleMessage(log interface{ Debugf(string, ...any); Warnf(string, ...any) },
+	csClient *coreswitch.Client, rules []topicRule, readerName string, msg mqtt.Message) {
 
-		newRules, err := loadCSV(path)
-		if err != nil {
-			log.Printf("[csv-watch] reload error: %v", err)
+	topic := msg.Topic()
+	payload := string(msg.Payload())
+
+	if !gjson.Valid(payload) {
+		return
+	}
+
+	// Group by sensor
+	type sensorKey struct {
+		name, table, output, tags string
+	}
+	grouped := map[sensorKey][]coreswitch.DataIn{}
+
+	for _, rule := range rules {
+		if !mqttTopicMatch(rule.topic, topic) {
 			continue
 		}
 
-		// Unsubscribe old topics, subscribe new
-		oldTopics := uniqueTopics(gw.rules)
-		newTopics := uniqueTopics(newRules)
+		var value string
+		if rule.jsonPath == "" || rule.jsonPath == "." {
+			value = payload
+		} else {
+			result := gjson.Get(payload, rule.jsonPath)
+			if !result.Exists() {
+				continue
+			}
+			value = result.String()
+		}
 
-		for _, t := range oldTopics {
-			client.Unsubscribe(t)
+		tags := sqliteconfig.FormatTags(rule.sensor.Tags)
+		sk := sensorKey{
+			name:   rule.sensor.Name,
+			table:  rule.sensor.Table,
+			output: rule.sensor.Output,
+			tags:   tags,
 		}
-		gw.updateRules(newRules)
-		filters := map[string]byte{}
-		for _, t := range newTopics {
-			filters[t] = cfg.MQTTQOS
+
+		reading := coreswitch.DataIn{
+			Table:     rule.sensor.Table,
+			Equipment: rule.sensor.Name,
+			Reading:   rule.fieldKey,
+			Output:    rule.sensor.Output,
+			Sender:    readerName,
+			Tags:      tags,
+			Time:      time.Now().UnixMicro(),
+			Value:     value,
 		}
-		if len(filters) > 0 {
-			client.SubscribeMultiple(filters, gw.handleMessage)
+		grouped[sk] = append(grouped[sk], reading)
+	}
+
+	for _, readings := range grouped {
+		if err := csClient.SendBatch(readings); err != nil {
+			log.Warnf("Failed to send batch: %v", err)
+		} else {
+			log.Debugf("Sent %d readings from topic %s", len(readings), topic)
 		}
-		log.Printf("[csv-watch] reloaded — %d rules, %d topics", len(newRules), len(newTopics))
 	}
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// uniqueTopics extracts deduplicated MQTT topics from rules.
-func uniqueTopics(rules []TopicRule) []string {
+func normalisePath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.TrimPrefix(path, "$.")
+	path = strings.TrimPrefix(path, "$[")
+	return path
+}
+
+func uniqueTopics(rules []topicRule) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, r := range rules {
-		if !seen[r.Topic] {
-			seen[r.Topic] = true
-			out = append(out, r.Topic)
+		if !seen[r.topic] {
+			seen[r.topic] = true
+			out = append(out, r.topic)
 		}
 	}
 	return out
 }
 
-// mqttTopicMatch checks whether a concrete topic matches an MQTT filter
-// (supports + and # wildcards).
 func mqttTopicMatch(filter, topic string) bool {
 	if filter == topic {
 		return true
 	}
 	fp := strings.Split(filter, "/")
 	tp := strings.Split(topic, "/")
-	return matchSegments(fp, tp)
-}
-
-func matchSegments(fp, tp []string) bool {
 	for i, f := range fp {
 		if f == "#" {
 			return true
@@ -406,25 +266,28 @@ func matchSegments(fp, tp []string) bool {
 	return len(fp) == len(tp)
 }
 
-// parseTags converts "key=value,key2=value2" into a map.
-func parseTags(raw string) map[string]string {
-	tags := map[string]string{}
-	if raw == "" {
-		return tags
+func getenv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
 	}
-	for _, pair := range strings.Split(raw, ",") {
-		parts := strings.SplitN(strings.TrimSpace(pair), "=", 2)
-		if len(parts) == 2 {
-			tags[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-		}
-	}
-	return tags
+	return fallback
 }
 
-func fieldKeys(fields map[string]any) []string {
-	keys := make([]string, 0, len(fields))
-	for k := range fields {
-		keys = append(keys, k)
+func getString(m map[string]any, key, fallback string) string {
+	if v, ok := m[key].(string); ok {
+		return v
 	}
-	return keys
+	return fallback
+}
+
+func getInt(m map[string]any, key string, fallback int) int {
+	if v, ok := m[key].(float64); ok {
+		return int(v)
+	}
+	if v, ok := m[key].(string); ok {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return fallback
 }

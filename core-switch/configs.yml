@@ -1,0 +1,21 @@
+LogLevel: Debug
+
+HTTP:
+  Port: 8585
+
+InfluxDB:
+  Enabled: true
+  URL: http://127.0.0.1:8086
+  DB: edgex
+  User: root
+  Pass: root
+
+MQTT:
+  Enabled: false
+  Host: 127.0.0.1
+  Port: 1883
+  User: ""
+  Pass: ""
+
+Alerts:
+  IgnoreInterval: 300

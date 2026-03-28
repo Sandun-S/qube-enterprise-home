@@ -17,7 +17,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "modernc.org/sqlite"
 )
 
 // ReaderConfig holds the reader's connection settings from SQLite.
@@ -58,22 +58,11 @@ type CoreSwitchSettings struct {
 	FlushIntervalMs  int
 }
 
-// InfluxUpload holds one influx-to-sql upload configuration.
-type InfluxUpload struct {
-	Device     string
-	Reading    string // "*" means all readings
-	AggTimeMin int
-	AggFunc    string // SUM, AVG, MAX, MIN
-	ToTable    string
-	TagNames   string // Pipe-separated tag dimensions
-	SensorID   string
-}
-
 // OpenReadOnly opens the SQLite database in read-only WAL mode.
 // The caller MUST call db.Close() when done.
 func OpenReadOnly(dbPath string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?mode=ro&_journal_mode=WAL&_busy_timeout=5000", dbPath)
-	db, err := sql.Open("sqlite3", dsn)
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=journal_mode%%3DWAL&_pragma=busy_timeout%%3D5000", dbPath)
+	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
@@ -150,26 +139,26 @@ func LoadReaderConfig(db *sql.DB, readerID string) (*ReaderConfig, []SensorConfi
 	return reader, sensors, nil
 }
 
-// LoadSensorMap loads the sensor_map table (replaces sensor_map.json).
+// LoadTelemetrySettings loads telemetry upload settings from SQLite.
 // Used by influx-to-sql to map InfluxDB measurements to cloud sensor UUIDs.
-func LoadSensorMap(db *sql.DB) (map[string]SensorMapping, error) {
-	rows, err := db.Query("SELECT measurement_key, sensor_id, field_key, unit FROM sensor_map")
+// Key format: "Device:Reading" → SensorMapping
+func LoadTelemetrySettings(db *sql.DB) (map[string]SensorMapping, error) {
+	rows, err := db.Query("SELECT device, reading, sensor_id FROM telemetry_settings")
 	if err != nil {
-		return nil, fmt.Errorf("query sensor_map: %w", err)
+		return nil, fmt.Errorf("query telemetry_settings: %w", err)
 	}
 	defer rows.Close()
 
 	m := make(map[string]SensorMapping)
 	for rows.Next() {
-		var key, sensorID, fieldKey string
-		var unit sql.NullString
-		if err := rows.Scan(&key, &sensorID, &fieldKey, &unit); err != nil {
-			return nil, fmt.Errorf("scan sensor_map: %w", err)
+		var device, reading, sensorID string
+		if err := rows.Scan(&device, &reading, &sensorID); err != nil {
+			return nil, fmt.Errorf("scan telemetry_settings: %w", err)
 		}
+		key := device + ":" + reading
 		m[key] = SensorMapping{
 			SensorID: sensorID,
-			FieldKey: fieldKey,
-			Unit:     unit.String,
+			FieldKey: reading,
 		}
 	}
 
@@ -184,7 +173,7 @@ func LoadCoreSwitchSettings(db *sql.DB) (*CoreSwitchSettings, error) {
 		FlushIntervalMs: 5000,
 	}
 
-	rows, err := db.Query("SELECT key, value_json FROM coreswitch_settings")
+	rows, err := db.Query("SELECT key, value FROM coreswitch_settings")
 	if err != nil {
 		return settings, nil // return defaults if table doesn't exist yet
 	}
@@ -206,33 +195,6 @@ func LoadCoreSwitchSettings(db *sql.DB) (*CoreSwitchSettings, error) {
 	}
 
 	return settings, nil
-}
-
-// LoadInfluxUploads loads influx-to-sql upload configurations from SQLite.
-// Replaces the old uploads.csv file.
-func LoadInfluxUploads(db *sql.DB) ([]InfluxUpload, error) {
-	rows, err := db.Query(`
-		SELECT device, reading, agg_time_min, agg_func, to_table, tag_names, sensor_id
-		FROM influx_uploads
-	`)
-	if err != nil {
-		return nil, fmt.Errorf("query influx_uploads: %w", err)
-	}
-	defer rows.Close()
-
-	var uploads []InfluxUpload
-	for rows.Next() {
-		var u InfluxUpload
-		var tagNames, sensorID sql.NullString
-		if err := rows.Scan(&u.Device, &u.Reading, &u.AggTimeMin, &u.AggFunc, &u.ToTable, &tagNames, &sensorID); err != nil {
-			return nil, fmt.Errorf("scan influx_upload: %w", err)
-		}
-		u.TagNames = tagNames.String
-		u.SensorID = sensorID.String
-		uploads = append(uploads, u)
-	}
-
-	return uploads, nil
 }
 
 // FormatTags converts a map of tags to core-switch format: "key1=val1,key2=val2"
