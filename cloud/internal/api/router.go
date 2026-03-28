@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -15,17 +16,39 @@ func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler
 	r.Use(middleware.Recoverer)
 	r.Use(corsMiddleware)
 
+	// Create WebSocket hubs (shared across all handlers)
+	hub := NewWSHub()
+	globalHub = hub
+	globalPool = pool
+	hub.OnConnect = func(qubeID string) {
+		pool.Exec(context.Background(),
+			`UPDATE qubes SET ws_connected=TRUE, last_seen=NOW(), status='online' WHERE id=$1`, qubeID)
+	}
+	hub.OnDisconnect = func(qubeID string) {
+		pool.Exec(context.Background(),
+			`UPDATE qubes SET ws_connected=FALSE WHERE id=$1`, qubeID)
+	}
+
+	dashHub := NewDashboardHub()
+	globalDashHub = dashHub
+
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, 200, map[string]string{"status": "ok", "service": "cloud-api", "version": "2"})
+		writeJSON(w, 200, map[string]any{
+			"status":               "ok",
+			"service":              "cloud-api",
+			"version":              "2",
+			"ws_connections":       len(hub.ConnectedQubes()),
+			"dashboard_connections": dashHub.ConnectedCount(),
+		})
 	})
 
 	// ── Public ──────────────────────────────────────────────────────────────
 	r.Post("/api/v1/auth/register", registerHandler(pool, jwtSecret))
 	r.Post("/api/v1/auth/login", loginHandler(pool, jwtSecret))
 
-	// ── WebSocket endpoint (Qube connections) ───────────────────────────────
-	// TODO: Phase 2 — WebSocket handler for bidirectional cloud↔qube communication
-	// r.Get("/ws", wsHandler(pool))
+	// ── WebSocket endpoints ─────────────────────────────────────────────────
+	r.Get("/ws", wsHandler(pool, hub))
+	r.Get("/ws/dashboard", dashWSHandler(pool, dashHub, jwtSecret))
 
 	// ── Protected (JWT required) ─────────────────────────────────────────────
 	r.Group(func(r chi.Router) {
@@ -69,7 +92,7 @@ func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler
 
 			// Qubes — update, commands
 			r.Put("/api/v1/qubes/{id}", updateQubeHandler(pool))
-			r.Post("/api/v1/qubes/{id}/commands", sendCommandHandler(pool))
+			r.Post("/api/v1/qubes/{id}/commands", sendCommandHandler(pool, hub))
 
 			// Readers — CRUD
 			r.Post("/api/v1/qubes/{id}/readers", createReaderHandler(pool))

@@ -11,17 +11,19 @@ import (
 )
 
 var validCommands = map[string]bool{
-	"ping":             true,
-	"restart_qube":     true,
-	"restart_reader":   true,
-	"stop_container":   true,
-	"reload_config":    true,
-	"get_logs":         true,
-	"list_containers":  true,
-	"update_sqlite":    true,
+	"ping":            true,
+	"restart_qube":    true,
+	"restart_reader":  true,
+	"stop_container":  true,
+	"reload_config":   true,
+	"get_logs":        true,
+	"list_containers": true,
+	"update_sqlite":   true,
 }
 
-func sendCommandHandler(pool *pgxpool.Pool) http.HandlerFunc {
+// POST /api/v1/qubes/:id/commands
+// Tries WebSocket delivery first; falls back to DB queue for polling.
+func sendCommandHandler(pool *pgxpool.Pool, hub *WSHub) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		qubeID := chi.URLParam(r, "id")
@@ -40,7 +42,6 @@ func sendCommandHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		ctx := context.Background()
-		// Verify qube belongs to this org
 		var count int
 		pool.QueryRow(ctx, `SELECT COUNT(*) FROM qubes WHERE id=$1 AND org_id=$2`, qubeID, orgID).Scan(&count)
 		if count == 0 {
@@ -59,9 +60,30 @@ func sendCommandHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		// Try WebSocket delivery first
+		delivery := "queued"
+		if hub.IsConnected(qubeID) {
+			msg := NewWSMessage("command", qubeID, map[string]any{
+				"command_id": cmdID,
+				"command":    req.Command,
+				"payload":    req.Payload,
+			})
+			msg.ID = cmdID
+			delivered := hub.SendTo(qubeID, msg)
+			logWSDelivery(pool, qubeID, "command", map[string]any{
+				"command_id": cmdID, "command": req.Command,
+			}, delivered)
+			if delivered {
+				delivery = "websocket"
+				pool.Exec(ctx,
+					`UPDATE qube_commands SET status='sent', sent_at=NOW() WHERE id=$1`, cmdID)
+			}
+		}
+
 		writeJSON(w, http.StatusAccepted, map[string]any{
 			"command_id": cmdID,
 			"status":     "pending",
+			"delivery":   delivery,
 			"poll_url":   "/api/v1/commands/" + cmdID,
 		})
 	}

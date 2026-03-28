@@ -88,5 +88,9 @@ func recomputeConfigHash(ctx context.Context, pool *pgxpool.Pool, qubeID string)
 	if err != nil {
 		return "", fmt.Errorf("update config_state: %w", err)
 	}
+
+	// Push config change notification via WebSocket (if connected)
+	NotifyConfigChange(pool, globalHub, qubeID, hash)
+
 	return hash, nil
 }
