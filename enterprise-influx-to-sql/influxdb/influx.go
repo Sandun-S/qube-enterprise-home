@@ -8,8 +8,8 @@ import (
 	"time"
 
 	client "github.com/influxdata/influxdb1-client/v2"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/configs"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/schema"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/configs"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/schema"
 )
 
 // Client wraps InfluxDB connection settings.

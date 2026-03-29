@@ -8,7 +8,7 @@ import (
 	"sync"
 
 	"github.com/sirupsen/logrus"
-	"github.com/qube-enterprise/core-switch/schema"
+	"github.com/Sandun-S/qube-enterprise-home/core-switch/schema"
 )
 
 type InfluxCfg struct {

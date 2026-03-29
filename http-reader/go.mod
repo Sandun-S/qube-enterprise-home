@@ -1,9 +1,8 @@
-module github.com/qube-enterprise/http-reader
+module github.com/Sandun-S/qube-enterprise-home/http-reader
 
 go 1.22
 
 require (
-	github.com/qube-enterprise/pkg v0.0.0
 	github.com/tidwall/gjson v1.17.1
 )
 
@@ -27,4 +26,3 @@ require (
 	modernc.org/token v1.1.0 // indirect
 )
 
-replace github.com/qube-enterprise/pkg => ../pkg

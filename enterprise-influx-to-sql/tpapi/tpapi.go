@@ -10,8 +10,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/qube-enterprise/enterprise-influx-to-sql/configs"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/schema"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/configs"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/schema"
 )
 
 // Client sends batches of readings to the Enterprise TP-API.

@@ -58,8 +58,16 @@ jobs:
             context: ./conf-agent
           - name: enterprise-influx-to-sql
             context: ./enterprise-influx-to-sql
-          - name: mqtt-gateway
-            context: ./mqtt-gateway
+          - name: mqtt-reader
+            context: ./mqtt-reader
+          - name: snmp-reader
+            context: ./snmp-reader
+          - name: modbus-reader
+            context: ./modbus-reader
+          - name: opcua-reader
+            context: ./opcua-reader
+          - name: http-reader
+            context: ./http-reader
     steps:
       - uses: actions/checkout@v4
 
@@ -83,59 +91,6 @@ jobs:
           context:   ${{ matrix.context }}
           platforms: linux/arm64
           push:      ${{ github.ref == 'refs/heads/main' }}
-          tags: |
-            ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.latest
-            ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.${{ github.sha }}
-          cache-from: type=gha,scope=${{ matrix.name }}
-          cache-to:   type=gha,mode=max,scope=${{ matrix.name }}
-
-  # ── ARM64 reader images — require shared pkg/ ────────────────────────────
-  # Build context = repo root so "COPY pkg /pkg" in each Dockerfile resolves
-  # to the shared pkg/ module. Dockerfile path points into the service subdir.
-  arm64-readers:
-    name: ${{ matrix.name }} (arm64)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: modbus-reader
-            dockerfile: ./modbus-reader/Dockerfile
-          - name: snmp-reader
-            dockerfile: ./snmp-reader/Dockerfile
-          - name: opcua-reader
-            dockerfile: ./opcua-reader/Dockerfile
-          - name: http-reader
-            dockerfile: ./http-reader/Dockerfile
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Lowercase repo name
-        run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
-
-      - uses: docker/setup-buildx-action@v3
-
-      # context: . = repo root — COPY pkg /pkg in Dockerfiles finds pkg/ correctly
-      # Each reader's Dockerfile does: COPY pkg /pkg + COPY <service-dir>/ + go build
-      - uses: docker/build-push-action@v5
-        with:
-          context:    .
-          file:       ${{ matrix.dockerfile }}
-          platforms:  linux/arm64
-          push:       ${{ github.ref == 'refs/heads/main' }}
           tags: |
             ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.latest
             ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.${{ github.sha }}

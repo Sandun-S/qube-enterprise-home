@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	"github.com/qube-enterprise/core-switch/influx"
-	"github.com/qube-enterprise/core-switch/schema"
+	"github.com/Sandun-S/qube-enterprise-home/core-switch/influx"
+	"github.com/Sandun-S/qube-enterprise-home/core-switch/schema"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"

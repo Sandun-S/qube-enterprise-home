@@ -5,10 +5,9 @@ import (
 	"strconv"
 
 	"github.com/sirupsen/logrus"
-	corehttp "github.com/qube-enterprise/core-switch/http"
-	"github.com/qube-enterprise/core-switch/influx"
-	"github.com/qube-enterprise/pkg/sqliteconfig"
-	_ "modernc.org/sqlite"
+	corehttp "github.com/Sandun-S/qube-enterprise-home/core-switch/http"
+	"github.com/Sandun-S/qube-enterprise-home/core-switch/influx"
+	"github.com/Sandun-S/qube-enterprise-home/core-switch/sqlite"
 )
 
 // Configs holds the complete core-switch v2 configuration.
@@ -65,14 +64,14 @@ func LoadConfigs(l *logrus.Logger) *Configs {
 
 // applyFromSQLite overrides settings from the SQLite coreswitch_settings table.
 func applyFromSQLite(conf *Configs, sqlitePath string) {
-	db, err := sqliteconfig.OpenReadOnly(sqlitePath)
+	db, err := sqlite.OpenReadOnly(sqlitePath)
 	if err != nil {
 		log.Warnf("Cannot open SQLite at %s (using env defaults): %v", sqlitePath, err)
 		return
 	}
 	defer db.Close()
 
-	settings, err := sqliteconfig.LoadCoreSwitchSettings(db)
+	settings, err := sqlite.LoadCoreSwitchSettings(db)
 	if err != nil {
 		log.Warnf("Cannot load coreswitch_settings from SQLite: %v", err)
 		return

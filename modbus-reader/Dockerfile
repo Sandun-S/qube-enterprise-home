@@ -1,10 +1,9 @@
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
-COPY pkg /pkg
-COPY modbus-reader/go.mod modbus-reader/go.sum* ./
+COPY go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
-COPY modbus-reader/ .
+COPY . .
 RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -o modbus-reader .
 

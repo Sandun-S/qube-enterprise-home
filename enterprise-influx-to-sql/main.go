@@ -31,10 +31,10 @@ import (
 	"os"
 	"time"
 
-	"github.com/qube-enterprise/enterprise-influx-to-sql/configs"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/influxdb"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/tpapi"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/transfer"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/configs"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/influxdb"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/tpapi"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/transfer"
 )
 
 func main() {

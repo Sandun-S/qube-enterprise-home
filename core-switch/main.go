@@ -24,9 +24,9 @@ import (
 	"strings"
 
 	"github.com/sirupsen/logrus"
-	"github.com/qube-enterprise/core-switch/configs"
-	corehttp "github.com/qube-enterprise/core-switch/http"
-	"github.com/qube-enterprise/core-switch/influx"
+	"github.com/Sandun-S/qube-enterprise-home/core-switch/configs"
+	corehttp "github.com/Sandun-S/qube-enterprise-home/core-switch/http"
+	"github.com/Sandun-S/qube-enterprise-home/core-switch/influx"
 )
 
 var log *logrus.Logger

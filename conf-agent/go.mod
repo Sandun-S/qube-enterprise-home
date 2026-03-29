@@ -1,4 +1,4 @@
-module github.com/qube-enterprise/conf-agent
+module github.com/Sandun-S/qube-enterprise-home/conf-agent
 
 go 1.22
 

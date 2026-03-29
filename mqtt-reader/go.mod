@@ -1,10 +1,9 @@
-module github.com/qube-enterprise/mqtt-gateway
+module github.com/Sandun-S/qube-enterprise-home/mqtt-reader
 
 go 1.22
 
 require (
 	github.com/eclipse/paho.mqtt.golang v1.4.3
-	github.com/qube-enterprise/pkg v0.0.0
 	github.com/tidwall/gjson v1.17.1
 )
 
@@ -31,4 +30,3 @@ require (
 	modernc.org/token v1.1.0 // indirect
 )
 
-replace github.com/qube-enterprise/pkg => ../pkg

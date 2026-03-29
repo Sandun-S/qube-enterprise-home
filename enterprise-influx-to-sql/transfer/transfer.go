@@ -15,11 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qube-enterprise/enterprise-influx-to-sql/configs"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/influxdb"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/schema"
-	"github.com/qube-enterprise/enterprise-influx-to-sql/tpapi"
-	"github.com/qube-enterprise/pkg/sqliteconfig"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/configs"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/influxdb"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/schema"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/sqlite"
+	"github.com/Sandun-S/qube-enterprise-home/enterprise-influx-to-sql/tpapi"
 )
 
 const batchSize = 1000
@@ -112,13 +112,13 @@ func loadSensorMap(cfg configs.Config) schema.SensorMap {
 // The sqliteconfig package stores keys as "device:reading" (colon); we convert
 // here so the rest of the code uses a single key format.
 func loadFromSQLite(dbPath string) (schema.SensorMap, error) {
-	db, err := sqliteconfig.OpenReadOnly(dbPath)
+	db, err := sqlite.OpenReadOnly(dbPath)
 	if err != nil {
 		return nil, err
 	}
 	defer db.Close()
 
-	raw, err := sqliteconfig.LoadTelemetrySettings(db)
+	raw, err := sqlite.LoadTelemetrySettings(db)
 	if err != nil {
 		return nil, err
 	}

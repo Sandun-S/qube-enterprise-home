@@ -21,14 +21,14 @@ import (
 
 	"github.com/gopcua/opcua"
 	"github.com/gopcua/opcua/ua"
-	"github.com/qube-enterprise/pkg/coreswitch"
-	"github.com/qube-enterprise/pkg/logger"
-	"github.com/qube-enterprise/pkg/sqliteconfig"
+	"github.com/Sandun-S/qube-enterprise-home/opcua-reader/coreswitch"
+	"github.com/Sandun-S/qube-enterprise-home/opcua-reader/logger"
+	"github.com/Sandun-S/qube-enterprise-home/opcua-reader/configs"
 )
 
 // sensorNodeGroup groups a sensor with its OPC-UA node mappings.
 type sensorNodeGroup struct {
-	sensor sqliteconfig.SensorConfig
+	sensor configs.SensorConfig
 	nodes  []nodeMapping
 }
 
@@ -51,12 +51,12 @@ func main() {
 	}
 
 	// ── Load config from SQLite ──────────────────────────────────────────
-	db, err := sqliteconfig.OpenReadOnly(sqlitePath)
+	db, err := configs.OpenReadOnly(sqlitePath)
 	if err != nil {
 		log.Fatalf("Failed to open SQLite: %v", err)
 	}
 
-	readerCfg, sensors, err := sqliteconfig.LoadReaderConfig(db, readerID)
+	readerCfg, sensors, err := configs.LoadReaderConfig(db, readerID)
 	db.Close()
 
 	if err != nil {
@@ -168,7 +168,7 @@ func pollOPCUA(log interface{ Warnf(string, ...any); Debugf(string, ...any) },
 
 	for _, sn := range sensorList {
 		var readings []coreswitch.DataIn
-		tags := sqliteconfig.FormatTags(sn.sensor.Tags)
+		tags := configs.FormatTags(sn.sensor.Tags)
 
 		for _, node := range sn.nodes {
 			id, err := ua.ParseNodeID(node.nodeID)

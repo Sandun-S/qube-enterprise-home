@@ -1,8 +1,6 @@
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
-# Copy shared pkg module (needed by transfer package for SQLite sensor_map loading)
-COPY ../pkg /pkg
 COPY go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
 COPY . .

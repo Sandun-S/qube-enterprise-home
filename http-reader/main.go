@@ -21,15 +21,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/qube-enterprise/pkg/coreswitch"
-	"github.com/qube-enterprise/pkg/logger"
-	"github.com/qube-enterprise/pkg/sqliteconfig"
+	"github.com/Sandun-S/qube-enterprise-home/http-reader/coreswitch"
+	"github.com/Sandun-S/qube-enterprise-home/http-reader/logger"
+	"github.com/Sandun-S/qube-enterprise-home/http-reader/configs"
 	"github.com/tidwall/gjson"
 )
 
 // httpTarget represents one HTTP endpoint to poll.
 type httpTarget struct {
-	sensor    sqliteconfig.SensorConfig
+	sensor    configs.SensorConfig
 	url       string
 	method    string
 	headers   map[string]string
@@ -59,12 +59,12 @@ func main() {
 	}
 
 	// ── Load config from SQLite ──────────────────────────────────────────
-	db, err := sqliteconfig.OpenReadOnly(sqlitePath)
+	db, err := configs.OpenReadOnly(sqlitePath)
 	if err != nil {
 		log.Fatalf("Failed to open SQLite: %v", err)
 	}
 
-	readerCfg, sensors, err := sqliteconfig.LoadReaderConfig(db, readerID)
+	readerCfg, sensors, err := configs.LoadReaderConfig(db, readerID)
 	db.Close()
 
 	if err != nil {
@@ -232,7 +232,7 @@ func pollEndpoint(log interface{ Warnf(string, ...any); Debugf(string, ...any) }
 		return
 	}
 
-	tags := sqliteconfig.FormatTags(target.sensor.Tags)
+	tags := configs.FormatTags(target.sensor.Tags)
 	var readings []coreswitch.DataIn
 
 	for _, pm := range target.paths {

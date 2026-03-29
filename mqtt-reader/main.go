@@ -21,15 +21,15 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	"github.com/qube-enterprise/pkg/coreswitch"
-	"github.com/qube-enterprise/pkg/logger"
-	"github.com/qube-enterprise/pkg/sqliteconfig"
+	"github.com/Sandun-S/qube-enterprise-home/mqtt-reader/coreswitch"
+	"github.com/Sandun-S/qube-enterprise-home/mqtt-reader/logger"
+	"github.com/Sandun-S/qube-enterprise-home/mqtt-reader/configs"
 	"github.com/tidwall/gjson"
 )
 
 // topicRule maps one sensor config entry to an MQTT subscription.
 type topicRule struct {
-	sensor   sqliteconfig.SensorConfig
+	sensor   configs.SensorConfig
 	topic    string
 	jsonPath string
 	fieldKey string
@@ -47,12 +47,12 @@ func main() {
 	}
 
 	// ── Load config from SQLite ──────────────────────────────────────────
-	db, err := sqliteconfig.OpenReadOnly(sqlitePath)
+	db, err := configs.OpenReadOnly(sqlitePath)
 	if err != nil {
 		log.Fatalf("Failed to open SQLite: %v", err)
 	}
 
-	readerCfg, sensors, err := sqliteconfig.LoadReaderConfig(db, readerID)
+	readerCfg, sensors, err := configs.LoadReaderConfig(db, readerID)
 	db.Close()
 
 	if err != nil {
@@ -195,7 +195,7 @@ func handleMessage(log interface{ Debugf(string, ...any); Warnf(string, ...any) 
 			value = result.String()
 		}
 
-		tags := sqliteconfig.FormatTags(rule.sensor.Tags)
+		tags := configs.FormatTags(rule.sensor.Tags)
 		sk := sensorKey{
 			name:   rule.sensor.Name,
 			table:  rule.sensor.Table,

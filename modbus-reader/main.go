@@ -17,10 +17,10 @@ import (
 	"os"
 	"sync"
 
-	"github.com/qube-enterprise/pkg/coreswitch"
-	"github.com/qube-enterprise/pkg/logger"
-	"github.com/qube-enterprise/pkg/sqliteconfig"
-	modbuspkg "github.com/qube-enterprise/modbus-reader/modbus"
+	"github.com/Sandun-S/qube-enterprise-home/modbus-reader/coreswitch"
+	"github.com/Sandun-S/qube-enterprise-home/modbus-reader/logger"
+	"github.com/Sandun-S/qube-enterprise-home/modbus-reader/configs"
+	modbuspkg "github.com/Sandun-S/qube-enterprise-home/modbus-reader/modbus"
 )
 
 func main() {
@@ -44,14 +44,14 @@ func main() {
 	log.Infof("Starting modbus-reader: reader_id=%s sqlite=%s coreswitch=%s", readerID, sqlitePath, csURL)
 
 	// Open SQLite (read-only)
-	db, err := sqliteconfig.OpenReadOnly(sqlitePath)
+	db, err := configs.OpenReadOnly(sqlitePath)
 	if err != nil {
 		log.Fatalf("Cannot open SQLite at %s: %v", sqlitePath, err)
 	}
 	defer db.Close()
 
 	// Load reader config + sensors
-	readerCfg, sensors, err := sqliteconfig.LoadReaderConfig(db, readerID)
+	readerCfg, sensors, err := configs.LoadReaderConfig(db, readerID)
 	if err != nil {
 		log.Fatalf("Cannot load reader config for %s: %v", readerID, err)
 	}
@@ -93,7 +93,7 @@ func main() {
 }
 
 // parseSensors converts SQLite sensor configs to modbus Reading structs.
-func parseSensors(sensors []sqliteconfig.SensorConfig) []*modbuspkg.Reading {
+func parseSensors(sensors []configs.SensorConfig) []*modbuspkg.Reading {
 	var readings []*modbuspkg.Reading
 
 	for _, s := range sensors {
@@ -102,7 +102,7 @@ func parseSensors(sensors []sqliteconfig.SensorConfig) []*modbuspkg.Reading {
 			continue
 		}
 
-		tagStr := sqliteconfig.FormatTags(s.Tags)
+		tagStr := configs.FormatTags(s.Tags)
 
 		for _, r := range regs {
 			rm, ok := r.(map[string]any)

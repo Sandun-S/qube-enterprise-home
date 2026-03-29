@@ -10,7 +10,7 @@ import (
 	modbusclient "github.com/simonvetter/modbus"
 	"github.com/sirupsen/logrus"
 
-	"github.com/qube-enterprise/pkg/coreswitch"
+	"github.com/Sandun-S/qube-enterprise-home/modbus-reader/coreswitch"
 )
 
 // ModbusConfig holds Modbus connection settings.

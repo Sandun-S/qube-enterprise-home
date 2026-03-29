@@ -1,10 +1,9 @@
-module github.com/qube-enterprise/core-switch
+module github.com/Sandun-S/qube-enterprise-home/core-switch
 
 go 1.22
 
 require (
 	github.com/prometheus/client_golang v1.19.0
-	github.com/qube-enterprise/pkg v0.0.0
 	github.com/sirupsen/logrus v1.9.3
 	modernc.org/sqlite v1.29.6
 )
@@ -31,4 +30,3 @@ require (
 	modernc.org/token v1.1.0 // indirect
 )
 
-replace github.com/qube-enterprise/pkg => ../pkg

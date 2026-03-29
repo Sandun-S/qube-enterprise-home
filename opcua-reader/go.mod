@@ -1,10 +1,9 @@
-module github.com/qube-enterprise/opcua-reader
+module github.com/Sandun-S/qube-enterprise-home/opcua-reader
 
 go 1.22
 
 require (
 	github.com/gopcua/opcua v0.5.3
-	github.com/qube-enterprise/pkg v0.0.0
 )
 
 require (
@@ -27,4 +26,3 @@ require (
 	modernc.org/token v1.1.0 // indirect
 )
 
-replace github.com/qube-enterprise/pkg => ../pkg
