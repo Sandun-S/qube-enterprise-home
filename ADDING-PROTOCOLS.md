@@ -1,453 +1,238 @@
-# Adding New Protocols to Qube Enterprise
+# Adding New Protocols to Qube Enterprise v2
 
-This guide covers everything needed to add a new gateway protocol (e.g. LoRaWAN, Wialon, Teltonica). Follow every step in order. Each step is labelled with what it changes and whether the API handles it automatically or requires manual code/SQL changes.
-
----
-
-## How Protocols Work — The Full Chain
-
-```
-protocols table (DB)
-  ↓ defines: container image, connection fields to ask user, sensor address fields
-  ↓
-gateways table (DB)
-  ↓ one row per running container on a Qube
-  ↓
-service_csv_rows table (DB)
-  ↓ one row per register/node/OID/topic per sensor
-  ↓
-TP-API sync.go → renderGatewayConfig()   → configs.yml  (written to Qube)
-              → renderGatewayFiles()    → config.csv   (written to Qube)
-              → buildFullComposeYML()   → docker-compose.yml
-              → conf-agent deploys it
-```
-
-When you add a new protocol, you touch each layer of this chain.
+This guide covers adding a new reader protocol (e.g. LoRaWAN, BACnet, Wialon).
+In v2, protocols are database-driven. Most of the work is in the reader container binary itself.
 
 ---
 
-## Step 1 — Build the Gateway Container (no code changes)
+## Overview
 
-Build a Go/Python service that:
-- Reads `configs.yml` at startup for connection settings
-- Reads `config.csv` (or equivalent) for what to poll/subscribe
-- POSTs data to `http://core-switch:8585/v3/batch`
-- POSTs alerts to `http://core-switch:8585/v3/alerts`
-
-Mount points the Enterprise system will provide:
-- `/app/configs.yml` — connection config (host, port, credentials)
-- `/app/config.csv` — device/sensor map (what to read)
-- `/app/maps/` — optional subfolder for extra map files (e.g. SNMP OID maps)
-
-Push the image to your registry:
-```bash
-docker buildx build --platform linux/arm64 -t ghcr.io/your-org/lorawan-gateway:arm64.latest .
-docker push ghcr.io/your-org/lorawan-gateway:arm64.latest
-```
+| Step | What | Where | Code change? |
+|------|------|-------|-------------|
+| 1 | Register protocol | `protocols` table | SQL only |
+| 2 | Create reader template | `reader_templates` table | SQL only |
+| 3 | Build reader container | New Go binary | Yes |
+| 4 | Push to registry | Docker registry | Build/push |
 
 ---
 
-## Step 2 — Insert into `protocols` table (SQL, no API yet)
-
-This drives the UI dropdowns and schema-based field rendering. No code change needed — just a DB INSERT.
+## Step 1: Register the protocol
 
 ```sql
-INSERT INTO protocols (
-    id, label, image_name, default_port, description,
-    connection_params_schema, addr_params_schema
+INSERT INTO protocols (id, label, description, reader_standard) VALUES
+(
+    'lorawan',
+    'LoRaWAN',
+    'Long-range, low-power IoT devices via LoRaWAN network server',
+    'endpoint'   -- or 'multi_target' if one container handles many devices
+);
+```
+
+`reader_standard` values:
+- `endpoint` — one reader per network endpoint (like Modbus, OPC-UA, MQTT)
+- `multi_target` — one reader handles all targets (like SNMP, HTTP)
+
+The UI renders this protocol automatically in dropdowns — no frontend code change needed.
+
+---
+
+## Step 2: Create a reader template
+
+```sql
+INSERT INTO reader_templates (
+    protocol,
+    name,
+    description,
+    image_suffix,
+    connection_schema,
+    env_defaults
 ) VALUES (
-    'lorawan_4g',
-    'LoRaWAN 4G',
-    'lorawan-gateway',    -- Docker image name suffix (registry prefix added at runtime)
-    9080,
-    'LoRaWAN 4G TCP gateway — temperature and humidity sensors via binary packet decode',
-
-    -- connection_params_schema: fields shown when customer adds a GATEWAY
-    -- type: text | number | select
-    '[
-      {"key":"host",  "label":"Gateway IP",  "type":"text",   "required":true,
-       "placeholder":"192.168.1.50", "hint":"IP of the 4G gateway device"},
-      {"key":"port",  "label":"TCP port",    "type":"number", "default":9080, "required":true}
-    ]'::jsonb,
-
-    -- addr_params_schema: fields shown when customer adds a SENSOR to this gateway
-    '[
-      {"key":"imei",      "label":"Gateway IMEI", "type":"text", "required":true,
-       "hint":"15-digit IMEI printed on the 4G gateway"},
-      {"key":"sensor_id", "label":"Sensor ID (hex)", "type":"text", "required":true,
-       "hint":"Hex sensor ID from the gateway binary packet data (e.g. 824913)"}
-    ]'::jsonb
+    'lorawan',
+    'LoRaWAN NS Reader',
+    'Connects to a LoRaWAN Network Server (Chirpstack, TTN) and subscribes to device uplinks',
+    'lorawan-reader',
+    '{
+        "type": "object",
+        "properties": {
+            "ns_host": {"type": "string", "title": "Network Server Host"},
+            "ns_port": {"type": "integer", "title": "Port", "default": 1700},
+            "app_id":  {"type": "string", "title": "Application ID"},
+            "api_key": {"type": "string", "title": "API Key", "format": "password"}
+        },
+        "required": ["ns_host", "app_id"]
+    }',
+    '{"LOG_LEVEL": "info"}'
 );
 ```
 
-After this INSERT, the UI immediately shows LoRaWAN 4G in all protocol dropdowns. No rebuild needed.
+`image_suffix` is the tail of the container image name. With `QUBE_IMAGE_REGISTRY=ghcr.io/foo/bar`
+the full image becomes `ghcr.io/foo/bar/lorawan-reader:arm64.latest`.
 
-**Field types for connection_params_schema / addr_params_schema:**
-
-| type | Renders as | Extra fields |
-|------|-----------|--------------|
-| `text` | `<input type="text">` | `placeholder`, `hint` |
-| `number` | `<input type="number">` | `default` |
-| `select` | `<select>` | `options: ["opt1","opt2"]`, `default` |
-| `password` | `<input type="password">` (future) | `hint` |
+`connection_schema` is a JSON Schema that the UI renders as a form when the user creates
+a reader of this protocol. The submitted values become `reader.config_json`.
 
 ---
 
-## Step 3 — Add template(s) for device types on this protocol
+## Step 3: Create the reader container binary
 
-Templates define what data to collect (register map / OID list / packet fields).
+The reader must implement the **Reader Standard** (see `standards/READER_STANDARD.md`).
 
-```sql
-INSERT INTO sensor_templates (name, protocol, description, is_global, config_json, influx_fields_json)
-VALUES (
-  'Generic LoRaWAN Temperature Sensor',
-  'lorawan_4g',
-  'LoRaWAN temperature sensor — decoded from binary 4G packet',
-  TRUE,
-  '{
-    "packet_format": "tz_4g_v1",
-    "sensors": [
-      {"field_key": "temperature_c",  "json_path": "$.temperature", "unit": "C"},
-      {"field_key": "humidity_pct",   "json_path": "$.humidity",    "unit": "%"},
-      {"field_key": "battery_v",      "json_path": "$.battery",     "unit": "V"}
-    ]
-  }',
-  '{
-    "temperature_c": {"display_label": "Temperature", "unit": "°C"},
-    "humidity_pct":  {"display_label": "Humidity",    "unit": "%"},
-    "battery_v":     {"display_label": "Battery",     "unit": "V"}
-  }'
-);
+### Minimum structure
+
+```
+lorawan-reader/
+├── main.go
+├── Dockerfile
+└── go.mod
 ```
 
-The structure of `config_json` is completely up to you — it just needs to match what you write in `generateCSVRows` (Step 5).
-
----
-
-## Step 4 — Add `configs.yml` generator in `cloud/internal/tpapi/sync.go`
-
-File: `cloud/internal/tpapi/sync.go`
-Function: `renderGatewayConfig(svc svcMeta) string`
-
-Add a new `case` for your protocol:
+### main.go skeleton
 
 ```go
-case "lorawan_4g":
-    // Read any connection fields from svc.GwCfgJSON (comes from gateway's config_json)
-    port := 9080
-    if v, ok := svc.GwCfgJSON["port"].(float64); ok { port = int(v) }
-    fmt.Fprintf(&b, `loglevel: "INFO"
-lorawan:
-  host: "%s"
-  port: %d
-  packet_format: "tz_4g_v1"
-  data_file: "config.csv"
-http:
-  data_url: "http://core-switch:8585/v3/batch"
-  alerts_url: "http://core-switch:8585/v3/alerts"
-`, svc.Host, port)
-```
+package main
 
-`svc` fields available:
-- `svc.Host` — gateway host/IP from gateways table
-- `svc.GwPort` — gateway port
-- `svc.GwCfgJSON` — full config_json map from gateways table (all connection fields)
-- `svc.Name` — gateway service name (used for file paths)
-- `svc.Protocol` — protocol ID
+import (
+    "log"
+    "os"
+    "time"
 
----
+    "github.com/your-org/qube-enterprise/pkg/sqlitedb"
+    "github.com/your-org/qube-enterprise/pkg/coreswitchclient"
+)
 
-## Step 5 — Add CSV row generator in `cloud/internal/api/sensors.go`
+func main() {
+    readerID := os.Getenv("READER_ID")        // injected by conf-agent
+    sqlitePath := os.Getenv("SQLITE_PATH")    // /opt/qube/data/qube.db
+    csURL := os.Getenv("CORESWITCH_URL")      // http://core-switch:8585
 
-File: `cloud/internal/api/sensors.go`
-Function: `generateCSVRows(...) ([]map[string]any, string, error)`
-
-Add a new `case` that converts your template's `config_json` + sensor's `address_params` into CSV rows:
-
-```go
-case "lorawan_4g":
-    sensors, _ := tmplCfg["sensors"].([]any)
-    imei        := strVal(ap["imei"], "")
-    sensorID    := strVal(ap["sensor_id"], "")
-
-    rows := make([]map[string]any, 0, len(sensors))
-    for _, s := range sensors {
-        sm, ok := s.(map[string]any)
-        if !ok { continue }
-        rows = append(rows, map[string]any{
-            "IMEI":      imei,
-            "SensorID":  sensorID,
-            "Reading":   strVal(sm["field_key"], "value"),
-            "JSONPath":  strVal(sm["json_path"], "$.value"),
-            "Unit":      strVal(sm["unit"], ""),
-            "Output":    "influxdb",
-            "Table":     "Measurements",
-            "Tags":      "name=" + sensorName,
-        })
+    db, err := sqlitedb.OpenReadOnly(sqlitePath)
+    if err != nil {
+        log.Fatalf("open sqlite: %v", err)
     }
-    return rows, "lorawan_sensors", nil
-```
+    defer db.Close()
 
-The second return value (`"lorawan_sensors"`) is the `csv_type` stored in `service_csv_rows`. It's used by `renderGatewayFiles` to know which format to write.
-
----
-
-## Step 6 — Add CSV file writer in `cloud/internal/tpapi/sync.go`
-
-File: `cloud/internal/tpapi/sync.go`
-Function: `renderGatewayFiles(protocol, svcName string, rows []csvEntry) (string, map[string]string)`
-
-Add a new `case` that writes the actual CSV/config file content:
-
-```go
-case "lorawan_4g":
-    // Write config.csv for LoRaWAN gateway
-    // Format defined by your gateway binary — match it exactly
-    b.WriteString("#IMEI,SensorID,Reading,JSONPath,Output,Table,Tags\n")
-    for _, r := range rows {
-        fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s\n",
-            sv(r.Data, "IMEI"),
-            sv(r.Data, "SensorID"),
-            sv(r.Data, "Reading"),
-            sv(r.Data, "JSONPath"),
-            sv(r.Data, "Output"),
-            sv(r.Data, "Table"),
-            sv(r.Data, "Tags"))
+    // Load reader config (connection params from cloud portal)
+    cfg, err := db.LoadReaderConfig(readerID)
+    if err != nil {
+        log.Fatalf("load reader config: %v", err)
     }
-    // If you need extra files (like SNMP uses maps/ folder):
-    // extraFiles["configs/"+svcName+"/extra.yml"] = content
-```
 
----
+    // Load sensors for this reader
+    sensors, err := db.LoadSensors(readerID)
+    if err != nil {
+        log.Fatalf("load sensors: %v", err)
+    }
 
-## Step 7 — Mount extra files in docker-compose (if needed)
+    cs := coreswitchclient.New(csURL)
 
-File: `cloud/internal/tpapi/sync.go`
-Function: `buildFullComposeYML(...)`
-
-Find the volumes section of the per-gateway loop (around line 500):
-
-```go
-fmt.Fprintf(&b, "      - /opt/qube/configs/%s/config.csv:/app/config.csv:ro\n", svc.Name)
-// Add extra mounts for your protocol:
-if svc.Protocol == "lorawan_4g" {
-    fmt.Fprintf(&b, "      - /opt/qube/configs/%s/decode_keys.json:/app/decode_keys.json:ro\n", svc.Name)
+    // Main loop — connect to LoRaWAN NS and process uplinks
+    for {
+        readings, err := pollLoRaWAN(cfg, sensors)
+        if err != nil {
+            log.Printf("poll error: %v", err)
+            time.Sleep(10 * time.Second)
+            continue
+        }
+        if err := cs.SendBatch(readings); err != nil {
+            log.Printf("coreswitch send error: %v", err)
+        }
+    }
 }
 ```
 
----
+### Core-switch batch format
 
-## Step 8 — Add to test suite `test/test_api.sh` (optional but recommended)
+Each reading sent to core-switch:
 
-Find section 14 (Gateways — all 4 protocols) and add:
-
-```bash
-# LoRaWAN gateway
-R=$(api POST "/api/v1/qubes/$QUBE_ID/gateways" \
-  '{"name":"lorawan_gw","protocol":"lorawan_4g","host":"192.168.1.50","port":9080}' "$TOKEN")
-assert_status "create lorawan gateway" "201" "$(code "$R")"
-LORAWAN_GW_ID=$(split "$R" | jq -r .gateway_id)
-assert_field "lorawan gateway_id" "$LORAWAN_GW_ID"
+```go
+coreswitchclient.DataIn{
+    Table:     sensor.TableName,        // "Measurements"
+    Equipment: sensor.Name,             // "Dev-001"
+    Reading:   "rssi",                  // field name
+    Output:    sensor.Output,           // "influxdb" | "live" | "influxdb,live"
+    Sender:    "lorawan-reader",
+    Tags:      sensor.Tags,
+    Time:      time.Now().UnixMicro(),
+    Value:     "-85",                   // always string
+}
 ```
 
-And add sensor test if you have a template in migration:
-```bash
-LORAWAN_TMPL=$(curl -s -H "Authorization: Bearer $TOKEN" \
-  "$BASE/api/v1/templates?protocol=lorawan_4g" | jq -r '.[0].id')
+### Dockerfile
 
-R=$(api POST "/api/v1/gateways/$LORAWAN_GW_ID/sensors" \
-  "{\"name\":\"Temp_Sensor_01\",\"template_id\":\"$LORAWAN_TMPL\",
-    \"address_params\":{\"imei\":\"0868822046344121\",\"sensor_id\":\"824913\"}}" \
-  "$TOKEN")
-assert_status "create lorawan sensor" "201" "$(code "$R")"
+```dockerfile
+FROM golang:1.22-alpine AS builder
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux go build -o lorawan-reader .
+
+FROM alpine:3.19
+WORKDIR /app
+COPY --from=builder /app/lorawan-reader .
+CMD ["./lorawan-reader"]
 ```
 
 ---
 
-## Step 9 — Update TESTING.md / UI-API-GUIDE.md
+## Step 4: Add to CI/CD
 
-Add a section to `UI-API-GUIDE.md` under "Protocols — How to Add a New One" documenting:
-- What `config_json` looks like for your template
-- What `addr_params` the user fills in
-- What `configs.yml` gets generated
-- What `config.csv` gets generated
+Add a build entry in `.github/workflows/build-push.yml`:
 
----
-
-## Summary — What Changes Where
-
-| What | File | How |
-|------|------|-----|
-| Protocol registration | `002_gateways_sensors.sql` (or SQL INSERT on live DB) | SQL only, no code |
-| Device templates | `003_device_catalog.sql` (or `POST /api/v1/templates`) | SQL or API |
-| `configs.yml` generator | `cloud/internal/tpapi/sync.go` → `renderGatewayConfig()` | Add `case` |
-| CSV row builder | `cloud/internal/api/sensors.go` → `generateCSVRows()` | Add `case` |
-| CSV file writer | `cloud/internal/tpapi/sync.go` → `renderGatewayFiles()` | Add `case` |
-| Extra volume mounts | `cloud/internal/tpapi/sync.go` → `buildFullComposeYML()` | Add `if svc.Protocol ==` |
-| Test suite | `test/test_api.sh` | Add assertions |
-
-**What does NOT need to change:**
-- conf-agent — it just deploys whatever docker-compose.yml it receives
-- TP-API router, auth, JWT — protocol-agnostic
-- Cloud API gateways.go / sensors.go CRUD — validates protocol via FK to protocols table
-- Test UI — renders fields from `connection_params_schema` and `addr_params_schema` automatically
-
----
-
-## Real Format Reference
-
-### Modbus TCP
-
-**`configs.yml`:**
 ```yaml
-LogLevel: "Info"
-Modbus:
-  Server: "modbus-tcp://{host}:{port}"
-  ReadingsFile: "config.csv"
-  FreqSec: 5
-  SingleReadCount: 100
-HTTP:
-  Data: "http://core-switch:8585/v3/batch"
-  Alerts: "http://core-switch:8585/v3/alerts"
+- name: Build lorawan-reader (arm64)
+  uses: docker/build-push-action@v5
+  with:
+    context: ./lorawan-reader
+    platforms: linux/arm64
+    push: true
+    tags: ghcr.io/sandun-s/qube-enterprise-home/lorawan-reader:arm64.latest
 ```
-
-**`config.csv`:**
-```
-#Equipment,Reading,RegType,Address,type,Output,Table,Tags
-Main_Meter,active_power_w,Holding,3000,float32,influxdb,Measurements,name=Main_Meter
-Main_Meter,voltage_ll_v,Holding,3028,float32,influxdb,Measurements,name=Main_Meter
-Sub_Meter,active_power_w,Holding,3000,float32,influxdb,Measurements,name=Sub_Meter
-```
-Multiple sensors → multiple rows in same file, different Equipment name.
 
 ---
 
-### OPC-UA
+## What happens automatically after these steps
 
-**`configs.yml`:**
-```yaml
-LogLevel: "Info"
-OpcUA:
-  OpcEndPoint: "opc.tcp://{host}:{port}/path/to/server"
-  PointsFile: "config.csv"
-HTTP:
-  Data: "http://core-switch:8585/v3/batch"
-  Alerts: "http://core-switch:8585/v3/alerts"
-```
-
-**`config.csv`:**
-```
-#Table,Device,Reading,OpcNode,Type,Freq,Output,Tags
-Measurements,Sensor_A,active_power_w,ns=2;points/ActivePower,float,10,influxdb,name=Sensor_A
-Measurements,Sensor_A,voltage_v,ns=2;points/Voltage,float,10,influxdb,name=Sensor_A
-Measurements,Sensor_B,active_power_w,ns=2;points/PM2_Power,float,10,influxdb,name=Sensor_B
-```
-Multiple sensors → multiple rows, different Device name.
-
-**Note on OPC-UA endpoint:** The `host` field in the gateway stores the full endpoint URL including path (e.g. `opc.tcp://192.168.1.18:52520/OPCUA/N4OpcUaServer`). When adding an OPC-UA gateway, enter the full endpoint URL in the "OPC-UA endpoint URL" field.
+1. The new protocol appears in `GET /api/v1/protocols`
+2. Users can create a LoRaWAN reader via `POST /api/v1/qubes/:id/readers`
+3. The connection_schema renders as a form in the test UI
+4. conf-agent receives a config push → updates SQLite → deploys the reader container
+5. The reader container starts, reads config from SQLite, and begins polling
 
 ---
 
-### SNMP
+## Device template (optional)
 
-**`configs.yml`:**
-```yaml
-loglevel: "INFO"
-snmp:
-  fetch_interval: 15
-  connect_timeout: 10
-  worker_count: 2
-  devices_file: "config.csv"
-  maps_folder: "./maps"
-http:
-  data_url: "http://core-switch:8585/v3/batch"
-  alerts_url: "http://core-switch:8585/v3/alerts"
-```
+If the new protocol has well-known sensors, add a global device template:
 
-**`config.csv` (devices.csv):**
-```
-#Table,Device,SNMP_csv,Community,Version,Output,Tags
-snmp_data,192.168.1.200,gxt-rt-ups.csv,public,2c,influxdb,name=UPS_Room1
-snmp_data,192.168.1.201,apc-ups.csv,public,2c,influxdb,name=UPS_Room2
-```
-- `Device` = IP address of the SNMP device (from `addr_params.device_ip`)
-- `SNMP_csv` = map filename in `maps/` folder (template-based, one file per device type)
-
-**`maps/gxt-rt-ups.csv`:**
-```
-upsBatteryStatus,1.3.6.1.2.1.33.1.2.1.0
-upsEstimatedMinutesRemaining,1.3.6.1.2.1.33.1.2.3.0
-upsEstimatedChargeRemaining,1.3.6.1.2.1.33.1.2.4.0
-upsInputVoltage,1.3.6.1.2.1.33.1.3.3.1.3.1
-upsOutputVoltage,1.3.6.1.2.1.33.1.4.4.1.2.1
-upsOutputPercentLoad,1.3.6.1.2.1.33.1.4.4.1.5.1
-```
-Format: `field_key,OID` — exactly 2 columns, NO header line, no type column.
-
-**Volume mounts in docker-compose:**
-```yaml
-volumes:
-  - /opt/qube/configs/SNMP_GW/configs.yml:/app/configs.yml:ro
-  - /opt/qube/configs/SNMP_GW/config.csv:/app/config.csv:ro
-  - /opt/qube/configs/SNMP_GW/maps:/app/maps:ro   ← SNMP-specific
+```sql
+INSERT INTO device_templates (org_id, protocol, name, manufacturer, model,
+    sensor_config, sensor_params_schema, is_global) VALUES
+(
+    NULL,        -- NULL = global (superadmin)
+    'lorawan',
+    'Dragino LHT65 Temp/Humidity',
+    'Dragino',
+    'LHT65',
+    '{"readings": [
+        {"name": "temperature_c", "field": "TempC_SHT", "unit": "°C"},
+        {"name": "humidity_pct",  "field": "Hum_SHT",   "unit": "%"}
+    ]}',
+    '{"type":"object","properties":{"dev_eui":{"type":"string","title":"Device EUI"}}}',
+    TRUE
+);
 ```
 
-**Key difference from other protocols:**
-- One SNMP container handles ALL SNMP devices on the Qube (regardless of device IP)
-- Auto-assign matches by `protocol` only (not protocol+host)
-- Each sensor specifies its own device IP in `addr_params.device_ip`
-- The OID map (`maps/` file) is shared between sensors of the same template type
+Users select this template when adding a sensor — the `sensor_config` is merged with their
+`params` to build the final `sensor.config_json` that the reader sees in SQLite.
 
 ---
 
-### MQTT
+## No code changes required for
 
-**`configs.yml`:**
-```yaml
-LogLevel: "Info"
-MappingFile: "config.csv"
-MQTT:
-  Host: "tcp://{broker_url}:{port}"
-  Port: 1883
-  User: "{username}"
-  Pass: "{password}"
-HTTP:
-  Data: "http://core-switch:8585/v3/data"
-  Alerts: "http://core-switch:8585/v3/alerts"
-  IdleTO: 5
-  MaxIdle: 3
-```
-
-**`config.csv` (mapping.yml YAML format):**
-```yaml
-- Topic: "factory/sensors/temp_01"
-  Table: "Measurements"
-  Mapping:
-    - Device: ["FIXED", "Sensor_A"]
-      Reading: ["FIXED", "temperature_c"]
-      Value: ["FIELD", "temperature"]
-      Output: ["FIXED", "influxdb"]
-
-- Topic: "factory/sensors/temp_02"
-  Table: "Measurements"
-  Mapping:
-    - Device: ["FIXED", "Sensor_B"]
-      Reading: ["FIXED", "temperature_c"]
-      Value: ["FIELD", "temperature"]
-      Output: ["FIXED", "influxdb"]
-```
-Multiple sensors → multiple topic blocks in same file.
-
----
-
-## Protocol Properties Reference
-
-| Property | modbus_tcp | opcua | snmp | mqtt |
-|----------|-----------|-------|------|------|
-| Gateway matches by | protocol + host | protocol + host | protocol only | protocol + host |
-| Config file name | `config.csv` | `config.csv` | `config.csv` | `config.csv` |
-| Real gateway file name | `registers.csv` | `nodes.csv` | `devices.csv` | `mapping.yml` |
-| Extra files | none | none | `maps/*.csv` | none |
-| Sensors per container | many (same host) | many (same server) | all SNMP devices | many (same broker) |
-| Device IP at | gateway level | gateway level | sensor addr_params | broker URL at gateway |
-| Credentials | none | none | community (per sensor) | username/password at gateway |
+- Protocol dropdown in UI
+- API validation (protocol existence checked via `protocols` table)
+- Config hash computation
+- Docker compose generation (containers table drives this)
+- TP-API sync (readers/sensors are protocol-agnostic JSON)
+- Telemetry pipeline (sensor_id is all that matters)

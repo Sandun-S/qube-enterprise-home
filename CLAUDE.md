@@ -4,69 +4,89 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Qube Enterprise** is a cloud-to-edge IoT fleet management system. A **Qube** is a Raspberry Pi/Kadas edge device running Docker Swarm with protocol gateways (Modbus TCP, OPC-UA, SNMP, MQTT). The Enterprise layer adds automated gateway/sensor provisioning via a Cloud API and TP-API for device communication, with telemetry flowing to cloud Postgres.
+**Qube Enterprise v2** is a cloud-to-edge IoT fleet management system. A **Qube** is a Raspberry Pi/Kadas edge device running Docker Swarm with protocol reader containers (Modbus TCP, OPC-UA, SNMP, MQTT, HTTP). The Enterprise layer adds zero-touch provisioning, WebSocket-based config sync, SQLite edge config store, and TimescaleDB telemetry pipeline.
 
 **Technology Stack:**
 - Go 1.22 (all backend services)
-- PostgreSQL (enterprise data)
-- InfluxDB v1 (edge data buffer)
+- PostgreSQL — `qubedb` (management) + `qubedata` (TimescaleDB telemetry)
+- SQLite (edge config store on each Qube — WAL mode, shared Docker volume)
+- InfluxDB v1 (edge data buffer — matches existing core-switch)
 - Docker + Docker Swarm (deployment)
-- JWT + HMAC (authentication)
+- JWT + HMAC (dual auth: users and devices)
+- WebSocket (primary cloud→Qube sync; HTTP polling fallback)
 
 ## Repository Structure
 
 ```
 qube-enterprise/
-├── cloud/                          # Cloud API + TP-API (single Go binary)
+├── cloud/                          # Cloud API + TP-API + WebSocket (single Go binary)
 │   ├── cmd/server/main.go          # Entry point — starts :8080 and :8081
 │   ├── internal/api/               # Cloud Management API (JWT, port 8080)
 │   │   ├── auth.go                 # Register / login
 │   │   ├── qubes.go                # Qube CRUD + claim by register_key
-│   │   ├── gateways.go             # Gateway CRUD + auto service creation
-│   │   ├── sensors.go              # Sensor CRUD + CSV row generation
-│   │   ├── templates.go            # Device catalog CRUD + register patch
-│   │   ├── telemetry.go            # Telemetry query endpoints
+│   │   ├── readers.go              # Reader CRUD + auto container creation
+│   │   ├── sensors.go              # Sensor CRUD + template config merging
+│   │   ├── templates.go            # Device + reader template CRUD
+│   │   ├── containers.go           # Container list (auto-managed)
+│   │   ├── telemetry.go            # Telemetry query endpoints (TimescaleDB)
 │   │   ├── hash.go                 # Config hash recomputation
-│   │   ├── commands.go             # Remote command dispatch
+│   │   ├── commands.go             # Remote command dispatch (WS + DB queue)
+│   │   ├── registry.go             # Container registry settings
 │   │   ├── middleware.go           # JWT + RBAC
+│   │   ├── wshub.go                # WebSocket hub (Qube connections)
+│   │   ├── websocket.go            # Qube WebSocket handler (/ws)
+│   │   ├── dashboard_ws.go         # Dashboard WebSocket handler (/ws/dashboard)
 │   │   └── router.go               # All route registration
 │   ├── internal/tpapi/             # TP-API (HMAC, port 8081) — Qube-facing only
 │   │   ├── router.go               # Routes + HMAC middleware
-│   │   ├── sync.go                 # sync/state, sync/config, device/register
-│   │   ├── telemetry.go            # telemetry/ingest
+│   │   ├── sync.go                 # sync/state, sync/config (JSON SQLite data)
+│   │   ├── telemetry.go            # telemetry/ingest (SenML → TimescaleDB)
 │   │   └── commands.go             # commands/poll, commands/:id/ack
-│   └── migrations/
-│       ├── 001_init.sql            # Core schema + test device seeds
-│       ├── 002_gateways_sensors.sql # Gateways, sensors, templates, readings
-│       └── 003_device_catalog.sql  # Global device templates (Schneider, UPS, etc.)
+│   ├── migrations/                 # Management DB (qubedb)
+│   │   ├── 001_init.sql            # Core schema (orgs, users, qubes, readers, sensors, etc.)
+│   │   ├── 002_global_data.sql     # Protocols + reader templates + global device templates
+│   │   └── 003_test_seeds.sql      # Dev superadmin + Q-1001..Q-1020
+│   └── migrations-telemetry/       # Telemetry DB (qubedata)
+│       └── 001_timescale_init.sql  # TimescaleDB hypertable: sensor_readings
 │
 ├── conf-agent/                     # Edge agent — runs on every Qube
-│   └── main.go                     # Self-registers, hash sync, docker stack deploy
+│   ├── main.go, register.go, websocket.go, poll.go
+│   ├── apply.go                    # Config JSON → SQLite writer
+│   ├── docker.go, deploy.go        # Docker API + stack deploy
+│   ├── heartbeat.go, commands.go   # Periodic heartbeat + remote commands
 │
-├── enterprise-influx-to-sql/       # Edge telemetry bridge — reads InfluxDB → TP-API
-│   ├── main.go
-│   └── configs.yml
+├── enterprise-influx-to-sql/       # Telemetry bridge
+│   └── main.go                     # Reads InfluxDB v1 + SQLite sensor_map → SenML → TP-API
 │
-├── mqtt-gateway/                   # Enterprise MQTT gateway container
-│   └── main.go
+├── modbus-reader/                  # Modbus TCP reader (PLC4X)
+├── snmp-reader/                    # SNMP reader (gosnmp)
+├── opcua-reader/                   # OPC-UA reader (gopcua)
+├── mqtt-gateway/                   # MQTT reader (paho)
+├── http-reader/                    # HTTP/REST reader
 │
-├── scripts/
-│   ├── setup-cloud.sh              # Provision cloud VM
-│   ├── setup-qube.sh               # Provision qube VM
-│   └── write-to-database.sh        # Flash-time script — inserts into both DBs
+├── pkg/                            # Shared Go modules (imported at build time)
+│   ├── sqlitedb/                   # SQLite schema init + read helpers
+│   └── coreswitchclient/           # core-switch HTTP client
+│
+├── core-switch/                    # Edge data router (InfluxDB + live WebSocket output)
+├── con-checker/                    # Connectivity checker
+│
+├── standards/                      # Architecture standards
+│   ├── READER_STANDARD.md, SQLITE_SCHEMA.md
+│   ├── TEMPLATE_STANDARD.md, CORESWITCH_FORMAT.md
 │
 ├── test/
-│   ├── test_api.sh                 # Full API test suite (197 tests)
-│   ├── mit.txt                     # Dev fake /boot/mit.txt for compose testing
-│   └── mosquitto/mosquitto.conf
+│   ├── test_api.sh                 # Full API test suite (v2, ~220 assertions)
+│   └── mit.txt                     # Dev /boot/mit.txt for conf-agent
 │
 ├── test-ui/index.html              # Browser dev console (http://localhost:8888)
-├── docker-compose.dev.yml          # Local dev stack (all services)
-├── ARCHITECTURE.md                 # Detailed architecture & system design
+├── docker-compose.dev.yml          # Local dev stack (TimescaleDB, SQLite volume, no MQTT broker)
+├── ARCHITECTURE.md                 # System architecture and data flow
 ├── DEPLOYMENT.md                   # Production deployment guide
-├── TESTING.md                      # Manual testing scenarios
-├── ADDING-PROTOCOLS.md             # Complete guide for new protocol implementation
-└── README.md                       # Project overview & quick start
+├── TESTING.md                      # Manual curl testing scenarios
+├── ADDING-PROTOCOLS.md             # How to add a new protocol
+├── MIGRATION_GUIDE.md              # v1 → v2 migration
+└── UI-API-GUIDE.md                 # Full API reference
 ```
 
 ## Quick Start
@@ -79,100 +99,86 @@ docker compose -f docker-compose.dev.yml down -v
 docker compose -f docker-compose.dev.yml up -d --build
 
 # Access services
-# Cloud API:      http://localhost:8080
-# TP-API:         http://localhost:8081
-# Test UI:        http://localhost:8888
-# Postgres:       localhost:5432
-# InfluxDB:       localhost:8086
-# MQTT:           localhost:1883
+# Cloud API + WebSocket: http://localhost:8080
+# TP-API:               http://localhost:8081
+# Test UI:              http://localhost:8888
+# Postgres:             localhost:5432
+# InfluxDB:             localhost:8086
 
 # Check health
-curl -s http://localhost:8080/health | jq .
+curl -s http://localhost:8080/health | jq .   # {"version":"2",...}
 curl -s http://localhost:8081/health | jq .
 
-# Run full test suite (197 tests)
+# Run full test suite
 ./test/test_api.sh
 
 # View logs
 docker compose -f docker-compose.dev.yml logs -f cloud-api
 docker compose -f docker-compose.dev.yml logs -f conf-agent
-docker compose -f docker-compose.dev.yml logs -f enterprise-influx-to-sql
 
 # Stop everything
 docker compose -f docker-compose.dev.yml down
 ```
 
-### Build a single service (Go)
+### Build cloud-api locally
 
 ```bash
-# Cloud API (builds and runs locally outside Docker)
 cd cloud
 go build -o cloud-api ./cmd/server
 DATABASE_URL=postgres://qubeadmin:qubepass@localhost:5432/qubedb?sslmode=disable \
+TELEMETRY_DATABASE_URL=postgres://qubeadmin:qubepass@localhost:5432/qubedata?sslmode=disable \
 JWT_SECRET=dev-jwt-secret-change-in-production \
 ./cloud-api
-
-# Or with docker build
-docker build -f cloud/Dockerfile -t cloud-api:dev ./cloud
 ```
 
 ## Architecture — The Data Flow
 
 ```
 USER → Cloud API (:8080, JWT)
-  ↓ creates/updates
-gateways + sensors + templates (PostgreSQL)
-  ↓ config hash changes
-conf-agent (on Qube) polls TP-API /v1/sync/state
-  ↓ hash mismatch
-Downloads: docker-compose.yml + CSV files + sensor_map.json
-  ↓ docker stack deploy
-Gateway containers start (Modbus/MQTT/SNMP/OPC-UA)
-  ↓ poll devices
-POST to core-switch :8080/v3/batch
-  ↓ writes to
-InfluxDB v1 (edgex DB)
-  ↓ enterprise-influx-to-sql polls
-Maps via sensor_map.json → sensor UUIDs
-  ↓ POST
-TP-API /v1/telemetry/ingest (HMAC)
-  ↓ writes to
-Postgres sensor_readings
-  ↓ queried by
+  ↓ creates/updates readers + sensors
+readers + sensors → PostgreSQL (qubedb)
+  ↓ recomputeConfigHash() → config_state.hash changes
+  ↓ WebSocket push: {"type":"config_update",...}
+conf-agent (Qube) receives push OR polls /v1/sync/state
+  ↓ hash mismatch → GET /v1/sync/config
+Returns: {readers, sensors, containers, docker_compose_yml}
+  ↓ conf-agent writes to SQLite /opt/qube/data/qube.db
+  ↓ Docker API: stop affected reader containers
+  ↓ Docker Swarm: recreates containers → reads fresh SQLite
+Reader containers (modbus-reader, snmp-reader, etc.)
+  ↓ POST /v3/batch to core-switch:8585
+  ↓ output=influxdb → InfluxDB v1 (edgex)
+  ↓ output=live → WebSocket to cloud (:8080/ws/dashboard)
+enterprise-influx-to-sql
+  ↓ reads InfluxDB + SQLite sensor_map (sensors table)
+  ↓ POST /v1/telemetry/ingest (SenML) → TimescaleDB (qubedata)
 Cloud API /api/v1/data/readings → User
 ```
-
-**Key Design Decisions:**
-- **InfluxDB v1** used to match existing core-switch (NOT v2)
-- **sensor_map.json** bridges InfluxDB measurement names to sensor UUIDs
-- **Dual auth systems:** JWT for users (8080), HMAC for devices (8081)
-- **Zero-touch provisioning:** conf-agent auto-deploys from hash sync
-- **Protocol-driven:** `protocols` table defines UI schemas and routing
 
 ## Ports
 
 | Port | Service | Auth | Usage |
 |------|---------|------|-------|
-| 8080 | Cloud API | JWT Bearer | Frontend, developers |
+| 8080 | Cloud API + WebSocket | JWT Bearer | Frontend, developers, Qube WS |
 | 8081 | TP-API | HMAC-SHA256 | Qube devices only |
-| 5432 | PostgreSQL | password | Cloud API internal |
+| 5432 | PostgreSQL (qubedb + qubedata) | password | Cloud API internal |
 | 8086 | InfluxDB v1 | none | Edge data buffer |
-| 1883 | MQTT (mosquitto) | none | Message broker |
+| 8585 | core-switch | none | Reader → core-switch |
 | 8888 | Test UI | none | Browser dev console |
 
 ## Authentication & Authorization
 
 **Cloud API (port 8080):**
 - JWT tokens via `Authorization: Bearer <token>`
-- Issued by `POST /api/v1/auth/login` or `POST /api/v1/auth/register`
+- Issued by `POST /api/v1/auth/login`
 - Roles: `superadmin`, `admin`, `editor`, `viewer`
 - Context values: `ctxUserID`, `ctxOrgID`, `ctxRole` (from middleware)
 
 **TP-API (port 8081):**
-- HMAC-SHA256 signature in `X-HMAC-Signature` header
-- Base string: `QUBE_ID:QUBE_TOKEN`
-- Token obtained via device self-registration: `POST /v1/device/register`
-- Context value: `ctxQubeID`
+- Headers: `X-Qube-ID: Q-1001` + `Authorization: Bearer <token>`
+- Token = `HMAC-SHA256(key=orgSecret, data=qubeID+":"+orgSecret)`
+- Obtained via `POST /v1/device/register` (one-time, after claim)
+- Context values: `ctxQubeID`, `ctxOrgID` (from qubeAuthMiddleware)
 
 **Dev test accounts:**
 - Superadmin: `iotteam@internal.local` / `iotteam2024`
@@ -180,233 +186,109 @@ Cloud API /api/v1/data/readings → User
 
 ## Common Development Tasks
 
-### Run a single API test
+### Run/filter tests
 
 ```bash
-# The test suite is a single shell script with 197 assertions
-# To run specific tests, comment out sections in test/test_api.sh
-# Or filter output:
-
-./test/test_api.sh 2>&1 | grep -A3 "✗"  # Show failures
-./test/test_api.sh 2>&1 | grep "PASS"   # Show all passes
+./test/test_api.sh 2>&1 | grep "✗"    # Show failures only
+./test/test_api.sh 2>&1 | grep "✓"    # Show passes only
 ```
 
 ### Debug conf-agent sync
 
 ```bash
-# View conf-agent logs (simulated Qube in docker-compose.dev.yml)
 docker compose -f docker-compose.dev.yml logs -f conf-agent
-
 # conf-agent does:
-# 1. Reads /boot/mit.txt → device_id, register_key
-# 2. POST /v1/device/register → gets QUBE_TOKEN
-# 3. Polls /v1/sync/state every 30s (hash compare)
-# 4. On mismatch, GET /v1/sync/config → downloads compose + CSVs
-# 5. Runs: docker stack deploy -c /opt/qube/docker-compose.yml qube
+# 1. Reads /boot/mit.txt → POST /v1/device/register → gets QUBE_TOKEN
+# 2. Connects WebSocket ws://cloud-api:8080/ws
+# 3. On "config_update" message → GET /v1/sync/config
+# 4. Writes readers/sensors to SQLite /opt/qube/data/qube.db
+# 5. Docker API: stop affected containers → Swarm recreates them
+# 6. Also polls TP-API every POLL_INTERVAL as fallback
 ```
 
 ### Simulate sensor data in dev
 
 ```bash
-# Send test data to InfluxDB (what gateway containers would produce)
-curl -X POST http://localhost:8086/write?db=qube-db&precision=s \
-  --data-binary 'Measurements,device=Main_Meter,reading=active_power_w value=1250.5'
-
-# Or use the influx-seeder profile:
+# Seed InfluxDB (what reader containers produce)
 docker compose -f docker-compose.dev.yml run --rm influx-seeder
 
-# Then check enterprise-influx-to-sql logs to see telemetry forwarded
+# Verify InfluxDB data
+curl 'http://localhost:8086/query?q=SHOW+MEASUREMENTS&db=edgex'
+
+# Check enterprise-influx-to-sql forwarding
+docker compose -f docker-compose.dev.yml logs enterprise-influx-to-sql
 ```
 
 ### Add a new endpoint
 
 1. Write handler in `cloud/internal/api/` or `cloud/internal/tpapi/`
-2. Register in `cloud/internal/api/router.go` (with middleware) or `tpapi/router.go` (with HMAC)
+2. Register in `cloud/internal/api/router.go` or `tpapi/router.go`
 3. Add test to `test/test_api.sh`
-4. Add curl example to `TESTING.md` if user-facing
-5. Responses: use `writeJSON(w, status, map[string]any{...})` or `writeError(w, status, msg)`
+4. Add curl example to `TESTING.md`
+5. Responses: `writeJSON(w, status, map[string]any{...})` or `writeError(w, status, msg)`
 
 ### Add a field to a response
 
-Find the handler in `cloud/internal/api/`, update the map passed to `writeJSON()`. No DTO structs — all responses are `map[string]any`.
+Find the handler, update the `map[string]any` passed to `writeJSON()`. No DTO structs.
 
-### Change CSV generation for a protocol
+### Add a global device template
 
-Three places to edit:
-
-1. **CSV row structure** — `cloud/internal/api/sensors.go` → `generateCSVRows()` case
-2. **CSV file format** — `cloud/internal/tpapi/sync.go` → `renderGatewayFiles()` case
-3. **configs.yml format** — `cloud/internal/tpapi/sync.go` → `renderGatewayConfig()` case
-
-See `ADDING-PROTOCOLS.md` for complete protocol addition workflow.
-
-### Add a global template (device catalog)
-
-Use superadmin token and `POST /api/v1/templates` with `"is_global": true`. Or seed in migration `003_device_catalog.sql`. Templates are protocol-specific and define `config_json` structure that `generateCSVRows()` uses.
+```bash
+curl -X POST http://localhost:8080/api/v1/device-templates \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"...","protocol":"modbus_tcp","sensor_config":{...}}'
+```
+Or seed in `cloud/migrations/002_global_data.sql`.
 
 ### Reset the database (dev only)
 
 ```bash
 docker compose -f docker-compose.dev.yml down -v
 docker compose -f docker-compose.dev.yml up -d postgres
-# Migrations auto-run on postgres container init
+# Migrations auto-run via docker-entrypoint-initdb.d/
 ```
 
-## Protocol Implementation Patterns
+## Database Schema (qubedb — management)
 
-The system supports 4 protocols (modbus_tcp, opcua, snmp, mqtt). Each has:
-
-- **configs.yml**: Connection settings for the gateway container
-- **config.csv**: What to poll/subscribe (format varies by protocol)
-- **maps/ folder**: Only for SNMP (OID → field_key mapping)
-
-CSV generation is protocol-specific in `generateCSVRows()` (sensors.go). The `csv_type` returned determines which case in `renderGatewayFiles()` writes the file.
-
-**Key differences:**
-
-| Property | modbus_tcp | opcua | snmp | mqtt |
-|----------|-----------|-------|------|------|
-| Gateway matches by | protocol+host | protocol+host | protocol only | protocol+host |
-| Config file name | config.csv | config.csv | config.csv | config.csv |
-| Extra files | none | none | maps/*.csv | none |
-| Device IP location | gateway.host | gateway.host | sensor addr_params | gateway.host |
-| Credentials | none | none | community (sensor) | username/password (gw) |
-
-See `ADDING-PROTOCOLS.md` for step-by-step guide to add a new protocol (LoRaWAN, etc.).
-
-## Database Schema Highlights
-
-**Enterprise Postgres (cloud-api):**
 - `organisations`, `users` — multi-tenant
-- `qubes` — devices with HMAC token
-- `gateways` — one per container (protocol + host + port)
-- `sensors` — linked to gateway + template
-- `sensor_templates` — device catalog with `config_json`
-- `service_csv_rows` — generated CSV rows per sensor
-- `sensor_readings` — time-series telemetry
-- `config_state` — hash tracking for sync
+- `qubes` — devices with auth_token_hash, ws_connected
+- `config_state` — hash + config_version per Qube
+- `readers` — one per container (protocol + connection), linked to qube
+- `sensors` — linked to reader + optional device_template, config_json = merged
+- `containers` — auto-created with reader, deployed by conf-agent
+- `device_templates` — sensor config schemas (org or global)
+- `reader_templates` — container specs (superadmin only)
+- `protocols` — active protocols
+- `qube_commands` — command queue (WS + polling)
+- `coreswitch_settings`, `telemetry_settings` — per-Qube settings
+- `registry_settings` — container registry config (one row, superadmin)
 
-**Query pattern:**
-```go
-pool.QueryRow(ctx, `SELECT id FROM sensors WHERE gateway_id=$1 AND name=$2`, gwID, name).Scan(&id)
-pool.Query(ctx, `SELECT * FROM sensor_readings WHERE sensor_id=$1 ORDER BY ts DESC LIMIT $2`, sensorID, 100)
-```
+## Database Schema (qubedata — telemetry)
+
+- `sensor_readings` — TimescaleDB hypertable on `time`
+  - columns: `time`, `qube_id`, `sensor_id`, `field_key`, `value`, `unit`, `tags`
 
 ## Key Code Patterns
 
 - **Responses:** `writeJSON(w, http.StatusOK, data)` or `writeError(w, http.StatusBadRequest, "msg")`
-- **DB access:** `pool.QueryRow(ctx, sql, args...).Scan(&vars...)` (single row)
-- **Multi-row:** `rows, _ := pool.Query(ctx, sql, args...); defer rows.Close(); for rows.Next() { ... }`
-- **Context values:** `ctxUserID := r.Context().Value(ctxUserID).(string)` (JWT middleware)
-- **URL params:** `chi.URLParam(r, "gateway_id")`
-- **JSON safely:** Check type assertions, e.g., `if v, ok := obj["key"].(string); ok { ... }`
-- **Logging:** Use `log.Printf()` (standard library). No structured logger.
+- **DB access (single row):** `pool.QueryRow(ctx, sql, args...).Scan(&vars...)`
+- **DB access (multi-row):** `rows, _ := pool.Query(ctx, sql, args...); defer rows.Close(); for rows.Next() { ... }`
+- **Context values:** `r.Context().Value(ctxOrgID).(string)` (JWT middleware)
+- **URL params:** `chi.URLParam(r, "reader_id")`
+- **JSON safely:** `if v, ok := obj["key"].(string); ok { ... }`
+- **Logging:** `log.Printf()` (standard library only, no structured logger)
+- **No ORM:** Raw SQL with `pgx` driver, `$1,$2` placeholders
 
-## Testing
+## Key File Locations
 
-**Full automated test suite:**
-```bash
-./test/test_api.sh
-```
-
-Covers: auth, org/user CRUD, qube claim, protocols list, gateway/sensor/template CRUD, CSV generation, docker-compose generation, config hash, commands, heartbeat, telemetry ingestion.
-
-**Manual UI testing:**
-Open `http://localhost:8888` — the test-ui has forms for all API endpoints with token management.
-
-**Test data seeder:**
-```bash
-docker compose -f docker-compose.dev.yml run --rm influx-seeder
-```
-
-**Multipass VM integration test:**
-```bash
-./scripts/test-multipass.sh
-```
-
-Creates 2 VMs (cloud + qube), runs full flow: self-registration → config sync → telemetry.
-
-## Environment Variables
-
-**Cloud VM (production):**
-```bash
-DATABASE_URL=postgres://qubeadmin:qubepass@localhost:5432/qubedb?sslmode=disable
-JWT_SECRET=<strong-random-secret>
-QUBE_IMAGE_REGISTRY=ghcr.io/sandun-s/qube-enterprise-home  # or GitLab registry
-```
-
-**Qube device (/opt/qube/.env):**
-```bash
-TPAPI_URL=http://<cloud-ip>:8081
-QUBE_ID=Q-1001                     # Written by conf-agent after self-register
-QUBE_TOKEN=<auto-obtained>         # Not set initially, obtained from /v1/device/register
-WORK_DIR=/opt/qube
-POLL_INTERVAL=30
-MIT_TXT_PATH=/boot/mit.txt
-```
-
-**enterprise-influx-to-sql (configs.yml):**
-```yaml
-Service:
-  PollInterval: 60
-  LookbackMins: 5
-  SensorMapPath: /config/sensor_map.json
-InfluxDB:
-  URL: http://127.0.0.1:8086
-  DB: edgex
-  Tables: [Measurements]
-TPAPI:
-  URL: http://<cloud-ip>:8081
-  QubeID: Q-1001
-  QubeToken: <same as QUBE_TOKEN>
-```
-
-## CI/CD
-
-**GitHub Actions** (`.github/workflows/build-push.yml`):
-- On push to main: builds amd64 + arm64 images, pushes to GHCR, deploys to Azure VM (if secrets set)
-- ARM64 cross-compiled via QEMU (no ARM hardware needed)
-
-**GitLab production** uses separate repos per service but same codebase:
-- `registry.gitlab.com/iot-team4/product/enterprise-cloud-api:amd64.latest`
-- `registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest`
-- etc.
-
-Only difference: `QUBE_IMAGE_REGISTRY` env var on cloud-api.
-
-## Known Gotchas & Debugging
-
-**conf-agent not deploying:**
-- Check `/boot/mit.txt` exists in dev (mounted at `./test/mit.txt`)
-- Check logs: `docker compose logs conf-agent`
-- QUBE_ID/QUBE_TOKEN not set? Agent should self-register from mit.txt first.
-- Verify TP-API reachable: `curl http://cloud-api:8081/health` from inside conf-agent container
-
-**No sensor data appearing:**
-1. Is gateway container running? `docker compose ps`
-2. Is gateway writing to InfluxDB? Check InfluxDB: `curl 'http://localhost:8086/query?q=SHOW%20MEASUREMENTS'`
-3. Is enterprise-influx-to-sql running? Check logs for "forwarded X readings"
-4. Does `sensor_map.json` exist in `dev-qube-workdir/`? (mounted to `/config` in container)
-5. Query API: `GET /api/v1/data/sensors/{id}/latest?token=...`
-
-**Tests failing:**
-- DB not initialized? `docker compose down -v && docker compose up -d postgres`
-- JWT_SECRET changed? Tests use hardcoded dev secret. Keep `JWT_SECRET=dev-jwt-secret-change-in-production` in compose.
-- Ports in use? Stop other services on 8080/8081/5432/8086.
-
-**Gateway CSV not updating:**
-- Config hash not changing? Hash includes all CSV rows. Adding a sensor triggers hash change automatically via `recomputeConfigHash()`.
-- conf-agent caching? It polls every 30s. Check logs for "hash mismatch" and "downloaded config".
-
-## File Locations Reference
-
-**Protocol config generation:**
-- `cloud/internal/tpapi/sync.go:renderGatewayConfig()` → configs.yml
-- `cloud/internal/tpapi/sync.go:renderGatewayFiles()` → config.csv (+ maps/)
-- `cloud/internal/api/sensors.go:generateCSVRows()` → CSV row data from template
+**Config sync:**
+- `cloud/internal/tpapi/sync.go:syncConfigHandler()` — builds sync payload (readers + sensors + containers + compose)
+- `cloud/internal/tpapi/sync.go:buildComposeYML()` — generates docker-compose.yml from containers table
+- `cloud/internal/api/hash.go:recomputeConfigHash()` — called after every mutation
 
 **CRUD handlers:**
-- Gateways: `cloud/internal/api/gateways.go`
+- Readers: `cloud/internal/api/readers.go`
 - Sensors: `cloud/internal/api/sensors.go`
 - Templates: `cloud/internal/api/templates.go`
 - Qubes: `cloud/internal/api/qubes.go`
@@ -417,41 +299,129 @@ Only difference: `QUBE_IMAGE_REGISTRY` env var on cloud-api.
 - `cloud/internal/tpapi/router.go` (port 8081) — all TP-API endpoints
 
 **Database migrations:**
-- `cloud/migrations/001_init.sql` — orgs, users, qubes, protocols, initial Q-1001..Q-1020
-- `cloud/migrations/002_gateways_sensors.sql` — gateways, sensors, templates, readings, service_csv_rows
-- `cloud/migrations/003_device_catalog.sql` — global templates for Schneider, APC, etc.
+- `cloud/migrations/001_init.sql` — all management tables
+- `cloud/migrations/002_global_data.sql` — protocols, reader templates, global device templates
+- `cloud/migrations/003_test_seeds.sql` — dev seeds (superadmin + Q-1001..Q-1020)
+- `cloud/migrations-telemetry/001_timescale_init.sql` — TimescaleDB sensor_readings
+
+## Testing
+
+**Full automated test suite:**
+```bash
+./test/test_api.sh
+```
+
+Covers: auth, RBAC, qube claim, user management, protocols, reader templates, device templates,
+registry, readers (all protocols), sensors (with/without templates), config hash propagation,
+sync state/config, containers, commands (send/poll/ack), telemetry ingest/query, delete cascades,
+multi-org isolation.
+
+**Manual UI testing:** `http://localhost:8888`
+
+**Influx data seeder:** `docker compose -f docker-compose.dev.yml run --rm influx-seeder`
+
+## Environment Variables
+
+**Cloud VM (production):**
+```bash
+DATABASE_URL=postgres://qubeadmin:qubepass@localhost:5432/qubedb?sslmode=disable
+TELEMETRY_DATABASE_URL=postgres://qubeadmin:qubepass@localhost:5432/qubedata?sslmode=disable
+JWT_SECRET=<strong-random-secret>
+QUBE_IMAGE_REGISTRY=ghcr.io/sandun-s/qube-enterprise-home  # or GitLab
+```
+
+**Qube device:**
+```bash
+CLOUD_WS_URL=ws://<cloud-ip>:8080/ws  # WebSocket (primary)
+TPAPI_URL=http://<cloud-ip>:8081       # HTTP polling (fallback)
+SQLITE_PATH=/opt/qube/data/qube.db
+WORK_DIR=/opt/qube
+POLL_INTERVAL=30
+# QUBE_ID and QUBE_TOKEN auto-obtained via /v1/device/register
+```
+
+**enterprise-influx-to-sql:**
+```bash
+SQLITE_PATH=/opt/qube/data/qube.db
+TPAPI_URL=http://<cloud-ip>:8081
+QUBE_ID=Q-1001
+QUBE_TOKEN=<from device/register>
+INFLUX_URL=http://127.0.0.1:8086
+INFLUX_DB=edgex
+```
+
+## CI/CD
+
+**GitHub Actions** (`.github/workflows/build-push.yml`):
+- On push to main: builds amd64 + arm64 images, pushes to GHCR
+- ARM64 cross-compiled via QEMU
+
+**GitLab production:** Same codebase, different `QUBE_IMAGE_REGISTRY`:
+- `registry.gitlab.com/iot-team4/product/enterprise-cloud-api:amd64.latest`
+- `registry.gitlab.com/iot-team4/product/enterprise-conf-agent:arm64.latest`
+- etc.
+
+## Known Gotchas & Debugging
+
+**conf-agent not syncing:**
+- Check `/boot/mit.txt` mounted: `docker compose logs conf-agent | head -20`
+- WebSocket failing? conf-agent falls back to HTTP polling automatically
+- Verify: `curl http://cloud-api:8081/health` from inside conf-agent container
+
+**No sensor data:**
+1. Is reader container running? `docker service ls` (on Qube) or `docker compose ps`
+2. Is reader writing to InfluxDB? `curl 'http://localhost:8086/query?q=SHOW+MEASUREMENTS&db=edgex'`
+3. Is enterprise-influx-to-sql running? Check logs for "forwarded X readings"
+4. Is SQLite populated? `sqlite3 /path/to/qube.db ".tables"` — sensors table should have rows
+5. Query API: `GET /api/v1/data/sensors/{id}/latest`
+
+**Tests failing:**
+- DB not initialized? `docker compose down -v && docker compose up -d postgres && sleep 5`
+- JWT_SECRET changed? Keep `JWT_SECRET=dev-jwt-secret-change-in-production` in dev compose
+- Ports in use? Stop other services on 8080/8081/5432/8086
+- TimescaleDB not ready? Wait 10s after `docker compose up`
+
+**Config hash not changing:**
+- `recomputeConfigHash()` is called after every reader/sensor mutation
+- Check `SELECT hash, config_version FROM config_state WHERE qube_id='Q-1001'`
+- If stale: `UPDATE config_state SET hash='', config_version=config_version+1 WHERE qube_id='Q-1001'`
+
+**Reader containers not deploying:**
+- conf-agent needs Docker socket mounted
+- Check containers table: `SELECT * FROM containers WHERE qube_id='Q-1001'`
+- Image resolved from registry_settings + reader_template.image_suffix
 
 ## Important Implementation Notes
 
-1. **Automatic protocol registration:** New protocols only require DB INSERT into `protocols` table. UI renders connection + address fields from `connection_params_schema` / `addr_params_schema` JSONB. No code change needed for routing/validation.
+1. **SQLite = only writer is conf-agent.** Reader containers open read-only. No live polling — config reload = Docker stop → Swarm recreate.
 
-2. **Gateway deduplication:** Only one gateway container per `(protocol, host)` pair on a Qube. Adding a sensor to an existing gateway just appends CSV rows. The exception is SNMP: only ONE SNMP gateway per Qube regardless of host.
+2. **WebSocket hub** in `wshub.go` tracks connected Qubes. Commands try WS delivery first, fall back to DB queue. Hub calls `pool.Exec()` on connect/disconnect to update `qubes.ws_connected`.
 
-3. **CSV formats are not self-describing:** They must exactly match what the gateway binary expects. These formats are protocol-specific and hard-coded in `renderGatewayFiles()`.
+3. **Config hash** includes readers + sensors + containers. Any mutation calls `recomputeConfigHash()` which triggers conf-agent sync on next WebSocket event or poll.
 
-4. **sensor_map.json is auto-generated:** Based on `(Equipment, Reading)` pairs from all sensors' CSV rows. The enterprise-influx-to-sql reads this to map InfluxDB measurements to sensor UUIDs. Do not edit manually.
+4. **Template merging:** `sensor.config_json` = `device_template.sensor_config` merged with user `params`. The reader sees the merged result in SQLite — no template lookup at runtime.
 
-5. **HMAC token lifecycle:** Qube self-registers with `register_key` from `/boot/mit.txt` → gets `QUBE_TOKEN` → TP-API uses that token for ALL subsequent calls. Token rotates only on manual re-claim.
+5. **HMAC token** = `HMAC-SHA256(key=org.org_secret, data=qubeID+":"+org.org_secret)`. Stable per org/qube. Changes only on re-claim (org_secret remains same, so token is deterministic).
 
-6. **Docker Swarm detection:** conf-agent checks for swarm mode. Active swarm → `docker stack deploy`; otherwise `docker compose up -d`. The generated `docker-compose.yml` uses overlay network `qube-net` for swarm.
+6. **Two databases, one Postgres instance.** `pool` = qubedb (management). `telemetryPool` = qubedata (TimescaleDB). Both pools passed to handlers that need them.
 
-7. **GitHub vs GitLab:** Same codebase, different registry. Set `QUBE_IMAGE_REGISTRY` accordingly. Cloud-api uses this to generate docker-compose.yml for Qubes.
+7. **No MQTT broker on Qube.** MQTT protocol is for connecting to external brokers. The mqtt-reader container subscribes to an external broker.
 
-8. **No ORM:** Raw SQL with `pgx` driver. Use `?` placeholders, not `$1,$2` when using `sqlc`-style queries. Current code uses `$1,$2` with `pgx`.
+8. **Protocol-driven UI.** Adding a protocol = 1 SQL INSERT. `reader_template.connection_schema` is a JSON Schema that drives the UI form for reader creation.
 
-9. **Test suite structure:** `test/test_api.sh` uses helper functions (`api`, `assert_status`, `code`, etc.). All tests depend on previous ones (IDs carried forward).
-
-10. **Zero-touch dev workflow:** After initial `docker compose up -d`, the test-ui (port 8888) provides forms to exercise every endpoint. Register an org, claim a Qube, add gateway+sensor, watch the telemetry flow.
+9. **Sensor output modes:** `"influxdb"` (→ InfluxDB v1), `"live"` (→ WebSocket dashboard), `"influxdb,live"` (both). Readers check this from SQLite and route accordingly via core-switch.
 
 ## Related Documentation
 
 - `README.md` — Project overview & quick start
-- `ARCHITECTURE.md` — Detailed system architecture & design decisions
-- `DEPLOYMENT.md` — Production deployment on cloud VM + Qube integration
-- `TESTING.md` — Manual testing scenarios (19 scenarios)
-- `ADDING-PROTOCOLS.md` — Complete guide to add a new protocol (LoRaWAN, etc.)
-- `UI-API-GUIDE.md` — API reference with curl examples for all endpoints
+- `ARCHITECTURE.md` — System architecture, data flow, design decisions
+- `DEPLOYMENT.md` — Cloud VM + Qube device production setup
+- `TESTING.md` — Manual curl testing scenarios for all endpoints
+- `ADDING-PROTOCOLS.md` — How to add a new protocol (LoRaWAN, BACnet, etc.)
+- `MIGRATION_GUIDE.md` — v1 → v2 migration steps
+- `UI-API-GUIDE.md` — API reference for test UI and direct API use
+- `standards/` — Reader, SQLite schema, template, and core-switch format specs
 
 ---
 
-**For future Claude Code instances:** This repository is Go-based with Docker Compose dev environment. All services run in a single binary (`cloud-api`) on ports 8080 (JWT) and 8081 (HMAC). Edge agents are separate Go programs. The architecture is protocol-driven via database schemas, not code enums. Patterns: `writeJSON()`, `writeError()`, `pool.Query/QueryRow`, middleware context values. Key files: `sensors.go` (CSV generation), `sync.go` (config generation), `router.go` (route mapping).
+**For future Claude Code instances:** This is a v2 Go-based IoT management system. Cloud API runs on :8080 (JWT) and :8081 (HMAC). Qubes sync config via WebSocket and store it in SQLite. Reader containers are auto-deployed by conf-agent. Key patterns: `writeJSON()`, `writeError()`, `pool.Query/QueryRow`, middleware context values. Readers = gateways v2. SQLite replaces CSV files. No CSV generation code exists in v2.
