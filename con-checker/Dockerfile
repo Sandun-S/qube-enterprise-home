@@ -6,10 +6,10 @@ COPY go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
 COPY . .
 RUN go mod tidy
-RUN CGO_ENABLED=0 GOOS=linux go build -o core-switch .
+RUN CGO_ENABLED=0 GOOS=linux go build -o con-checker .
 
 FROM alpine:3.19
 RUN apk add --no-cache ca-certificates tzdata
 WORKDIR /app
-COPY --from=builder /app/core-switch .
-ENTRYPOINT ["./core-switch"]
+COPY --from=builder /app/con-checker .
+ENTRYPOINT ["./con-checker"]

@@ -1,8 +1,23 @@
+// core-switch v2 — Qube Enterprise edge data router
+//
+// Accepts DataIn from all readers via HTTP POST /v3/batch and /v3/data.
+// Routes to InfluxDB (edge buffer) and/or live forwarding (conf-agent → cloud WebSocket).
+// MQTT output has been removed in v2 — use "live" output for real-time streaming.
+//
+// Env vars:
+//   HTTP_PORT                  — Listen port [default: 8585]
+//   INFLUX_URL                 — InfluxDB URL [default: http://127.0.0.1:8086]
+//   INFLUX_DB                  — InfluxDB database [default: edgex]
+//   INFLUX_USER                — InfluxDB username [default: root]
+//   INFLUX_PASS                — InfluxDB password [default: root]
+//   CONF_AGENT_LIVE_URL        — conf-agent live relay URL [default: http://enterprise-conf-agent:8585/v3/live]
+//   ALERTS_IGNORE_INTERVAL_SEC — Seconds between repeated alerts [default: 300]
+//   SQLITE_PATH                — Optional: path to edge SQLite (loads coreswitch_settings)
+//   LOG_LEVEL                  — debug, info, warn, error [default: info]
 package main
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,9 +25,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/qube-enterprise/core-switch/configs"
-	"github.com/qube-enterprise/core-switch/http"
+	corehttp "github.com/qube-enterprise/core-switch/http"
 	"github.com/qube-enterprise/core-switch/influx"
-	"github.com/qube-enterprise/core-switch/mqtt"
 )
 
 var log *logrus.Logger
@@ -36,19 +50,15 @@ func (f *MyFormatter) Format(entry *logrus.Entry) ([]byte, error) {
 }
 
 func main() {
-
-	confFile := flag.String("configs", "configs.yml", "Configuration file for core-switch")
-	flag.Parse()
-
 	log = logrus.New()
 	log.SetReportCaller(true)
 	log.SetFormatter(&MyFormatter{})
 	log.SetOutput(os.Stdout)
 	log.Print("Starting core-switch v2")
 
-	conf := configs.LoadConfigs(log, *confFile)
+	conf := configs.LoadConfigs(log)
 
 	influx.Init(log, conf.InfluxDB)
-	mqtt.Init(log, conf.MQTT)
-	http.Init(log, conf.Http, conf.Alerts)
+
+	corehttp.Init(log, conf.Http, conf.Alerts, conf.Live)
 }

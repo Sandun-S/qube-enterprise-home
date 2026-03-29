@@ -2,7 +2,6 @@ package modbus
 
 import (
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -11,41 +10,28 @@ import (
 	modbusclient "github.com/simonvetter/modbus"
 	"github.com/sirupsen/logrus"
 
-	httppkg "github.com/qube-enterprise/modbus-reader/http"
+	"github.com/qube-enterprise/pkg/coreswitch"
 )
 
 // ModbusConfig holds Modbus connection settings.
 type ModbusConfig struct {
-	Server          string `yaml:"Server"`
-	ReadingsFile    string `yaml:"ReadingsFile"`
-	FreqSec         int    `yaml:"FreqSec"`
-	SingleReadCount int    `yaml:"SingleReadCount"`
-	SlaveID         int    `yaml:"SlaveID"`
+	Server          string // "modbus-tcp://<host>:<port>"
+	FreqSec         int
+	SingleReadCount int
+	SlaveID         int
 }
 
 // Reading represents a single register reading definition.
 type Reading struct {
 	Equipment string
 	Reading   string
-	RegType   string // "Holding" or "Input"
+	RegType   string   // "Holding" or "Input"
 	Addr      uint16
-	DataType  string // uint16, int16, uint32, int32, float32
-	Output    string
-	Table     string
-	Tags      string
+	DataType  string   // uint16, int16, uint32, int32, float32
+	Output    string   // "influxdb", "live", "influxdb,live"
+	Table     string   // InfluxDB table name
+	Tags      string   // "key=val,key2=val2"
 	Scale     float64
-}
-
-// DataIn is the core-switch data format (matches core-switch/schema.DataIn).
-type DataIn struct {
-	Table     string `json:"Table"`
-	Equipment string `json:"Equipment"`
-	Reading   string `json:"Reading"`
-	Output    string `json:"Output"`
-	Sender    string `json:"Sender"`
-	Tags      string `json:"Tags"`
-	Time      int64  `json:"Time"`
-	Value     string `json:"Value"`
 }
 
 // readGroup groups readings by equipment+regType for batch sending.
@@ -56,18 +42,20 @@ type readGroup struct {
 
 var log *logrus.Logger
 var conf *ModbusConfig
+var cs *coreswitch.Client
 var conError bool
 
 var mapRegTypeGrp  map[string][]*readGroup
 var mapRegTypeAddr map[string][]uint16
 
-// Init sets up the modbus polling engine. Mirrors production modbus-gateway logic:
-// sort readings, group by equipment+regType, dedup addresses, start timer.
-func Init(l *logrus.Logger, recs []*Reading, c *ModbusConfig) {
+// Init sets up the modbus polling engine.
+// Sorts readings, groups by equipment+regType, deduplicates addresses, starts timer.
+func Init(l *logrus.Logger, recs []*Reading, c *ModbusConfig, client *coreswitch.Client) {
 
 	log = l
 	conError = false
 	conf = c
+	cs = client
 
 	if conf.FreqSec == 0 {
 		conf.FreqSec = 5
@@ -107,7 +95,7 @@ func Init(l *logrus.Logger, recs []*Reading, c *ModbusConfig) {
 		group.readings = append(group.readings, rec)
 	}
 
-	// Dedup addresses per regType (production pattern — sorted input so adjacent dedup)
+	// Dedup addresses per regType (sorted input — adjacent dedup)
 	for rtype := range mapRegTypeAddr {
 		addrs := mapRegTypeAddr[rtype]
 		if len(addrs) == 0 {
@@ -138,12 +126,10 @@ func onTimer() {
 }
 
 // fetchData connects to the Modbus server, reads registers in blocks, and
-// sends grouped data to core-switch. Mirrors production PLC4x block-read
-// logic but uses simonvetter/modbus (pure Go, no Java deps).
+// sends grouped data to core-switch. Mirrors production PLC4x block-read logic.
 func fetchData() {
 
-	// Connect to Modbus TCP server
-	// conf.Server format: "modbus-tcp://<host>:<port>" — extract host:port
+	// Parse host:port from "modbus-tcp://<host>:<port>"
 	serverAddr := conf.Server
 	if len(serverAddr) > 13 && serverAddr[:13] == "modbus-tcp://" {
 		serverAddr = serverAddr[13:]
@@ -167,18 +153,12 @@ func fetchData() {
 	}
 	defer client.Close()
 
-	// Set slave ID
 	client.SetUnitId(uint8(conf.SlaveID))
 
-	// Connection restored
+	// Connectivity restored
 	if conError {
-		alert := &httppkg.Alert{
-			Sender:  "modbus-reader",
-			Message: fmt.Sprintf("modbus-reader - %s connectivity restored", conf.Server),
-			Type:    "Connectivity",
-			Mode:    0,
-		}
-		httppkg.SendAlert(alert)
+		cs.SendAlert("Connectivity",
+			fmt.Sprintf("modbus-reader - %s connectivity restored", conf.Server), 0)
 		conError = false
 	}
 
@@ -194,11 +174,11 @@ func fetchData() {
 			continue
 		}
 
-		regs := make(map[uint16][]uint16) // addr → raw uint16 values (1 or 2 for 32-bit)
+		regs := make(map[uint16][]uint16) // addr → raw uint16 values
 
 		startIndx := 0
 
-		// Block read loop (production pattern: read SingleReadCount at a time)
+		// Block read loop (read SingleReadCount addresses at a time)
 		for startIndx < ln {
 			count := uint16(conf.SingleReadCount)
 			startAddr := addrs[startIndx]
@@ -213,7 +193,6 @@ func fetchData() {
 			}
 
 			count = addrs[lastIndx] - startAddr + 1
-			// For 32-bit data types, we may need an extra register
 			count = adjustCountForDataTypes(startAddr, count, gLst)
 
 			log.Infof("Requesting %s... start:%d end:%d count:%d", rtype, startAddr, startAddr+count-1, count)
@@ -241,7 +220,6 @@ func fetchData() {
 				return
 			}
 
-			// Store raw values indexed by address
 			for idx := uint16(0); idx < count; idx++ {
 				regs[startAddr+idx] = []uint16{rawRegs[idx]}
 			}
@@ -253,12 +231,12 @@ func fetchData() {
 		timeval := time.Now().UnixMicro()
 
 		for _, grp := range gLst {
-			arr := make([]*DataIn, 0, len(grp.readings))
+			arr := make([]coreswitch.DataIn, 0, len(grp.readings))
 
 			for _, rec := range grp.readings {
 				val := decodeValue(rec, regs)
 
-				d := &DataIn{
+				d := coreswitch.DataIn{
 					Table:     rec.Table,
 					Equipment: rec.Equipment,
 					Reading:   rec.Reading,
@@ -273,13 +251,11 @@ func fetchData() {
 				arr = append(arr, d)
 			}
 
-			jsn, _ := json.Marshal(arr)
-			err := httppkg.POSTData(jsn)
-			if err != nil {
-				log.Errorf("Error sending data: %s", err.Error())
+			if err := cs.SendBatch(arr); err != nil {
+				log.Errorf("Error sending data to core-switch: %v", err)
+			} else {
+				log.Debugf("%d readings sent to core-switch", len(arr))
 			}
-
-			log.Debugf("%d readings sent to core-switch", len(arr))
 		}
 	}
 
@@ -354,10 +330,8 @@ func decodeValue(rec *Reading, regs map[uint16][]uint16) string {
 		floatVal = float64(raw[0])
 	}
 
-	// Apply scale
 	floatVal *= rec.Scale
 
-	// Format: if integer result, no decimal; otherwise 6 decimal places
 	if floatVal == math.Trunc(floatVal) && math.Abs(floatVal) < 1e15 {
 		return fmt.Sprintf("%.0f", floatVal)
 	}
@@ -366,11 +340,5 @@ func decodeValue(rec *Reading, regs map[uint16][]uint16) string {
 
 func sendConnAlert(msg string) {
 	conError = true
-	alert := &httppkg.Alert{
-		Sender:  "modbus-reader",
-		Message: msg,
-		Type:    "Connectivity",
-		Mode:    1,
-	}
-	httppkg.SendAlert(alert)
+	cs.SendAlert("Connectivity", msg, 1)
 }
