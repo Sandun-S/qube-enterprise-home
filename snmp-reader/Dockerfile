@@ -1,10 +1,10 @@
 FROM golang:1.22-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache git
-COPY ../pkg /pkg
-COPY go.mod go.sum* ./
+COPY pkg /pkg
+COPY snmp-reader/go.mod snmp-reader/go.sum* ./
 RUN go mod download 2>/dev/null || true
-COPY . .
+COPY snmp-reader/ .
 RUN go mod tidy
 RUN CGO_ENABLED=0 GOOS=linux go build -o snmp-reader .
 

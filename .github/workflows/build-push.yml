@@ -1,4 +1,4 @@
-name: Build and Push — Qube Enterprise
+name: Build and Push — Qube Enterprise v2
 
 on:
   push:
@@ -6,13 +6,11 @@ on:
   pull_request:
     branches: [main]
 
-# github.repository = "Sandun-S/qube-enterprise-home"
-# We lowercase it for Docker tags using ${{ env.REPO }}
 env:
   REGISTRY: ghcr.io
 
 jobs:
-  # ── Cloud API — amd64 (runs on cloud server) ────────────────────────────────
+  # ── Cloud API — amd64 (runs on cloud VM) ──────────────────────────────────
   cloud-api:
     name: cloud-api (amd64)
     runs-on: ubuntu-latest
@@ -33,7 +31,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Single repo — image name includes the service: ghcr.io/sandun-s/qube-enterprise-home/cloud-api
       - uses: docker/build-push-action@v5
         with:
           context:   ./cloud
@@ -45,8 +42,9 @@ jobs:
           cache-from: type=gha,scope=cloud-api
           cache-to:   type=gha,mode=max,scope=cloud-api
 
-  # ── ARM64 images — run on Qube devices ──────────────────────────────────────
-  arm64-images:
+  # ── ARM64 — self-contained services (no shared pkg/) ──────────────────────
+  # Build context is the service directory itself.
+  arm64-standalone:
     name: ${{ matrix.name }} (arm64)
     runs-on: ubuntu-latest
     permissions:
@@ -58,7 +56,7 @@ jobs:
         include:
           - name: conf-agent
             context: ./conf-agent
-          - name: influx-to-sql
+          - name: enterprise-influx-to-sql
             context: ./enterprise-influx-to-sql
           - name: mqtt-gateway
             context: ./mqtt-gateway
@@ -80,7 +78,6 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      # Images: ghcr.io/sandun-s/qube-enterprise-home/conf-agent:arm64.latest
       - uses: docker/build-push-action@v5
         with:
           context:   ${{ matrix.context }}
@@ -92,14 +89,68 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to:   type=gha,mode=max,scope=${{ matrix.name }}
 
-  # ── API test suite ────────────────────────────────────────────────────────────
+  # ── ARM64 reader images — require shared pkg/ ────────────────────────────
+  # Build context = repo root so "COPY pkg /pkg" in each Dockerfile resolves
+  # to the shared pkg/ module. Dockerfile path points into the service subdir.
+  arm64-readers:
+    name: ${{ matrix.name }} (arm64)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: modbus-reader
+            dockerfile: ./modbus-reader/Dockerfile
+          - name: snmp-reader
+            dockerfile: ./snmp-reader/Dockerfile
+          - name: opcua-reader
+            dockerfile: ./opcua-reader/Dockerfile
+          - name: http-reader
+            dockerfile: ./http-reader/Dockerfile
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lowercase repo name
+        run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@v3
+
+      # context: . = repo root — COPY pkg /pkg in Dockerfiles finds pkg/ correctly
+      # Each reader's Dockerfile does: COPY pkg /pkg + COPY <service-dir>/ + go build
+      - uses: docker/build-push-action@v5
+        with:
+          context:    .
+          file:       ${{ matrix.dockerfile }}
+          platforms:  linux/arm64
+          push:       ${{ github.ref == 'refs/heads/main' }}
+          tags: |
+            ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.latest
+            ghcr.io/${{ env.REPO }}/${{ matrix.name }}:arm64.${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to:   type=gha,mode=max,scope=${{ matrix.name }}
+
+  # ── API test suite ──────────────────────────────────────────────────────────
   test:
     name: API tests
     runs-on: ubuntu-latest
     needs: [cloud-api]
     services:
       postgres:
-        image: postgres:15
+        # TimescaleDB — same image used in docker-compose.dev.yml
+        image: timescale/timescaledb:latest-pg16
         env:
           POSTGRES_DB:       qubedb
           POSTGRES_USER:     qubeadmin
@@ -107,7 +158,7 @@ jobs:
         ports: ["5432:5432"]
         options: >-
           --health-cmd pg_isready
-          --health-interval 3s
+          --health-interval 5s
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
@@ -117,12 +168,27 @@ jobs:
           go-version: '1.22'
           cache-dependency-path: cloud/go.sum
 
-      - name: Run migrations
+      - name: Run management DB migrations (qubedb)
         run: |
           sudo apt-get install -y postgresql-client -qq
-          for f in cloud/migrations/*.sql; do
+          for f in cloud/migrations/001_init.sql \
+                   cloud/migrations/002_global_data.sql \
+                   cloud/migrations/003_test_seeds.sql; do
             PGPASSWORD=qubepass psql -h localhost -U qubeadmin -d qubedb -f "$f"
           done
+
+      - name: Create telemetry DB (qubedata)
+        run: |
+          # Create qubedata database
+          PGPASSWORD=qubepass psql -h localhost -U qubeadmin -d postgres \
+            -c "CREATE DATABASE qubedata;" 2>/dev/null || true
+          # Enable TimescaleDB (may fail if TS not available in CI image, graceful)
+          PGPASSWORD=qubepass psql -h localhost -U qubeadmin -d qubedata \
+            -c "CREATE EXTENSION IF NOT EXISTS timescaledb;" 2>/dev/null || true
+          # Run telemetry schema (sensor_readings table + hypertable)
+          # The migration file uses \c qubedata which is a no-op when already connected
+          PGPASSWORD=qubepass psql -h localhost -U qubeadmin -d qubedata \
+            -f cloud/migrations-telemetry/001_timescale_init.sql 2>/dev/null || true
 
       - name: Build cloud-api
         run: cd cloud && go mod tidy && CGO_ENABLED=0 go build -o /tmp/cloud-api ./cmd/server
@@ -130,21 +196,24 @@ jobs:
       - name: Start cloud-api
         run: |
           DATABASE_URL="postgres://qubeadmin:qubepass@localhost:5432/qubedb?sslmode=disable" \
-          JWT_SECRET="ci-test-secret" API_PORT=8080 TP_PORT=8081 \
+          TELEMETRY_DATABASE_URL="postgres://qubeadmin:qubepass@localhost:5432/qubedata?sslmode=disable" \
+          JWT_SECRET="dev-jwt-secret-change-in-production" \
           /tmp/cloud-api &
           sleep 5
           curl -sf http://localhost:8080/health
+          curl -sf http://localhost:8081/health
 
       - name: Run full API test suite
         run: chmod +x test/test_api.sh && ./test/test_api.sh
 
-  # ── Deploy to Azure VM ───────────────────────────────────────────────────────
+  # ── Deploy to cloud VM (opt-in) ─────────────────────────────────────────────
+  # Enable by setting Actions variable ENABLE_DEPLOY=true and secrets:
+  #   CLOUD_VM_HOST, CLOUD_VM_USER, CLOUD_VM_SSH_KEY
   deploy:
     name: Deploy to cloud VM
     runs-on: ubuntu-latest
     needs: [cloud-api, test]
-    # if: github.ref == 'refs/heads/main'
-    if: false  # enable when CLOUD_VM_HOST is set
+    if: ${{ github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true' }}
     steps:
       - name: Lowercase repo name
         run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
@@ -159,9 +228,6 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | \
               docker login ghcr.io -u ${{ github.actor }} --password-stdin
             cd /opt/qube-enterprise
-            # Update image tag in compose to use this repo's image
-            export CLOUD_IMAGE="ghcr.io/${{ env.REPO }}/cloud-api:amd64.latest"
-            sed -i "s|image: .*cloud-api.*|image: ${CLOUD_IMAGE}|" docker-compose.yml
             docker compose pull cloud-api
             docker compose up -d cloud-api
             sleep 5
