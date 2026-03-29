@@ -5,7 +5,8 @@
 Service:
   PollInterval: 60         # seconds between each transfer run
   LookbackMins: 5          # query InfluxDB for last N minutes each run
-  SensorMapPath: "/config/sensor_map.json"  # written by conf-agent from TP-API sync
+  SensorMapPath: "/config/sensor_map.json"  # JSON fallback — written by conf-agent (override via SENSOR_MAP_PATH)
+  SQLitePath: ""           # optional: path to edge SQLite DB (preferred over SensorMapPath; override via SQLITE_PATH)
   Site: "enterprise"
 
 # InfluxDB v1 — matches the existing core-switch output

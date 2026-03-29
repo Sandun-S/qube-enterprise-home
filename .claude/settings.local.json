@@ -17,7 +17,10 @@
       "Bash(go mod:*)",
       "Read(//usr/local/go/bin/**)",
       "Read(//snap/**)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(go build:*)",
+      "Bash(git:*)",
+      "Bash(find /mnt/d/Sandun/Projects/qube-enterprise-home -maxdepth 2 -type d -name *core-switch* -o -name *influx-to-sql*)"
     ]
   }
 }
