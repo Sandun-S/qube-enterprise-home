@@ -1,5 +1,0 @@
-#Table,Device,Reading,OpcNode,Type,Freq,Output,Tags
-Measurements,Pasteuriser_1,active_power_w,ns=2;points/ActivePower,float,15,influxdb,line=line1
-Measurements,Pasteuriser_1,voltage_v,ns=2;points/Voltage,float,15,influxdb,line=line1
-Measurements,Pasteuriser_1,current_a,ns=2;points/Current,float,15,influxdb,line=line1
-Measurements,Pasteuriser_1,energy_kwh,ns=2;points/Energy,float,15,influxdb,line=line1

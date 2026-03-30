@@ -79,6 +79,14 @@ curl -s -X PUT $BASE/api/v1/qubes/$QUBE_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"location_label":"Server Room A, Rack 3"}' | jq .
+
+# List all sensors across all readers for a qube
+curl -s $BASE/api/v1/qubes/$QUBE_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name,reader_id}]'
+
+# List containers deployed on a qube
+curl -s $BASE/api/v1/qubes/$QUBE_ID/containers \
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name,image,status}]'
 ```
 
 ---
@@ -143,6 +151,10 @@ MODBUS_RT_ID=$(curl -s $BASE/api/v1/reader-templates \
   -H "Authorization: Bearer $TOKEN" | \
   jq -r '.[] | select(.protocol=="modbus_tcp") | .id')
 
+# Get a single reader template
+curl -s $BASE/api/v1/reader-templates/$MODBUS_RT_ID \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
 # Superadmin: create a reader template
 curl -s -X POST $BASE/api/v1/reader-templates \
   -H "Authorization: Bearer $SA_TOKEN" \
@@ -161,6 +173,17 @@ curl -s -X POST $BASE/api/v1/reader-templates \
     },
     "env_defaults": {"LOG_LEVEL":"info"}
   }' | jq .
+RT_ID=<paste id>
+
+# Superadmin: update a reader template
+curl -s -X PUT $BASE/api/v1/reader-templates/$RT_ID \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"description":"Updated description","env_defaults":{"LOG_LEVEL":"debug"}}' | jq .
+
+# Superadmin: delete a reader template
+curl -s -X DELETE $BASE/api/v1/reader-templates/$RT_ID \
+  -H "Authorization: Bearer $SA_TOKEN" | jq .
 ```
 
 ---
@@ -171,6 +194,14 @@ curl -s -X POST $BASE/api/v1/reader-templates \
 # List device templates (org + global)
 curl -s $BASE/api/v1/device-templates \
   -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name,protocol,is_global}]'
+
+# Filter by protocol
+curl -s "$BASE/api/v1/device-templates?protocol=modbus_tcp" \
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name}]'
+
+# Get a single device template
+curl -s $BASE/api/v1/device-templates/$DT_ID \
+  -H "Authorization: Bearer $TOKEN" | jq .
 
 # Create an org-level template
 curl -s -X POST $BASE/api/v1/device-templates \
@@ -196,6 +227,44 @@ curl -s -X POST $BASE/api/v1/device-templates \
     }
   }' | jq .
 DT_ID=<paste id>
+
+# Update device template metadata
+curl -s -X PUT $BASE/api/v1/device-templates/$DT_ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"description":"Adds frequency reading"}' | jq .
+
+# Patch sensor_config — full replacement
+curl -s -X PATCH $BASE/api/v1/device-templates/$DT_ID/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sensor_config": {
+      "registers": [
+        {"name":"active_power_w","address":1294,"type":"float32","unit":"W"},
+        {"name":"voltage_v","address":1290,"type":"float32","unit":"V"},
+        {"name":"frequency_hz","address":1300,"type":"float32","unit":"Hz"}
+      ]
+    }
+  }' | jq .
+
+# Patch sensor_config — add a single entry
+curl -s -X PATCH $BASE/api/v1/device-templates/$DT_ID/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"add","entry":{"name":"current_a","address":1302,"type":"float32","unit":"A"}}' | jq .
+
+# Patch sensor_config — update entry at index 0
+curl -s -X PATCH $BASE/api/v1/device-templates/$DT_ID/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"update","index":0,"entry":{"name":"active_power_w","address":1294,"type":"float32","unit":"W","scale":0.001}}' | jq .
+
+# Patch sensor_config — delete entry at index 2
+curl -s -X PATCH $BASE/api/v1/device-templates/$DT_ID/config \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"action":"delete","index":2}' | jq .
 ```
 
 ---
@@ -230,6 +299,33 @@ curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/readers \
     \"config_json\": {\"fetch_interval_sec\":30,\"timeout_sec\":10}
   }" | jq .
 SNMP_READER_ID=<paste reader_id>
+
+# MQTT reader
+MQTT_RT_ID=$(curl -s $BASE/api/v1/reader-templates \
+  -H "Authorization: Bearer $TOKEN" | \
+  jq -r '.[] | select(.protocol=="mqtt") | .id')
+
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/readers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"MQTT Floor 2\",
+    \"protocol\": \"mqtt\",
+    \"template_id\": \"$MQTT_RT_ID\",
+    \"config_json\": {\"broker\":\"tcp://192.168.1.10:1883\",\"client_id\":\"qube-floor2\",\"poll_interval_sec\":10}
+  }" | jq .
+MQTT_READER_ID=<paste reader_id>
+
+# Get a single reader
+curl -s $BASE/api/v1/readers/$READER_ID \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# Update reader config (e.g. change poll interval)
+curl -s -X PUT $BASE/api/v1/readers/$READER_ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"config_json":{"host":"192.168.10.1","port":502,"poll_interval_sec":10}}' | jq .
+# Returns: {"updated":true,"new_hash":"..."}
 
 # List readers
 curl -s $BASE/api/v1/qubes/$QUBE_ID/readers \
@@ -283,6 +379,30 @@ curl -s -X POST $BASE/api/v1/readers/$SNMP_READER_ID/sensors \
     },
     "output": "influxdb"
   }' | jq .
+
+# MQTT sensor
+curl -s -X POST $BASE/api/v1/readers/$MQTT_READER_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Temperature Sensor Floor 2",
+    "params": {
+      "topic": "sensors/floor2/temp",
+      "json_path": "$.value"
+    },
+    "output": "influxdb,live"
+  }' | jq .
+
+# List sensors for a reader
+curl -s $BASE/api/v1/readers/$READER_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name,output}]'
+
+# Update sensor tags or output mode
+curl -s -X PUT $BASE/api/v1/sensors/$SENSOR_ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"tags_json":{"location":"MDB","phase":"3P","floor":"1"},"output":"influxdb,live"}' | jq .
+# Returns: {"updated":true,"new_hash":"..."}
 ```
 
 ---
@@ -313,10 +433,12 @@ curl -s $TPBASE/v1/sync/config \
 
 ```bash
 # Send a command (cloud → Qube)
+# Returns 202 Accepted — command is queued; delivered via WebSocket if connected, else DB queue
 curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/commands \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"command":"ping","payload":{"target":"cloud"}}' | jq .
+# Returns: {"command_id":"<uuid>","status":"pending","delivery":"websocket|queued","poll_url":"..."}
 CMD_ID=<paste command_id>
 
 # Valid commands: ping, restart_qube, restart_reader, stop_container,

@@ -1,9 +1,0 @@
-LogLevel: "Info"
-Modbus:
-  Server: "modbus-tcp://182.12.21.2:502"
-  ReadingsFile: "config.csv"
-  FreqSec: 5
-  SingleReadCount: 100
-HTTP:
-  Data: "http://core-switch:8080/v3/batch"
-  Alerts: "http://core-switch:8080/v3/alerts"

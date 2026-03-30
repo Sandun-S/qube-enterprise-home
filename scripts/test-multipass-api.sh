@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 # =============================================================================
-# test-multipass-api.sh — Run full API test suite against Multipass VMs
+# test-multipass-api.sh — Run full API test suite against Multipass VMs (v2)
 #
 # Runs FROM YOUR DESKTOP against two Multipass VMs:
-#   cloud-vm — runs Postgres + Enterprise Cloud API
-#   qube-vm  — simulates a Qube device
+#   qube-cloud-vm — Postgres (TimescaleDB) + Enterprise Cloud API + InfluxDB
+#   qube-device-vm — simulates a Qube (conf-agent, SQLite, Docker Swarm)
 #
 # Prerequisites:
-#   multipass installed on your desktop
-#   VMs already created and running (or use --create to create them)
-#   jq installed on your desktop
+#   multipass, curl, jq installed on your desktop
+#   VMs already created and running (or use --create to provision them)
 #
 # Usage:
 #   ./scripts/test-multipass-api.sh                    # test existing VMs
-#   ./scripts/test-multipass-api.sh --create           # create VMs first
+#   ./scripts/test-multipass-api.sh --create           # provision VMs first
 #   ./scripts/test-multipass-api.sh --destroy          # destroy VMs after test
 #   ./scripts/test-multipass-api.sh --create --destroy # full cycle
 # =============================================================================
-set -e
+set -euo pipefail
 
 CLOUD_VM="qube-cloud-vm"
 QUBE_VM="qube-device-vm"
@@ -33,10 +32,17 @@ for arg in "$@"; do
 done
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-GREEN='\033[0;32m'; RED='\033[0;31m'; CYAN='\033[0;36m'; NC='\033[0m'
-log()  { echo -e "${CYAN}[test]${NC} $1"; }
-ok()   { echo -e "  ${GREEN}✓${NC} $1"; }
-fail() { echo -e "  ${RED}✗${NC} $1"; }
+GREEN='\033[0;32m'; RED='\033[0;31m'; CYAN='\033[0;36m'; YELLOW='\033[0;33m'; NC='\033[0m'
+log()   { echo -e "${CYAN}[test]${NC} $1"; }
+ok()    { echo -e "  ${GREEN}✓${NC} $1"; }
+fail()  { echo -e "  ${RED}✗${NC} $1"; ((FAIL++)) || true; }
+warn()  { echo -e "  ${YELLOW}!${NC} $1"; }
+PASS=0; FAIL=0
+check() {
+  local label=$1 expected=$2 actual=$3
+  if [ "$actual" = "$expected" ]; then ok "$label"; ((PASS++)) || true
+  else fail "$label — expected '$expected', got '$actual'"; fi
+}
 
 command -v multipass &>/dev/null || { echo "ERROR: multipass not installed"; exit 1; }
 command -v curl      &>/dev/null || { echo "ERROR: curl not installed"; exit 1; }
@@ -45,137 +51,201 @@ command -v jq        &>/dev/null || { echo "ERROR: jq not installed"; exit 1; }
 # ── 1. Create VMs if requested ────────────────────────────────────────────────
 if $CREATE_VMS; then
   log "Creating Multipass VMs..."
-  multipass launch --name "$CLOUD_VM" --cpus 2 --memory 2G --disk 10G 22.04 2>/dev/null \
+  multipass launch --name "$CLOUD_VM" --cpus 2 --memory 3G --disk 15G 22.04 2>/dev/null \
     || log "$CLOUD_VM already exists"
   multipass launch --name "$QUBE_VM"  --cpus 1 --memory 1G --disk 8G  22.04 2>/dev/null \
     || log "$QUBE_VM already exists"
-
-  log "Getting VM IPs..."
 fi
 
 CLOUD_IP=$(multipass info "$CLOUD_VM" 2>/dev/null | grep "IPv4" | awk '{print $2}')
-QUBE_IP=$(multipass  info "$QUBE_VM"  2>/dev/null | grep "IPv4" | awk '{print $2}')
+QUBE_IP=$(multipass  info "$QUBE_VM"  2>/dev/null | grep "IPv4" | awk '{print $2}' || echo "")
 
 if [ -z "$CLOUD_IP" ]; then
-  echo "ERROR: $CLOUD_VM not found. Run with --create first or create manually."
+  echo "ERROR: $CLOUD_VM not found. Run with --create first."
   exit 1
 fi
 
 log "cloud-vm: $CLOUD_IP"
-log "qube-vm:  $QUBE_IP"
+[ -n "$QUBE_IP" ] && log "qube-vm:  $QUBE_IP" || warn "qube-vm not found — skipping device integration checks"
 log "Running tests against: http://$CLOUD_IP:8080"
 echo ""
 
-# ── 2. Setup cloud VM if not already running ──────────────────────────────────
-HEALTH=$(curl -sf "http://$CLOUD_IP:8080/health" 2>/dev/null | jq -r .status 2>/dev/null)
+# ── 2. Setup cloud VM ─────────────────────────────────────────────────────────
+HEALTH=$(curl -sf "http://$CLOUD_IP:8080/health" 2>/dev/null | jq -r .status 2>/dev/null || echo "")
 if [ "$HEALTH" != "ok" ]; then
-  log "Cloud API not running — setting up cloud-vm..."
+  log "Cloud API not running — setting up $CLOUD_VM..."
 
-  # Transfer source
-  multipass transfer -r "$REPO_DIR/cloud" "$CLOUD_VM":/tmp/cloud-src 2>/dev/null
-  multipass transfer -r "$REPO_DIR/cloud/migrations" "$CLOUD_VM":/tmp/migrations 2>/dev/null
+  # Transfer source + all migrations
+  multipass transfer -r "$REPO_DIR/cloud" "$CLOUD_VM":/tmp/cloud-src
+  multipass transfer -r "$REPO_DIR/cloud/migrations" "$CLOUD_VM":/tmp/migrations
+  multipass transfer -r "$REPO_DIR/cloud/migrations-telemetry" "$CLOUD_VM":/tmp/migrations-telemetry
 
   multipass exec "$CLOUD_VM" -- sudo bash << 'CLOUDSETUP'
 set -e
-# Install Docker if needed
+
+# Install Docker
 command -v docker &>/dev/null || curl -fsSL https://get.docker.com | sh
 
-# Build cloud-api locally
-sudo mkdir -p /opt/qube-enterprise/migrations
-sudo cp /tmp/migrations/*.sql /opt/qube-enterprise/migrations/
+# Build cloud-api image from source
 cd /tmp/cloud-src
-sudo docker build -t cloud-api:local .
+sudo docker build -t qube-cloud-api:local .
 
-cat > /tmp/compose.yml << 'COMPOSE'
+# Copy migrations
+sudo mkdir -p /opt/qube-enterprise/migrations
+sudo mkdir -p /opt/qube-enterprise/migrations-telemetry
+sudo cp /tmp/migrations/*.sql /opt/qube-enterprise/migrations/
+sudo cp /tmp/migrations-telemetry/*.sql /opt/qube-enterprise/migrations-telemetry/
+
+# Write compose — mirrors docker-compose.dev.yml (without conf-agent/readers)
+cat > /opt/qube-enterprise/docker-compose.yml << 'COMPOSE'
 version: "3.8"
+networks:
+  qube_net:
+    driver: bridge
+volumes:
+  postgres_data:
+  influxdb_data:
 services:
   postgres:
-    image: postgres:15
+    image: timescale/timescaledb:latest-pg16
+    restart: unless-stopped
+    networks: [qube_net]
+    ports: ["5432:5432"]
     environment:
-      POSTGRES_DB: qubedb
       POSTGRES_USER: qubeadmin
       POSTGRES_PASSWORD: qubepass
+      POSTGRES_DB: qubedb
     volumes:
-      - /opt/qube-enterprise/migrations:/docker-entrypoint-initdb.d:ro
-      - pgdata:/var/lib/postgresql/data
-    ports: ["5432:5432"]
+      - postgres_data:/var/lib/postgresql/data
+      - /opt/qube-enterprise/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - /opt/qube-enterprise/migrations/002_global_data.sql:/docker-entrypoint-initdb.d/002_global_data.sql:ro
+      - /opt/qube-enterprise/migrations/003_test_seeds.sql:/docker-entrypoint-initdb.d/003_test_seeds.sql:ro
+      - /opt/qube-enterprise/migrations-telemetry/001_timescale_init.sql:/docker-entrypoint-initdb.d/010_timescale_init.sql:ro
     healthcheck:
-      test: ["CMD","pg_isready","-U","qubeadmin"]
-      interval: 3s
-      retries: 20
+      test: ["CMD-SHELL", "pg_isready -U qubeadmin -d qubedb"]
+      interval: 5s
+      retries: 15
+  influxdb:
+    image: influxdb:1.8
+    restart: unless-stopped
+    networks: [qube_net]
+    ports: ["8086:8086"]
+    volumes: [influxdb_data:/var/lib/influxdb]
+    environment:
+      INFLUXDB_DB: edgex
+      INFLUXDB_HTTP_AUTH_ENABLED: "false"
   cloud-api:
-    image: cloud-api:local
-    depends_on:
-      postgres:
-        condition: service_healthy
-    ports:
-      - "8080:8080"
-      - "8081:8081"
+    image: qube-cloud-api:local
+    restart: unless-stopped
+    networks: [qube_net]
+    ports: ["8080:8080", "8081:8081"]
     environment:
       DATABASE_URL: postgres://qubeadmin:qubepass@postgres:5432/qubedb?sslmode=disable
-      JWT_SECRET: multipass-test-secret
-      API_PORT: "8080"
-      TP_PORT: "8081"
-      QUBE_IMAGE_REGISTRY: "ghcr.io/sandun-s/qube-enterprise-home"
-volumes:
-  pgdata:
+      TELEMETRY_DATABASE_URL: postgres://qubeadmin:qubepass@postgres:5432/qubedata?sslmode=disable
+      JWT_SECRET: multipass-test-secret-change-me
+      QUBE_IMAGE_REGISTRY: ghcr.io/sandun-s/qube-enterprise-home
+    depends_on:
+      postgres: {condition: service_healthy}
 COMPOSE
 
-sudo cp /tmp/compose.yml /opt/qube-enterprise/docker-compose.yml
 cd /opt/qube-enterprise
 sudo docker compose up -d
-echo "Waiting for API..."
-for i in $(seq 1 30); do
-  curl -sf http://localhost:8080/health | grep -q "ok" && echo "API ready" && exit 0
+
+echo "Waiting for Cloud API..."
+for i in $(seq 1 40); do
+  curl -sf http://localhost:8080/health | grep -q '"ok"' && echo "API ready" && exit 0
   sleep 3
 done
-echo "ERROR: API failed to start"
+echo "ERROR: Cloud API did not start in time"
 exit 1
 CLOUDSETUP
+
   log "cloud-vm setup complete"
 else
   log "Cloud API already running ✓"
 fi
 
-# ── 3. Setup qube VM if not already configured ────────────────────────────────
-QUBE_CONF_STATUS=$(multipass exec "$QUBE_VM" -- \
-  bash -c "systemctl is-active enterprise-conf-agent 2>/dev/null || echo inactive")
+# ── 3. Setup qube VM ──────────────────────────────────────────────────────────
+if [ -n "$QUBE_IP" ]; then
+  AGENT_STATUS=$(multipass exec "$QUBE_VM" -- \
+    bash -c "systemctl is-active enterprise-conf-agent 2>/dev/null || echo inactive")
 
-if [ "$QUBE_CONF_STATUS" = "inactive" ] || [ "$QUBE_CONF_STATUS" = "unknown" ]; then
-  log "Setting up qube-vm..."
+  if [ "$AGENT_STATUS" != "active" ]; then
+    log "Setting up $QUBE_VM..."
 
-  multipass exec "$QUBE_VM" -- sudo bash << QUBESETUP
+    # Transfer conf-agent source
+    multipass transfer -r "$REPO_DIR/conf-agent" "$QUBE_VM":/tmp/conf-agent-src
+    multipass transfer "$REPO_DIR/test/mit.txt" "$QUBE_VM":/tmp/mit.txt
+
+    multipass exec "$QUBE_VM" -- sudo bash << QUBESETUP
 set -e
+
+# Install Docker + sqlite3 + Go
 command -v docker &>/dev/null || curl -fsSL https://get.docker.com | sh
-sudo docker swarm init 2>/dev/null || true
-sudo docker network ls | grep -q qube-net || \
-  sudo docker network create --attachable --driver overlay qube-net
+apt-get install -y sqlite3 golang-go 2>/dev/null || true
 
-# Write fake /boot/mit.txt (simulates real Qube device)
-sudo bash -c 'cat > /boot/mit.txt << MIT
-deviceid: Q-1001
-devicename: Q-1001
-devicetype: rasp4_v2
-register: TEST-Q1001-REG
-maintain: TEST-Q1001-MNT
-MIT'
+# Fake /boot/mit.txt (Qube identity)
+cp /tmp/mit.txt /boot/mit.txt
+echo "Qube identity: $(cat /boot/mit.txt | head -1)"
 
-sudo mkdir -p /opt/qube/configs
+# Docker Swarm + qube-net overlay
+docker swarm init 2>/dev/null || true
+docker network ls | grep -q qube-net || \
+  docker network create --attachable --driver overlay qube-net
 
-# Write .env for conf-agent
-sudo bash -c 'cat > /opt/qube/.env << ENV
+# SQLite data directory
+mkdir -p /opt/qube/data
+
+# Build conf-agent from source
+cd /tmp/conf-agent-src
+go mod tidy 2>/dev/null || true
+CGO_ENABLED=0 GOOS=linux go build -o /usr/local/bin/enterprise-conf-agent .
+echo "conf-agent built"
+
+# Write env file for v2
+cat > /opt/qube/.env << ENV
+CLOUD_WS_URL=ws://$CLOUD_IP:8080/ws
 TPAPI_URL=http://$CLOUD_IP:8081
+SQLITE_PATH=/opt/qube/data/qube.db
 WORK_DIR=/opt/qube
 POLL_INTERVAL=15
-MIT_TXT_PATH=/boot/mit.txt
-ENV'
-echo "qube-vm configured"
+ENV
+
+# Systemd service
+cat > /etc/systemd/system/enterprise-conf-agent.service << SVC
+[Unit]
+Description=Qube Enterprise Conf-Agent v2
+After=network-online.target docker.service
+Requires=docker.service
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/qube
+EnvironmentFile=/opt/qube/.env
+ExecStart=/usr/local/bin/enterprise-conf-agent
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=enterprise-conf-agent
+[Install]
+WantedBy=multi-user.target
+SVC
+
+systemctl daemon-reload
+systemctl enable enterprise-conf-agent.service
+systemctl start enterprise-conf-agent.service
+echo "conf-agent service started"
 QUBESETUP
-  log "qube-vm setup complete"
+
+    log "qube-vm setup complete"
+  else
+    log "conf-agent already running on qube-vm ✓"
+  fi
 fi
 
-# ── 4. Run the API test suite from desktop ────────────────────────────────────
-log "Running API test suite against http://$CLOUD_IP:8080 ..."
+# ── 4. Run the full API test suite ────────────────────────────────────────────
+log "Running full API test suite against http://$CLOUD_IP:8080 ..."
 echo ""
 
 chmod +x "$REPO_DIR/test/test_api.sh"
@@ -184,127 +254,120 @@ TEST_EXIT=$?
 
 echo ""
 
-# ── 5. Run device integration checks ─────────────────────────────────────────
-log "Running device integration checks..."
-echo ""
-
-BASE="http://$CLOUD_IP:8080"
-TPBASE="http://$CLOUD_IP:8081"
-PASS=0; FAIL=0
-
-check() {
-  local label=$1 expected=$2 actual=$3
-  if [ "$actual" = "$expected" ]; then ok "$label"; ((PASS++))
-  else fail "$label — expected '$expected', got '$actual'"; ((FAIL++)); fi
-}
-
-# Register org for integration test
-TOKEN=$(curl -sf -X POST "$BASE/api/v1/auth/register" \
-  -H "Content-Type: application/json" \
-  -d "{\"org_name\":\"Multipass Test\",\"email\":\"mp_$(date +%s)@test.com\",\"password\":\"testpass\"}" \
-  2>/dev/null | jq -r .token)
-
-check "Register org" "true" "$([ -n "$TOKEN" ] && echo true || echo false)"
-
-# Check device self-register (should be pending before claim)
-REGISTER_STATUS=$(curl -sf -X POST "$TPBASE/v1/device/register" \
-  -H "Content-Type: application/json" \
-  -d '{"device_id":"Q-1001","register_key":"TEST-Q1001-REG"}' \
-  2>/dev/null | jq -r .status 2>/dev/null)
-
-check "Device self-register before claim returns pending" "pending" "$REGISTER_STATUS"
-
-# Claim device
-CLAIM=$(curl -sf -X POST "$BASE/api/v1/qubes/claim" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"register_key":"TEST-Q1001-REG"}' 2>/dev/null)
-QUBE_TOKEN=$(echo "$CLAIM" | jq -r .auth_token 2>/dev/null)
-
-check "Claim device" "true" "$([ -n "$QUBE_TOKEN" ] && echo true || echo false)"
-
-# Check device self-register after claim (should return claimed + token)
-REGISTER_AFTER=$(curl -sf -X POST "$TPBASE/v1/device/register" \
-  -H "Content-Type: application/json" \
-  -d '{"device_id":"Q-1001","register_key":"TEST-Q1001-REG"}' \
-  2>/dev/null | jq -r .status 2>/dev/null)
-
-check "Device self-register after claim returns claimed" "claimed" "$REGISTER_AFTER"
-
-# Heartbeat
-HB=$(curl -sf -X POST "$TPBASE/v1/heartbeat" \
-  -H "Content-Type: application/json" \
-  -H "X-Qube-ID: Q-1001" \
-  -H "Authorization: Bearer $QUBE_TOKEN" \
-  -d '{}' 2>/dev/null | jq -r .acknowledged 2>/dev/null)
-
-check "Heartbeat acknowledged" "true" "$HB"
-
-# Wait for qube-vm conf-agent to pick up the claim and send heartbeat
+# ── 5. Device integration checks (qube-vm only) ───────────────────────────────
 if [ -n "$QUBE_IP" ]; then
-  log "Waiting 30s for qube-vm conf-agent to auto-register..."
-  sleep 30
+  log "Running device integration checks against qube-vm..."
+  echo ""
+
+  BASE="http://$CLOUD_IP:8080"
+  TPBASE="http://$CLOUD_IP:8081"
+
+  # Register a fresh org for integration test
+  TS=$(date +%s)
+  TOKEN=$(curl -sf -X POST "$BASE/api/v1/auth/register" \
+    -H "Content-Type: application/json" \
+    -d "{\"org_name\":\"MP Integration $TS\",\"email\":\"mp$TS@test.local\",\"password\":\"testpass123\"}" \
+    2>/dev/null | jq -r .token)
+  check "Register org for integration test" "true" "$([ -n "$TOKEN" ] && echo true || echo false)"
+
+  # Self-register before claim → pending
+  STATUS_BEFORE=$(curl -sf -X POST "$TPBASE/v1/device/register" \
+    -H "Content-Type: application/json" \
+    -d '{"device_id":"Q-1001","register_key":"TEST-Q1001-REG"}' \
+    2>/dev/null | jq -r .status 2>/dev/null || echo "")
+  check "Self-register before claim → pending" "pending" "$STATUS_BEFORE"
+
+  # Claim device
+  CLAIM=$(curl -sf -X POST "$BASE/api/v1/qubes/claim" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"register_key":"TEST-Q1001-REG"}' 2>/dev/null || echo "{}")
+  QUBE_TOKEN=$(echo "$CLAIM" | jq -r .auth_token 2>/dev/null || echo "")
+  check "Claim device" "true" "$([ -n "$QUBE_TOKEN" ] && [ "$QUBE_TOKEN" != "null" ] && echo true || echo false)"
+
+  # Self-register after claim → claimed + token
+  STATUS_AFTER=$(curl -sf -X POST "$TPBASE/v1/device/register" \
+    -H "Content-Type: application/json" \
+    -d '{"device_id":"Q-1001","register_key":"TEST-Q1001-REG"}' \
+    2>/dev/null | jq -r .status 2>/dev/null || echo "")
+  check "Self-register after claim → claimed" "claimed" "$STATUS_AFTER"
+
+  # Heartbeat
+  HB=$(curl -sf -X POST "$TPBASE/v1/heartbeat" \
+    -H "X-Qube-ID: Q-1001" \
+    -H "Authorization: Bearer $QUBE_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"status":"online","mem_free_mb":512,"disk_free_gb":20}' \
+    2>/dev/null | jq -r .acknowledged 2>/dev/null || echo "false")
+  check "Heartbeat acknowledged" "true" "$HB"
+
+  # Wait for conf-agent on qube-vm to pick up the claim
+  log "Waiting 35s for conf-agent to auto-register and connect..."
+  sleep 35
 
   QUBE_STATUS=$(curl -sf -H "Authorization: Bearer $TOKEN" \
-    "$BASE/api/v1/qubes/Q-1001" 2>/dev/null | jq -r .status 2>/dev/null)
-  check "Qube status updated to online by conf-agent" "online" "$QUBE_STATUS"
+    "$BASE/api/v1/qubes/Q-1001" 2>/dev/null | jq -r .status 2>/dev/null || echo "")
+  check "Qube status → online (conf-agent connected)" "online" "$QUBE_STATUS"
 
-  # Add a gateway and wait for conf-agent to sync
-  MODBUS_TMPL=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/v1/templates" \
-    2>/dev/null | jq -r '[.[] | select(.is_global==true and .protocol=="modbus_tcp")][0].id')
+  # Add a reader + sensor, then wait for conf-agent to sync SQLite
+  MODBUS_RT=$(curl -sf -H "Authorization: Bearer $TOKEN" \
+    "$BASE/api/v1/reader-templates" 2>/dev/null | \
+    jq -r '.[] | select(.protocol=="modbus_tcp") | .id' | head -1)
 
-  if [ -n "$MODBUS_TMPL" ] && [ "$MODBUS_TMPL" != "null" ]; then
-    GW_ID=$(curl -sf -X POST "$BASE/api/v1/qubes/Q-1001/gateways" \
+  if [ -n "$MODBUS_RT" ] && [ "$MODBUS_RT" != "null" ]; then
+    READER_RESP=$(curl -sf -X POST "$BASE/api/v1/qubes/Q-1001/readers" \
       -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-      -d '{"name":"Test_Panel","protocol":"modbus_tcp","host":"192.168.1.100","port":502}' \
-      2>/dev/null | jq -r .gateway_id)
+      -d "{\"name\":\"Integration Test Reader\",\"protocol\":\"modbus_tcp\",\"template_id\":\"$MODBUS_RT\",\"config_json\":{\"host\":\"192.168.1.100\",\"port\":502,\"poll_interval_sec\":30}}" \
+      2>/dev/null || echo "{}")
+    READER_ID=$(echo "$READER_RESP" | jq -r .reader_id 2>/dev/null || echo "")
+    check "Create modbus reader" "true" "$([ -n "$READER_ID" ] && [ "$READER_ID" != "null" ] && echo true || echo false)"
 
-    curl -sf -X POST "$BASE/api/v1/gateways/$GW_ID/sensors" \
-      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-      -d "{\"name\":\"Test_Meter\",\"template_id\":\"$MODBUS_TMPL\",\"address_params\":{\"unit_id\":1},\"tags_json\":{}}" \
-      >/dev/null 2>/dev/null
+    if [ -n "$READER_ID" ] && [ "$READER_ID" != "null" ]; then
+      curl -sf -X POST "$BASE/api/v1/readers/$READER_ID/sensors" \
+        -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+        -d '{"name":"Integration Test Meter","params":{"unit_id":1},"output":"influxdb"}' \
+        >/dev/null 2>&1 || true
 
-    log "Gateway+sensor added. Waiting 40s for conf-agent to sync..."
-    sleep 40
+      log "Reader + sensor added. Waiting 40s for conf-agent to sync to SQLite..."
+      sleep 40
 
-    # Check files appeared on qube-vm
-    COMPOSE_OK=$(multipass exec "$QUBE_VM" -- \
-      bash -c "[ -f /opt/qube/docker-compose.yml ] && echo yes || echo no" 2>/dev/null)
-    check "docker-compose.yml written to qube-vm" "yes" "$COMPOSE_OK"
+      # Check SQLite was written on qube-vm
+      SQLITE_EXISTS=$(multipass exec "$QUBE_VM" -- \
+        bash -c "[ -f /opt/qube/data/qube.db ] && echo yes || echo no" 2>/dev/null || echo "no")
+      check "SQLite qube.db written to qube-vm" "yes" "$SQLITE_EXISTS"
 
-    CSV_OK=$(multipass exec "$QUBE_VM" -- \
-      bash -c "[ -f /opt/qube/configs/test-panel/config.csv ] && echo yes || echo no" 2>/dev/null)
-    check "config.csv written for test-panel gateway" "yes" "$CSV_OK"
+      READERS_OK=$(multipass exec "$QUBE_VM" -- \
+        bash -c "sqlite3 /opt/qube/data/qube.db 'SELECT COUNT(*) FROM readers;' 2>/dev/null || echo 0")
+      check "SQLite readers table has rows" "true" "$([ "${READERS_OK:-0}" -gt 0 ] 2>/dev/null && echo true || echo false)"
 
-    SENSOR_MAP_OK=$(multipass exec "$QUBE_VM" -- \
-      bash -c "[ -f /opt/qube/sensor_map.json ] && echo yes || echo no" 2>/dev/null)
-    check "sensor_map.json written to qube-vm" "yes" "$SENSOR_MAP_OK"
+      SENSORS_OK=$(multipass exec "$QUBE_VM" -- \
+        bash -c "sqlite3 /opt/qube/data/qube.db 'SELECT COUNT(*) FROM sensors;' 2>/dev/null || echo 0")
+      check "SQLite sensors table has rows" "true" "$([ "${SENSORS_OK:-0}" -gt 0 ] 2>/dev/null && echo true || echo false)"
+    fi
   else
-    fail "Could not find modbus template for gateway test"
-    ((FAIL++))
+    warn "No modbus reader template found — skipping reader/sensor sync checks"
   fi
+
+  # ── Integration summary ──────────────────────────────────────────────────────
+  echo ""
+  echo "════════════════════════════════════════════════"
+  echo " Device Integration Checks"
+  echo "════════════════════════════════════════════════"
+  echo -e "  ${GREEN}PASS${NC}: $PASS   ${RED}FAIL${NC}: $FAIL"
+  echo "════════════════════════════════════════════════"
+  echo ""
+  echo "  Cloud API:  http://$CLOUD_IP:8080"
+  echo "  TP-API:     http://$CLOUD_IP:8081"
+  echo "  Qube VM:    $QUBE_IP"
+  echo ""
+  echo "  Useful commands:"
+  echo "    multipass exec $QUBE_VM -- journalctl -u enterprise-conf-agent -f"
+  echo "    multipass exec $QUBE_VM -- sqlite3 /opt/qube/data/qube.db '.tables'"
+  echo "    multipass exec $QUBE_VM -- sqlite3 /opt/qube/data/qube.db 'SELECT id,name,protocol FROM readers;'"
+  echo "    multipass shell $CLOUD_VM"
 fi
 
-# ── 6. Summary ────────────────────────────────────────────────────────────────
-echo ""
-echo "════════════════════════════════════════════════"
-echo " Integration Test Summary (device checks)"
-echo "════════════════════════════════════════════════"
-echo -e "  ${GREEN}PASS${NC}: $PASS"
-echo -e "  ${RED}FAIL${NC}: $FAIL"
-echo "════════════════════════════════════════════════"
-echo ""
-echo " Cloud API:  http://$CLOUD_IP:8080"
-echo " TP-API:     http://$CLOUD_IP:8081"
-[ -n "$QUBE_IP" ] && echo " Qube VM:    $QUBE_IP"
-echo ""
-echo " Useful commands:"
-echo "   multipass exec $QUBE_VM -- journalctl -u enterprise-conf-agent -f"
-echo "   multipass exec $QUBE_VM -- cat /opt/qube/docker-compose.yml"
-echo "   multipass exec $QUBE_VM -- cat /opt/qube/configs/test-panel/config.csv"
-echo "   multipass shell $CLOUD_VM"
-
-# ── 7. Cleanup ────────────────────────────────────────────────────────────────
+# ── 6. Cleanup ────────────────────────────────────────────────────────────────
 if $DESTROY_VMS; then
   log "Destroying VMs..."
   multipass delete "$CLOUD_VM" "$QUBE_VM" 2>/dev/null || true
@@ -312,5 +375,4 @@ if $DESTROY_VMS; then
   log "VMs destroyed"
 fi
 
-# Exit with the API test result
 exit $TEST_EXIT

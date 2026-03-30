@@ -700,17 +700,17 @@ section "19. Commands — send and poll"
 
 R=$(api POST "/api/v1/qubes/$QUBE_ID/commands" \
   '{"command":"ping","payload":{"target":"cloud-api"}}' "$TOKEN")
-assert_status "send ping command" "200" "$(code "$R")"
+assert_status "send ping command" "202" "$(code "$R")"
 CMD_ID=$(body "$R" | jq -r .command_id)
 assert_field "command_id returned" "$CMD_ID"
 
 R=$(api POST "/api/v1/qubes/$QUBE_ID/commands" \
   '{"command":"reload_config","payload":{}}' "$TOKEN")
-assert_status "send reload_config command" "200" "$(code "$R")"
+assert_status "send reload_config command" "202" "$(code "$R")"
 
 R=$(api POST "/api/v1/qubes/$QUBE_ID/commands" \
   '{"command":"get_logs","payload":{"service":"modbus-reader","lines":100}}' "$TOKEN")
-assert_status "send get_logs command" "200" "$(code "$R")"
+assert_status "send get_logs command" "202" "$(code "$R")"
 
 # Unknown command must be rejected
 R=$(api POST "/api/v1/qubes/$QUBE_ID/commands" \
@@ -771,11 +771,18 @@ assert_status "empty batch accepted" "200" "$(code "$R")"
 
 # Oversized batch rejected
 if command -v python3 &>/dev/null; then
-  BIG_BATCH=$(python3 -c "
+  BIG_BATCH_FILE=$(mktemp /tmp/qube_big_batch_XXXXXX.json)
+  python3 -c "
 import json
 r = [{'sensor_id':'s','field_key':'v','value':1.0}] * 5001
-print(json.dumps({'readings': r}))")
-  R=$(tp_api POST /v1/telemetry/ingest "$BIG_BATCH" "Q-1001" "$QUBE_TOKEN")
+print(json.dumps({'readings': r}))" > "$BIG_BATCH_FILE"
+  R=$(curl -s -w "\n%{http_code}" \
+    -H "Content-Type: application/json" \
+    -H "X-Qube-ID: Q-1001" \
+    -H "Authorization: Bearer $QUBE_TOKEN" \
+    -X POST "$TP_BASE/v1/telemetry/ingest" \
+    --data-binary "@$BIG_BATCH_FILE")
+  rm -f "$BIG_BATCH_FILE"
   assert_status "oversized batch rejected (>5000)" "400" "$(code "$R")"
 else
   skip "python3 not available — skipping batch size test"

@@ -254,51 +254,67 @@ func patchDeviceTemplateConfigHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
-		var req struct {
-			Action string `json:"action"` // "add", "update", "delete"
-			Index  int    `json:"index"`
-			Entry  any    `json:"entry"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		var rawReq map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&rawReq); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
 			return
 		}
 
-		arrayKey := protocolArrayKey(protocol)
+		var newCfg []byte
+		var totalEntries int
 
-		var cfg map[string]any
-		json.Unmarshal(cfgRaw, &cfg)
-		if cfg == nil {
-			cfg = map[string]any{}
-		}
+		if sc, ok := rawReq["sensor_config"]; ok {
+			// Full sensor_config replacement
+			newCfg, _ = json.Marshal(sc)
+			if arr, ok2 := sc.(map[string]any)[protocolArrayKey(protocol)].([]any); ok2 {
+				totalEntries = len(arr)
+			}
+		} else {
+			// Fine-grained action: add / update / delete
+			action, _ := rawReq["action"].(string)
+			index := 0
+			if v, ok2 := rawReq["index"].(float64); ok2 {
+				index = int(v)
+			}
+			entry := rawReq["entry"]
 
-		arr, _ := cfg[arrayKey].([]any)
-		if arr == nil {
-			arr = []any{}
-		}
+			arrayKey := protocolArrayKey(protocol)
 
-		switch req.Action {
-		case "add":
-			arr = append(arr, req.Entry)
-		case "update":
-			if req.Index < 0 || req.Index >= len(arr) {
-				writeError(w, http.StatusBadRequest, "index out of range")
+			var cfg map[string]any
+			json.Unmarshal(cfgRaw, &cfg)
+			if cfg == nil {
+				cfg = map[string]any{}
+			}
+
+			arr, _ := cfg[arrayKey].([]any)
+			if arr == nil {
+				arr = []any{}
+			}
+
+			switch action {
+			case "add":
+				arr = append(arr, entry)
+			case "update":
+				if index < 0 || index >= len(arr) {
+					writeError(w, http.StatusBadRequest, "index out of range")
+					return
+				}
+				arr[index] = entry
+			case "delete":
+				if index < 0 || index >= len(arr) {
+					writeError(w, http.StatusBadRequest, "index out of range")
+					return
+				}
+				arr = append(arr[:index], arr[index+1:]...)
+			default:
+				writeError(w, http.StatusBadRequest, "action must be add, update, or delete")
 				return
 			}
-			arr[req.Index] = req.Entry
-		case "delete":
-			if req.Index < 0 || req.Index >= len(arr) {
-				writeError(w, http.StatusBadRequest, "index out of range")
-				return
-			}
-			arr = append(arr[:req.Index], arr[req.Index+1:]...)
-		default:
-			writeError(w, http.StatusBadRequest, "action must be add, update, or delete")
-			return
-		}
 
-		cfg[arrayKey] = arr
-		newCfg, _ := json.Marshal(cfg)
+			cfg[arrayKey] = arr
+			newCfg, _ = json.Marshal(cfg)
+			totalEntries = len(arr)
+		}
 
 		_, err = pool.Exec(context.Background(),
 			`UPDATE device_templates SET sensor_config=$1, version=version+1 WHERE id=$2`,
@@ -312,8 +328,7 @@ func patchDeviceTemplateConfigHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		json.Unmarshal(newCfg, &result)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"updated":       true,
-			"action":        req.Action,
-			"total_entries": len(arr),
+			"total_entries": totalEntries,
 			"sensor_config": result,
 		})
 	}
@@ -344,8 +359,10 @@ func deleteDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		_, err = pool.Exec(context.Background(),
-			`DELETE FROM device_templates WHERE id=$1`, tmplID)
+		ctx := context.Background()
+		// Detach sensors before deleting (FK: sensors.template_id → device_templates.id)
+		pool.Exec(ctx, `UPDATE sensors SET template_id=NULL WHERE template_id=$1`, tmplID)
+		_, err = pool.Exec(ctx, `DELETE FROM device_templates WHERE id=$1`, tmplID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "delete failed")
 			return

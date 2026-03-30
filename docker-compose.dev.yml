@@ -25,7 +25,7 @@ networks:
 volumes:
   postgres_data:
   influxdb_data:
-  qube_data:       # Shared SQLite volume (replaces CSV files)
+  # qube_data is a bind mount — see ./qube_workdir/data/ on the host
 
 services:
 
@@ -89,7 +89,7 @@ services:
     networks: [qube_dev]
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - qube_data:/opt/qube/data               # SQLite shared volume
+      - ./qube_workdir/data:/opt/qube/data      # SQLite — visible on host
       - ./test/mit.txt:/boot/mit.txt:ro
     environment:
       CLOUD_WS_URL: ws://cloud-api:8080/ws      # WebSocket primary
@@ -107,7 +107,7 @@ services:
     restart: unless-stopped
     networks: [qube_dev]
     volumes:
-      - qube_data:/opt/qube/data:ro             # SQLite read-only
+      - ./qube_workdir/data:/opt/qube/data:ro   # SQLite read-only
     environment:
       SQLITE_PATH: /opt/qube/data/qube.db
       TPAPI_URL: http://cloud-api:8081

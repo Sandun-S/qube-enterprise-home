@@ -1,9 +1,0 @@
-loglevel: "info"
-modbus:
-  server: "tcp://192.168.1.100:502"
-  readingsfile: "config.csv"
-  freqsec: 20
-  singlereadcount: 120
-http:
-  data: "http://core-switch:8585/batch"
-  alerts: "http://core-switch:8585/alerts"

@@ -1,0 +1,12 @@
+# SQLite dev data (bind-mounted from docker-compose.dev.yml)
+qube_workdir/data/
+
+# Go binaries
+cloud/cloud-api
+conf-agent/conf-agent
+enterprise-influx-to-sql/enterprise-influx-to-sql
+modbus-reader/modbus-reader
+snmp-reader/snmp-reader
+mqtt-reader/mqtt-reader
+opcua-reader/opcua-reader
+http-reader/http-reader
