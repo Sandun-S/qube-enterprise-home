@@ -228,6 +228,35 @@ Users select this template when adding a sensor — the `sensor_config` is merge
 
 ---
 
+## One optional code change — PATCH sensor_config support
+
+The `PATCH /api/v1/device-templates/{id}/config` endpoint supports fine-grained
+add/update/delete actions on individual entries in `sensor_config`. It uses
+`protocolArrayKey()` in `cloud/internal/api/templates.go` to find the right array
+key for the protocol.
+
+If you want the action-based mode to work for your new protocol, add a case:
+
+```go
+// cloud/internal/api/templates.go
+func protocolArrayKey(protocol string) string {
+    switch protocol {
+    case "modbus_tcp": return "registers"
+    case "opcua":      return "nodes"
+    case "snmp":       return "oids"
+    case "mqtt":       return "json_paths"
+    case "http":       return "json_paths"
+    case "lorawan":    return "readings"   // ← add your protocol here
+    default:           return "entries"
+    }
+}
+```
+
+If you skip this, the full-replacement mode (`{"sensor_config": {...}}`) still works
+for any protocol — only the action-based mode falls back to `"entries"` as the key.
+
+---
+
 ## No code changes required for
 
 - Protocol dropdown in UI

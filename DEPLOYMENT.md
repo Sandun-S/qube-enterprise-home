@@ -83,7 +83,7 @@ export ENTERPRISE_DB_NAME=qubedb
 ./scripts/write-to-database.sh Q-1001 R4KY-ZTQ5-XXXX KC3L-T7XT-YYYY
 ```
 
-This writes `/boot/mit.txt` on the device and inserts a row in `qubes`.
+This inserts a row in `qubes` so the device is ready to be claimed. `/boot/mit.txt` is written to the device separately during the flash process by `local.sh`.
 
 ---
 

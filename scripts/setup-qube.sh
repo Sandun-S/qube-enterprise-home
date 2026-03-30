@@ -21,8 +21,10 @@ done
 [ -z "$CLOUD_IP" ] && { echo "Usage: ./setup-qube.sh --cloud-ip <ip>"; exit 1; }
 
 TPAPI_URL="http://$CLOUD_IP:8081"
-echo "== Qube Enterprise Agent Setup =="
-echo "   TP-API: $TPAPI_URL"
+CLOUD_WS_URL="ws://$CLOUD_IP:8080/ws"
+echo "== Qube Enterprise v2 Agent Setup =="
+echo "   TP-API:     $TPAPI_URL"
+echo "   WebSocket:  $CLOUD_WS_URL"
 
 # Read /boot/mit.txt if present (real Qube)
 QUBE_ID=""; REGISTER_KEY=""
@@ -33,14 +35,15 @@ if [ -f /boot/mit.txt ]; then
 fi
 
 # Create directories
-mkdir -p "$WORK_DIR/configs"
+mkdir -p "$WORK_DIR/data"
 
 # Write .env
 cat > "$WORK_DIR/.env" << ENV
+CLOUD_WS_URL=$CLOUD_WS_URL
 TPAPI_URL=$TPAPI_URL
+SQLITE_PATH=$WORK_DIR/data/qube.db
 WORK_DIR=$WORK_DIR
 POLL_INTERVAL=$POLL_INTERVAL
-MIT_TXT_PATH=/boot/mit.txt
 ENV
 
 # Docker (skip if already installed)

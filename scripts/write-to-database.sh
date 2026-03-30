@@ -50,7 +50,7 @@ EDBNAME="${ENTERPRISE_DB_NAME:-qubedb}"
 echo "------------------------------------------- inserting device into Enterprise Postgres"
 PGPASSWORD=$EPASS psql -h ${EHOST%:*} -p ${EHOST#*:} -U $EUSER -d $EDBNAME \
   -c "INSERT INTO qubes (id, register_key, maintain_key, device_type, status)
-      VALUES ('$DHOST', '$REG', '$MNTN', 'arm64', 'unclaimed')
+      VALUES ('$DHOST', '$REG', '$MNTN', 'arm64', 'pending')
       ON CONFLICT (id) DO NOTHING;" 2>&1 \
   && echo "Enterprise DB: device registered" \
   || echo "Enterprise DB: insert failed (check ENTERPRISE_DB_HOST)"

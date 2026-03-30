@@ -82,12 +82,13 @@ cp /mit-ro/network/enterprise-conf-agent /usr/local/bin/enterprise-conf-agent
 chmod +x /usr/local/bin/enterprise-conf-agent
 
 # ----------------------------------------------- Enterprise conf-agent config
-mkdir -p /opt/qube
+mkdir -p /opt/qube/data
 cat > /opt/qube/.env << ENV
+CLOUD_WS_URL=ws://REPLACE_WITH_CLOUD_IP:8080/ws
 TPAPI_URL=http://REPLACE_WITH_CLOUD_IP:8081
+SQLITE_PATH=/opt/qube/data/qube.db
 WORK_DIR=/opt/qube
 POLL_INTERVAL=30
-MIT_TXT_PATH=/boot/mit.txt
 ENV
 
 # ----------------------------------------------- Enterprise conf-agent service
