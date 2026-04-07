@@ -76,8 +76,12 @@ func WriteConfig(db *sql.DB, sc *tpapi.SyncConfig) error {
 	// Write readers + sensors
 	for _, rd := range sc.Readers {
 		cfgJSON, _ := json.Marshal(rd.ConfigJSON)
+		status := rd.Status
+		if status == "" {
+			status = "active"
+		}
 		tx.Exec(`INSERT INTO readers (id, name, protocol, config_json, status) VALUES (?, ?, ?, ?, ?)`,
-			rd.ID, rd.Name, rd.Protocol, string(cfgJSON), rd.Status)
+			rd.ID, rd.Name, rd.Protocol, string(cfgJSON), status)
 
 		for _, s := range rd.Sensors {
 			sCfgJSON, _ := json.Marshal(s.ConfigJSON)

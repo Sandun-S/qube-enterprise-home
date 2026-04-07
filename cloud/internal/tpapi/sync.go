@@ -117,11 +117,12 @@ func heartbeatHandler(pool *pgxpool.Pool) http.HandlerFunc {
 // ─── Data loaders ────────────────────────────────────────────────────────────
 
 type readerConfig struct {
-	ID       string           `json:"id"`
-	Name     string           `json:"name"`
-	Protocol string           `json:"protocol"`
-	Config   any              `json:"config_json"`
-	Sensors  []sensorConfig   `json:"sensors"`
+	ID       string         `json:"id"`
+	Name     string         `json:"name"`
+	Protocol string         `json:"protocol"`
+	Status   string         `json:"status"`
+	Config   any            `json:"config_json"`
+	Sensors  []sensorConfig `json:"sensors"`
 }
 
 type sensorConfig struct {
@@ -144,7 +145,7 @@ type containerConfig struct {
 
 func loadReadersForQube(ctx context.Context, pool *pgxpool.Pool, qubeID string) ([]readerConfig, error) {
 	rows, err := pool.Query(ctx,
-		`SELECT rd.id, rd.name, rd.protocol, rd.config_json
+		`SELECT rd.id, rd.name, rd.protocol, rd.status, rd.config_json
 		 FROM readers rd
 		 WHERE rd.qube_id=$1 AND rd.status='active'
 		 ORDER BY rd.created_at ASC`, qubeID)
@@ -157,7 +158,7 @@ func loadReadersForQube(ctx context.Context, pool *pgxpool.Pool, qubeID string) 
 	for rows.Next() {
 		var rd readerConfig
 		var cfgRaw []byte
-		if err := rows.Scan(&rd.ID, &rd.Name, &rd.Protocol, &cfgRaw); err != nil {
+		if err := rows.Scan(&rd.ID, &rd.Name, &rd.Protocol, &rd.Status, &cfgRaw); err != nil {
 			continue
 		}
 		json.Unmarshal(cfgRaw, &rd.Config)
