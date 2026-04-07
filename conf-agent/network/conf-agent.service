@@ -1,0 +1,13 @@
+[Unit]
+Description=Configuration Agent Services
+After=network.target network-online.target
+
+[Service]
+Type=simple
+ExecStart=/mit-ro/conf-agent -dir="/mit-ro" 
+#StandardOutput=file:/var/log/conf-agent.log
+#StandardError=file:/var/log/conf-agent.log
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,19 @@
+*filter
+:INPUT DROP [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:DOCKER-USER - [0:0]
+
+# allow return packets of locally initiated connections
+-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+-A INPUT -p vrrp -j ACCEPT
+-A INPUT -i lo -j ACCEPT
+-A INPUT -i docker0 -j ACCEPT
+-A INPUT -i docker_gwbridge -j ACCEPT
+
+# all trusted IPs and ports will go in the DOCKER-USER chain.
+-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER -i lo -j RETURN
+-A DOCKER-USER -i docker0 -j RETURN
+-A DOCKER-USER -i docker_gwbridge -j RETURN
+

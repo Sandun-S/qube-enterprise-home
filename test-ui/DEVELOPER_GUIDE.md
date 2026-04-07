@@ -1617,7 +1617,21 @@ ws.onerror = (e) => console.error('WS error:', e);
 
 ## 11. Commands API Guide
 
-Commands let you remotely control Qubes and their containers.
+Commands let you remotely control Qubes, their containers, network, filesystem, and device settings.
+The enterprise conf-agent handles all command types — enterprise container commands and the full
+legacy device management command set (network config, firewall, backup, maintenance mode, etc.).
+
+### How it works
+
+```
+POST /api/v1/qubes/:id/commands
+  → inserts into qube_commands table
+  → if Qube WebSocket connected: pushed immediately via WS "command" message
+  → if offline: stays in queue, conf-agent picks it up on next /v1/commands/poll cycle
+  → conf-agent executes command (script or Go logic)
+  → conf-agent POSTs result to /v1/commands/:id/ack
+  → GET /api/v1/commands/:id shows final status + result
+```
 
 ### Send a command
 
@@ -1628,68 +1642,180 @@ Content-Type: application/json
 
 {
   "command": "ping",
-  "payload": {}
+  "payload": {"target": "8.8.8.8"}
 }
 ```
 
-**Response:**
+**Response `202 Accepted`:**
 ```json
 {
   "command_id": "cmd-xyz",
-  "delivered_via": "websocket",
-  "message": "Command delivered via WebSocket."
+  "status": "pending",
+  "delivery": "websocket",
+  "poll_url": "/api/v1/commands/cmd-xyz"
 }
 ```
 
-`delivered_via` is either:
-- `"websocket"` — command was pushed immediately to the Qube's live connection
-- `"queue"` — Qube is offline; command is queued for next poll
+`delivery` is either:
+- `"websocket"` — command was pushed immediately to the Qube's live WS connection
+- `"queued"` — Qube is offline; command queued for next HTTP poll cycle
 
-### Available commands
+### Check command status
 
 ```http
-// ping — test connectivity
-{"command": "ping", "payload": {}}
-
-// restart_qube — reboot the device OS (use carefully)
-{"command": "restart_qube", "payload": {}}
-
-// restart_reader — restart a specific reader container
-{"command": "restart_reader", "payload": {"reader_id": "rd-111"}}
-
-// stop_container — stop a named Docker service
-{"command": "stop_container", "payload": {"container_name": "rack-panel-a"}}
-
-// reload_config — force conf-agent to re-fetch config from TP-API
-{"command": "reload_config", "payload": {}}
-
-// get_logs — retrieve last N lines of a container's logs
-{"command": "get_logs", "payload": {"container": "rack-panel-a", "lines": 100}}
-
-// list_containers — list all running Docker services
-{"command": "list_containers", "payload": {}}
-
-// update_sqlite — force SQLite schema migration
-{"command": "update_sqlite", "payload": {}}
+GET /api/v1/commands/cmd-xyz
+Authorization: Bearer <token>
 ```
 
-### View command history
+```json
+{
+  "id": "cmd-xyz",
+  "qube_id": "Q-1001",
+  "command": "ping",
+  "status": "executed",
+  "result": {"output": "PING 8.8.8.8...", "latency_ms": 12.3, "target": "8.8.8.8"},
+  "created_at": "2026-04-07T08:30:00Z",
+  "executed_at": "2026-04-07T08:30:02Z"
+}
+```
 
-Commands are returned in `GET /api/v1/qubes/{id}` as `recent_commands`.
-Poll this endpoint to see command acknowledgements:
+`status` values: `pending` → `sent` → `executed` | `failed` | `timeout`
+
+---
+
+### Command Reference
+
+#### Enterprise — containers & config
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `ping` | `{"target":"8.8.8.8"}` | Returns latency_ms in result |
+| `restart_qube` | `{}` | Reboots device OS. Also accepted as `reboot`. |
+| `shutdown` | `{}` | Safely shuts down device |
+| `restart_reader` | `{"reader_id":"<uuid>"}` or `{"service":"name"}` | Restarts one reader container |
+| `stop_container` | `{"service":"qube_name"}` | Stops any Docker service |
+| `reload_config` | `{}` | Clears local hash → forces resync on next cycle |
+| `update_sqlite` | `{}` | Alias for reload_config |
+| `get_logs` | `{"service":"name","lines":100}` | Omit service for all compose logs |
+| `list_containers` | `{}` | Returns running container names + status |
+
+#### Device management — network
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `reset_ips` | `{}` | Resets all interfaces to DHCP, reconnects to qube-net WiFi |
+| `set_eth` DHCP | `{"interface":"eth0","mode":"auto"}` | |
+| `set_eth` static | `{"interface":"eth0","mode":"static","address":"192.168.1.10/24","gateway":"192.168.1.1","dns":"8.8.8.8"}` | |
+| `set_wifi` DHCP | `{"interface":"wlan0","mode":"auto","ssid":"MyWifi","password":"secret","key_mgmt":"psk"}` | key_mgmt: psk, sae, eap, none |
+| `set_wifi` static | `{"interface":"wlan0","mode":"static","address":"192.168.1.20/24","gateway":"192.168.1.1","dns":"8.8.8.8","ssid":"MyWifi","password":"secret","key_mgmt":"psk"}` | |
+| `set_firewall` | `{"rules":"tcp:10.0.0.0/8:1883,tcp:0:8080"}` | Format: `proto:net-or-0:port-or-0`, comma-separated |
+
+#### Device management — identity & info
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `get_info` | `{}` | Returns eth_mac, eth_ipv4, wlan_mac, wlan_ipv4, wlan_ssid, open_ports |
+| `set_name` | `{"name":"qube-factory-a"}` | Updates avahi hostname + /boot/mit.txt devicename |
+| `set_timezone` | `{"timezone":"Asia/Colombo"}` | Use IANA tz names; reboot recommended after |
+
+#### Data backup / restore
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `backup_data` | `{"type":"cifs","path":"\\\\192.168.1.1\\share","user":"u","pass":"p"}` | rsync /data to CIFS share |
+| `backup_data` | `{"type":"nfs","path":"192.168.1.1:/nfs-share"}` | rsync /data to NFS share |
+| `restore_data` | same as backup_data | rsync from share to /data |
+
+#### Maintenance mode operations
+
+These cause the device to reboot into maintenance mode, perform the operation,
+then reboot back. The device will be **offline for several minutes**.
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `repair_fs` | `{}` | e2fsck on /data and firmware partitions |
+| `backup_image` | `{}` | dd block-level image → backup partition |
+| `restore_image` | `{}` | dd block-level restore from backup partition |
+
+#### Service management
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `service_add` | `{"name":"svc","type":"modbus","version":"1.2.3","ports":"8090"}` | Installs from pre-staged /mit/qube/install/ package |
+| `service_rm` | `{"name":"svc"}` | Stops and removes Docker service + config |
+| `service_edit` | `{"name":"svc","ports":"8090,8091"}` | Updates config files and/or ports |
+
+#### File transfer
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `put_file` | `{"path":"/config/myfile.cfg","data":"<base64>"}` | Writes to /mit + path on device |
+| `get_file` | `{"path":"/config/myfile.cfg"}` | Returns `{"data":"<base64>","size":N}` |
+
+Path must not contain `..`, `$`, `\`, or `;`.
+
+---
+
+### UI implementation — send command
 
 ```js
-// Poll for ack status
-async function waitForCommandAck(qubeId, commandId, timeout = 30000) {
-    const start = Date.now();
-    while (Date.now() - start < timeout) {
-        const qube = await api.get(`/api/v1/qubes/${qubeId}`);
-        const cmd = qube.recent_commands?.find(c => c.id === commandId);
-        if (cmd?.status === 'acked') return cmd;
-        await sleep(2000);
-    }
-    throw new Error('Command timed out');
+async function sendCommand(qubeId, command, payload = {}) {
+  const res = await api.post(`/api/v1/qubes/${qubeId}/commands`, { command, payload });
+  // res.command_id, res.delivery, res.status
+  return res;
 }
+
+// Poll for result
+async function waitForResult(commandId, timeoutMs = 60000) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    const cmd = await api.get(`/api/v1/commands/${commandId}`);
+    if (cmd.status === 'executed' || cmd.status === 'failed') return cmd;
+    await sleep(2000);
+  }
+  throw new Error('Command timed out');
+}
+```
+
+### Dynamic payload forms by command type
+
+```js
+const commandPayloadFields = {
+  ping:            [{ key: 'target', type: 'text', default: '8.8.8.8', label: 'Target Host' }],
+  restart_reader:  [{ key: 'reader_id', type: 'text', label: 'Reader ID' }],
+  stop_container:  [{ key: 'service', type: 'text', label: 'Service Name' }],
+  get_logs:        [{ key: 'service', type: 'text', label: 'Service (blank=all)' },
+                   { key: 'lines', type: 'number', default: 100, label: 'Lines' }],
+  set_eth:         [{ key: 'interface', type: 'text', default: 'eth0' },
+                   { key: 'mode', type: 'select', options: ['auto','static'] },
+                   { key: 'address', type: 'text', label: 'IP/Prefix (static only)', conditional: 'mode=static' },
+                   { key: 'gateway', type: 'text', conditional: 'mode=static' },
+                   { key: 'dns', type: 'text', conditional: 'mode=static' }],
+  set_wifi:        [{ key: 'interface', type: 'text', default: 'wlan0' },
+                   { key: 'mode', type: 'select', options: ['auto','static'] },
+                   { key: 'ssid', type: 'text' }, { key: 'password', type: 'password' },
+                   { key: 'key_mgmt', type: 'select', options: ['psk','sae','eap','none'], default: 'psk' },
+                   { key: 'address', type: 'text', conditional: 'mode=static' },
+                   { key: 'gateway', type: 'text', conditional: 'mode=static' },
+                   { key: 'dns', type: 'text', conditional: 'mode=static' }],
+  set_firewall:    [{ key: 'rules', type: 'text', label: 'Rules (proto:net:port, comma-sep)', placeholder: 'tcp:10.0.0.0/8:1883,tcp:0:8080' }],
+  set_name:        [{ key: 'name', type: 'text', label: 'New Hostname' }],
+  set_timezone:    [{ key: 'timezone', type: 'text', label: 'Timezone', placeholder: 'Asia/Colombo' }],
+  backup_data:     [{ key: 'type', type: 'select', options: ['cifs','nfs'] },
+                   { key: 'path', type: 'text' }, { key: 'user', type: 'text', conditional: 'type=cifs' },
+                   { key: 'pass', type: 'password', conditional: 'type=cifs' }],
+  restore_data:    'same as backup_data',
+  service_add:     [{ key: 'name', type: 'text' }, { key: 'type', type: 'text' },
+                   { key: 'version', type: 'text' }, { key: 'ports', type: 'text', label: 'Ports (comma-sep)' }],
+  service_rm:      [{ key: 'name', type: 'text' }],
+  service_edit:    [{ key: 'name', type: 'text' }, { key: 'ports', type: 'text' }],
+  put_file:        [{ key: 'path', type: 'text', label: 'Device path (e.g. /config/file.cfg)' },
+                   { key: 'data', type: 'file', label: 'File (base64 encoded on upload)' }],
+  get_file:        [{ key: 'path', type: 'text', label: 'Device path' }],
+  // no payload needed:
+  restart_qube: [], reboot: [], shutdown: [], reload_config: [], update_sqlite: [],
+  list_containers: [], reset_ips: [], get_info: [], repair_fs: [], backup_image: [], restore_image: [],
+};
 ```
 
 ---

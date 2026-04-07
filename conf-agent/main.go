@@ -1,106 +1,150 @@
 // conf-agent v2 — Qube Enterprise Edge Agent
 //
-// Primary: WebSocket connection to cloud (real-time config push + commands)
-// Fallback: HTTP polling to TP-API (when WS disconnected)
+// Combines the original conf-agent-master local HTTP server (web UI, maintenance,
+// device controls) with the enterprise cloud sync stack (WebSocket config push,
+// TP-API HTTP polling fallback, SQLite config store, Docker Swarm deploy).
 //
 // Startup flow:
-//  1. Read /boot/mit.txt → get device_id + register_key
-//  2. If QUBE_TOKEN not set → call /v1/device/register (HTTP polling)
-//  3. Connect WebSocket to cloud (ws://<cloud>:8080/ws?qube_id=X&token=Y)
-//  4. On WS: receive config_push + commands in real-time
-//  5. Fallback: poll TP-API every 30s if WebSocket is disconnected
-//  6. Config stored in SQLite at SQLITE_PATH (shared with reader containers)
+//  1. Read config.yml + env var overrides
+//  2. Read /boot/mit.txt → device_id, register_key, maintain_key
+//  3. Start local HTTP management server (web UI on :Port)
+//  4. Wait for TP-API to be reachable
+//  5. Self-register if QUBE_TOKEN not set → get auth token
+//  6. Initialize SQLite database
+//  7. Start enterprise agent: WebSocket (primary) + HTTP polling (fallback)
 //
-// Env vars:
+// Config sources (in priority order):
+//   env vars > config.yml > built-in defaults
 //
-//	CLOUD_WS_URL   — WebSocket URL [default: ws://localhost:8080/ws]
-//	TPAPI_URL      — TP-API base URL [default: http://localhost:8081]
-//	QUBE_ID        — Qube ID (overrides mit.txt)
-//	QUBE_TOKEN     — Auth token (auto-obtained via self-registration)
-//	REGISTER_KEY   — Registration key (overrides mit.txt)
-//	SQLITE_PATH    — SQLite path [default: /opt/qube/data/qube.db]
+// Key env vars:
+//
+//	CLOUD_WS_URL   — WebSocket URL     [default: ws://localhost:8080/ws]
+//	TPAPI_URL      — TP-API base URL   [default: http://localhost:8081]
+//	QUBE_ID        — Qube ID           (overrides mit.txt)
+//	QUBE_TOKEN     — Auth token        (auto-obtained via self-registration)
+//	REGISTER_KEY   — Registration key  (overrides mit.txt)
+//	SQLITE_PATH    — SQLite path       [default: /opt/qube/data/qube.db]
 //	WORK_DIR       — Working directory [default: /opt/qube]
-//	POLL_INTERVAL  — Poll interval in seconds [default: 30]
-//	MIT_TXT_PATH   — Device identity file [default: /boot/mit.txt]
+//	POLL_INTERVAL  — Poll interval (s) [default: 30]
+//	MIT_TXT_PATH   — Device identity   [default: /boot/mit.txt]
 package main
 
 import (
 	"database/sql"
+	"flag"
 	"log"
 	"os"
+	"path"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"time"
 
 	_ "modernc.org/sqlite"
 
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/agent"
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/configs"
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/sqlite"
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/tpapi"
+	"conf-agent/agent"
+	"conf-agent/configs"
+	"conf-agent/http"
+	"conf-agent/sqlite"
+	"conf-agent/tpapi"
+
+	"github.com/sirupsen/logrus"
 )
 
+var logger *logrus.Logger
+
+// ============================================================================
 func main() {
-	cfg := configs.LoadConfig()
+	confFile := flag.String("config", "config.yml", "Configuration file for conf-agent")
+	folder := flag.String("dir", ".", "Directory the service should run from")
+	flag.Parse()
 
-	// ── Step 1: Read /boot/mit.txt ────────────────────────────────────────────
-	mit, err := configs.ReadMitTxt(cfg.MitTxtPath)
+	// ── Initialize logrus (same setup as v1 conf-agent-master) ───────────────
+	logger = logrus.New()
+	logger.Formatter = new(logrus.TextFormatter)
+	logger.Formatter.(*logrus.TextFormatter).FullTimestamp = true
+	logger.Formatter.(*logrus.TextFormatter).CallerPrettyfier = func(frame *runtime.Frame) (function string, file string) {
+		fileName := path.Base(frame.File) + ":" + strconv.Itoa(frame.Line)
+		return function, fileName
+	}
+	logger.SetReportCaller(true)
+	logger.Print("[main] Starting conf-agent v2 in folder ", *folder)
+
+	os.Chdir(*folder)
+
+	// ── Step 1: Load configuration ────────────────────────────────────────────
+	conf := configs.LoadConfigs(logger, *confFile)
+
+	// ── Step 2: Read device identity from /boot/mit.txt ──────────────────────
+	var mit *configs.MitTxt
+	mit, err := configs.ReadMitTxt(conf.MitTxtPath)
 	if err != nil {
-		log.Printf("[agent] Could not read %s: %v", cfg.MitTxtPath, err)
-		log.Printf("[agent] Falling back to env vars (QUBE_ID, REGISTER_KEY)")
+		logger.Warnf("[main] Could not read %s: %v — using env vars", conf.MitTxtPath, err)
 	} else {
-		log.Printf("[agent] Device identity from mit.txt: id=%s reg=%s type=%s",
-			mit.DeviceID, mit.RegisterKey, mit.DeviceType)
-		if cfg.QubeID == "" {
-			cfg.QubeID = mit.DeviceID
+		logger.Infof("[main] Device identity: id=%s name=%s type=%s",
+			mit.DeviceID, mit.DeviceName, mit.DeviceType)
+		if conf.QubeID == "" {
+			conf.QubeID = mit.DeviceID
 		}
-		if cfg.RegisterKey == "" {
-			cfg.RegisterKey = mit.RegisterKey
+		if conf.RegisterKey == "" {
+			conf.RegisterKey = mit.RegisterKey
 		}
 	}
 
-	if cfg.QubeID == "" {
-		log.Fatal("[agent] Cannot determine device ID. Set QUBE_ID or ensure /boot/mit.txt exists.")
+	if conf.QubeID == "" {
+		logger.Fatal("[main] Cannot determine device ID. Set QUBE_ID or ensure /boot/mit.txt exists.")
 	}
 
-	// ── Step 2: Wait for TP-API ───────────────────────────────────────────────
-	log.Printf("[agent] Starting v2 — QubeID=%s TPAPI=%s WS=%s Interval=%s",
-		cfg.QubeID, cfg.TPAPIURL, cfg.CloudWSURL, cfg.PollInterval)
+	// ── Step 3: Start local HTTP management server (web UI, maintenance) ─────
+	// Runs in background goroutine — same as v1 conf-agent-master.
+	// Provides: /, /reboot, /shutdown, /reset-ips, /repair, /logs, /backup
+	http.Init(logger, conf, mit)
 
-	bootstrapClient := tpapi.NewClient(cfg.TPAPIURL, cfg.QubeID, cfg.QubeToken)
+	// ── Step 4: Wait for TP-API ───────────────────────────────────────────────
+	logger.Printf("[main] QubeID=%s TPAPI=%s WS=%s PollInterval=%s",
+		conf.QubeID, conf.TPAPIURL, conf.CloudWSURL, conf.PollInterval)
+
+	bootstrapClient := tpapi.NewClient(conf.TPAPIURL, conf.QubeID, conf.QubeToken)
 	for {
 		_, status, err := bootstrapClient.Do("GET", "/health", nil)
 		if err == nil && status == 200 {
-			log.Println("[agent] TP-API reachable")
+			logger.Println("[main] TP-API reachable")
 			break
 		}
-		log.Printf("[agent] TP-API not reachable (err=%v status=%d), retrying in 10s...", err, status)
+		logger.Printf("[main] TP-API not reachable (err=%v status=%d) — retrying in 10s", err, status)
 		time.Sleep(10 * time.Second)
 	}
 
-	// ── Step 3: Self-register if no token ─────────────────────────────────────
-	if cfg.QubeToken == "" {
-		log.Println("[agent] No QUBE_TOKEN — attempting self-registration...")
-		cfg.QubeToken = agent.SelfRegister(bootstrapClient, cfg.QubeID, cfg.RegisterKey, cfg.WorkDir)
+	// ── Step 5: Self-register if no token ─────────────────────────────────────
+	if conf.QubeToken == "" {
+		logger.Println("[main] No QUBE_TOKEN — attempting self-registration...")
+		conf.QubeToken = agent.SelfRegister(bootstrapClient, conf.QubeID, conf.RegisterKey, conf.WorkDir)
 	}
-	if cfg.QubeToken == "" {
-		log.Fatal("[agent] Could not obtain QUBE_TOKEN. Device may not be claimed yet.")
+	if conf.QubeToken == "" {
+		logger.Fatal("[main] Could not obtain QUBE_TOKEN. Device may not be claimed yet.")
 	}
 
-	// ── Step 4: Initialize SQLite ─────────────────────────────────────────────
-	if err := os.MkdirAll(filepath.Dir(cfg.SQLitePath), 0755); err != nil {
-		log.Fatalf("[agent] Cannot create SQLite directory: %v", err)
+	// Expose token + IDs as env vars so docker stack deploy substitutes them
+	// in the generated docker-compose.yml (${QUBE_TOKEN}, ${QUBE_ID}, ${TPAPI_URL}).
+	os.Setenv("QUBE_TOKEN", conf.QubeToken)
+	os.Setenv("QUBE_ID", conf.QubeID)
+	os.Setenv("TPAPI_URL", conf.TPAPIURL)
+
+	// ── Step 6: Initialize SQLite ─────────────────────────────────────────────
+	if err := os.MkdirAll(filepath.Dir(conf.SQLitePath), 0755); err != nil {
+		logger.Fatalf("[main] Cannot create SQLite directory: %v", err)
 	}
-	db, err := sql.Open("sqlite", cfg.SQLitePath)
+	db, err := sql.Open("sqlite", conf.SQLitePath)
 	if err != nil {
-		log.Fatalf("[agent] Cannot open SQLite: %v", err)
+		logger.Fatalf("[main] Cannot open SQLite: %v", err)
 	}
 	defer db.Close()
 	sqlite.Init(db)
-	log.Printf("[agent] SQLite initialized at %s", cfg.SQLitePath)
+	logger.Printf("[main] SQLite initialized at %s", conf.SQLitePath)
 
-	// ── Step 5: Create agent (restores last known hash from disk) ───────────────
-	a := agent.New(cfg, db)
-
-	// ── Step 6: Start WebSocket + polling loop ────────────────────────────────
+	// ── Step 7: Start enterprise agent (blocking) ─────────────────────────────
+	// WebSocket primary + HTTP polling fallback + config sync + command dispatch
+	log.Printf("[main] Starting enterprise agent...")
+	a := agent.New(conf, db, logger)
 	a.Start()
 }

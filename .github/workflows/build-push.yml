@@ -94,6 +94,8 @@ jobs:
         include:
           - name: enterprise-influx-to-sql
             context: ./enterprise-influx-to-sql
+          - name: influxdb-relay
+            context: ./influxdb-relay
           - name: core-switch
             context: ./core-switch
           - name: mqtt-reader
@@ -199,7 +201,8 @@ jobs:
           sudo apt-get install -y postgresql-client -qq
           for f in cloud/migrations/001_init.sql \
                    cloud/migrations/002_global_data.sql \
-                   cloud/migrations/003_test_seeds.sql; do
+                   cloud/migrations/003_test_seeds.sql \
+                   cloud/migrations/004_new_protocols.sql; do
             PGPASSWORD=qubepass psql -h localhost -U qubeadmin -d qubedb -f "$f"
           done
 

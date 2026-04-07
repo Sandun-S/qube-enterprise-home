@@ -1,0 +1,4 @@
+deviceid: qube-1242
+devicename: my-qube
+register: ABCD-XYZ1-13DD
+maintain: SFSD-3SDF-444S

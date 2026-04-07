@@ -105,6 +105,12 @@ modbus-reader-panel-a  → connects to 192.168.1.50:502
 
 mqtt-reader-factory    → connects to broker.internal:1883
   subscribes: sensor1 (topic/a), sensor2 (topic/b)
+
+lorawan-reader-ns      → connects to lorawan-ns:1700
+  subscribes: sensor1 (dev-eui-1), sensor2 (dev-eui-2)
+
+dnp3-reader-substation → connects to 10.0.5.10:20000
+  polls: breaker1 (points 0-10), switch1 (points 20-30)
 ```
 
 ### Standard B: Multi-Target (snmp, http)
@@ -119,6 +125,9 @@ snmp-reader → one container
 
 http-reader → one container
   polls: https://api1.com/data (sensor1), https://api2.com/data (sensor2)
+
+bacnet-reader → one container
+  polls: 192.168.1.100 (sensor1), 192.168.1.101 (sensor2)
 ```
 
 ## Shared Go Module

@@ -1,0 +1,13 @@
+# conf-agent v2 configuration
+# v1 fields (LogLevel, Port, DownloadTimeout) are read from this file.
+# Enterprise fields (TPAPI_URL, CLOUD_WS_URL, etc.) are set via environment variables
+# and override anything here. See config-prod.yml for production env var reference.
+
+# Logging level: DEBUG | INFO | WARN | ERROR
+LogLevel: "DEBUG"
+
+# Local management HTTP server port (web UI: reboot, repair, logs, etc.)
+Port: 8081
+
+# Download timeout in seconds for PUT_FILE operations
+DownloadTimeout: 7200

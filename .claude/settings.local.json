@@ -29,7 +29,17 @@
       "Bash(grep -E \"curl -s $BASE|curl -s \"\"$BASE\" /mnt/d/Sandun/Projects/qube-enterprise-home/TESTING.md)",
       "Bash(chmod:*)",
       "Read(//home/sanduns/go/bin/**)",
-      "Read(//usr/**)"
+      "Read(//usr/**)",
+      "Bash(cp -r /mnt/d/work/mit/qube_enterprice/conf-agent-master/scripts /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/conf-agent/)",
+      "Bash(cp -r /mnt/d/work/mit/qube_enterprice/conf-agent-master/network /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/conf-agent/)",
+      "Bash(cp -r /mnt/d/work/mit/qube_enterprice/conf-agent-master/html /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/conf-agent/)",
+      "Bash(cp -r /mnt/d/work/mit/qube_enterprice/conf-agent-master/.vscode /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/conf-agent/)",
+      "Bash(cp /mnt/d/work/mit/qube_enterprice/conf-agent-master/docker.sh /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/conf-agent/)",
+      "Bash(mkdir -p /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/influxdb-relay/relay)",
+      "Bash(cp /mnt/d/work/mit/qube_enterprice/influxdb-relay/main.go /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/influxdb-relay/)",
+      "Bash(cp /mnt/d/work/mit/qube_enterprice/influxdb-relay/go.mod /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/influxdb-relay/)",
+      "Bash(cp /mnt/d/work/mit/qube_enterprice/influxdb-relay/go.sum /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/influxdb-relay/)",
+      "Bash(cp /mnt/d/work/mit/qube_enterprice/influxdb-relay/relay/config.go /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/influxdb-relay/relay/)"
     ]
   }
 }

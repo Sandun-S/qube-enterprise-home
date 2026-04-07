@@ -431,34 +431,154 @@ curl -s $TPBASE/v1/sync/config \
 
 ## 11. Commands
 
+Commands are dispatched via WebSocket if the Qube is connected, otherwise queued for HTTP polling.
+The conf-agent runs the corresponding script or action when it receives the command.
+
 ```bash
-# Send a command (cloud → Qube)
-# Returns 202 Accepted — command is queued; delivered via WebSocket if connected, else DB queue
+# Send a command (cloud → Qube) — returns 202 immediately
 curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/commands \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"command":"ping","payload":{"target":"cloud"}}' | jq .
-# Returns: {"command_id":"<uuid>","status":"pending","delivery":"websocket|queued","poll_url":"..."}
+  -d '{"command":"ping","payload":{"target":"8.8.8.8"}}' | jq .
+# {"command_id":"<uuid>","status":"pending","delivery":"websocket|queued","poll_url":"..."}
 CMD_ID=<paste command_id>
 
-# Valid commands: ping, restart_qube, restart_reader, stop_container,
-#                reload_config, get_logs, list_containers, update_sqlite
-
-# Get command status
+# Get command result / status
 curl -s $BASE/api/v1/commands/$CMD_ID \
   -H "Authorization: Bearer $TOKEN" | jq .
 
-# Qube polls for pending commands
+# Qube polls for pending commands (conf-agent HTTP fallback)
 curl -s -X POST $TPBASE/v1/commands/poll \
   -H "X-Qube-ID: $QUBE_ID" \
   -H "Authorization: Bearer $QUBE_TOKEN" | jq .
 
-# Qube acks a command
+# Qube acks a command after execution
 curl -s -X POST $TPBASE/v1/commands/$CMD_ID/ack \
   -H "X-Qube-ID: $QUBE_ID" \
   -H "Authorization: Bearer $QUBE_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"result":"pong","success":true}' | jq .
+  -d '{"status":"executed","result":{"output":"..."}}' | jq .
+```
+
+### All valid commands and their payloads
+
+#### Enterprise — containers & config
+
+```bash
+# ping — test connectivity to a host
+curl ... -d '{"command":"ping","payload":{"target":"8.8.8.8"}}'
+
+# restart_qube / reboot — reboot the device OS
+curl ... -d '{"command":"restart_qube","payload":{}}'
+
+# restart_reader — restart a specific reader container
+curl ... -d '{"command":"restart_reader","payload":{"reader_id":"<reader-uuid>"}}'
+# or by service name:
+curl ... -d '{"command":"restart_reader","payload":{"service":"modbus-reader"}}'
+
+# stop_container — stop a named Docker service
+curl ... -d '{"command":"stop_container","payload":{"service":"qube_modbus-reader"}}'
+
+# reload_config / update_sqlite — clear local hash, force resync on next cycle
+curl ... -d '{"command":"reload_config","payload":{}}'
+
+# get_logs — get container logs
+curl ... -d '{"command":"get_logs","payload":{"service":"modbus-reader","lines":200}}'
+# omit service to get all compose logs
+
+# list_containers — list running Docker containers
+curl ... -d '{"command":"list_containers","payload":{}}'
+```
+
+#### Device management — network
+
+```bash
+# reset_ips — reset all network interfaces to DHCP, reconnect to qube-net WiFi
+curl ... -d '{"command":"reset_ips","payload":{}}'
+
+# set_eth — configure ethernet interface
+# DHCP:
+curl ... -d '{"command":"set_eth","payload":{"interface":"eth0","mode":"auto"}}'
+# Static:
+curl ... -d '{"command":"set_eth","payload":{"interface":"eth0","mode":"static","address":"192.168.1.10/24","gateway":"192.168.1.1","dns":"8.8.8.8"}}'
+
+# set_wifi — configure WiFi interface
+# DHCP:
+curl ... -d '{"command":"set_wifi","payload":{"interface":"wlan0","mode":"auto","ssid":"MyWifi","password":"secret","key_mgmt":"psk"}}'
+# Static:
+curl ... -d '{"command":"set_wifi","payload":{"interface":"wlan0","mode":"static","address":"192.168.1.20/24","gateway":"192.168.1.1","dns":"8.8.8.8","ssid":"MyWifi","password":"secret","key_mgmt":"psk"}}'
+# key_mgmt options: psk, sae, eap, none
+
+# set_firewall — configure iptables rules
+# Rules: comma-separated <proto>:<net-or-0>:<port-or-0>
+curl ... -d '{"command":"set_firewall","payload":{"rules":"tcp:10.0.0.0/8:1883,tcp:122.255.48.0/24:0,tcp:0:8080"}}'
+```
+
+#### Device management — identity & system
+
+```bash
+# shutdown — safe device shutdown
+curl ... -d '{"command":"shutdown","payload":{}}'
+
+# get_info — get network info (IPs, MACs, SSID, open ports)
+curl ... -d '{"command":"get_info","payload":{}}'
+# result: {"eth_mac":"aa:bb:...","eth_ipv4":"192.168.1.10/24","wlan_ssid":"MyWifi",...}
+
+# set_name — set device hostname (updates avahi + mit.txt)
+curl ... -d '{"command":"set_name","payload":{"name":"qube-factory-a"}}'
+
+# set_timezone — set device timezone
+curl ... -d '{"command":"set_timezone","payload":{"timezone":"Asia/Colombo"}}'
+# use: timedatectl list-timezones for valid values
+```
+
+#### Data backup / restore
+
+```bash
+# backup_data — rsync /data to a CIFS or NFS share
+curl ... -d '{"command":"backup_data","payload":{"type":"cifs","path":"\\\\192.168.1.1\\backup","user":"admin","pass":"secret"}}'
+curl ... -d '{"command":"backup_data","payload":{"type":"nfs","path":"192.168.1.1:/nfs-backup"}}'
+
+# restore_data — restore /data from a CIFS or NFS share
+curl ... -d '{"command":"restore_data","payload":{"type":"cifs","path":"\\\\192.168.1.1\\backup","user":"admin","pass":"secret"}}'
+```
+
+#### Maintenance mode operations (device reboots, performs op, reboots back)
+
+```bash
+# repair_fs — e2fsck filesystem repair (device goes offline temporarily)
+curl ... -d '{"command":"repair_fs","payload":{}}'
+
+# backup_image — dd block-level image backup to backup partition
+curl ... -d '{"command":"backup_image","payload":{}}'
+
+# restore_image — dd block-level image restore from backup partition
+curl ... -d '{"command":"restore_image","payload":{}}'
+```
+
+#### Service management (v1 legacy Docker services)
+
+```bash
+# service_add — install a Docker service from a pre-staged package
+curl ... -d '{"command":"service_add","payload":{"name":"myservice","type":"modbus","version":"1.2.3","ports":"8090"}}'
+
+# service_rm — remove a Docker service
+curl ... -d '{"command":"service_rm","payload":{"name":"myservice"}}'
+
+# service_edit — update service config files or ports
+curl ... -d '{"command":"service_edit","payload":{"name":"myservice","ports":"8090,8091"}}'
+```
+
+#### File transfer
+
+```bash
+# put_file — push a file to the device at /mit<path>
+FILE_B64=$(base64 -w0 myfile.cfg)
+curl ... -d "{\"command\":\"put_file\",\"payload\":{\"path\":\"/config/myfile.cfg\",\"data\":\"$FILE_B64\"}}"
+
+# get_file — pull a file from the device at /mit<path>
+curl ... -d '{"command":"get_file","payload":{"path":"/config/myfile.cfg"}}'
+# result: {"path":"/mit/config/myfile.cfg","data":"<base64>","size":1234}
 ```
 
 ---

@@ -1,9 +1,11 @@
-module github.com/Sandun-S/qube-enterprise-home/conf-agent
+module conf-agent
 
 go 1.22
 
 require (
 	github.com/gorilla/websocket v1.5.3
+	github.com/sirupsen/logrus v1.9.3
+	gopkg.in/yaml.v2 v2.4.0
 	modernc.org/sqlite v1.29.6
 )
 

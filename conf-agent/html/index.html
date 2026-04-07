@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Qube Management Interface</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #fd7f20 0%, #fc2e20 100%);
+            min-height: 100vh;
+            padding: 2rem;
+            color: #010100;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+
+        .header {
+            background: linear-gradient(135deg, #010100, #2d1810);
+            color: #fdb750;
+            padding: 2rem;
+            text-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .header::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23ffffff' fill-opacity='0.1'%3E%3Cpath d='m36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E") repeat;
+            opacity: 0.1;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            position: relative;
+        }
+
+        .header .subtitle {
+            opacity: 0.8;
+            font-size: 1.1rem;
+            position: relative;
+        }
+
+        .device-info {
+            padding: 2rem;
+            background: linear-gradient(135deg, #fef7ed, #fed7aa);
+            border-bottom: 1px solid rgba(253, 127, 32, 0.2);
+        }
+
+        .device-info h2 {
+            font-size: 1.5rem;
+            margin-bottom: 1.5rem;
+            color: #010100;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+        }
+
+        .info-card {
+            background: white;
+            padding: 1.25rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .info-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+        }
+
+        .info-label {
+            font-weight: 600;
+            color: #010100;
+            font-size: 0.875rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }
+
+        .info-value {
+            font-size: 1.125rem;
+            font-weight: 500;
+            color: #fc2e20;
+            font-family: 'Monaco', 'Consolas', monospace;
+        }
+
+        .actions-container {
+            padding: 2rem;
+        }
+
+        .actions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1.5rem;
+        }
+
+        .action-card {
+            background: white;
+            border-radius: 16px;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+            border: 1px solid rgba(0, 0, 0, 0.05);
+            transition: all 0.3s ease;
+        }
+
+        .action-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, 0.1);
+        }
+
+        .action-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .action-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-right: 1rem;
+            font-size: 1.25rem;
+        }
+
+        .restart .action-icon { background: linear-gradient(135deg, #fdb750, #fd7f20); }
+        .shutdown .action-icon { background: linear-gradient(135deg, #fc2e20, #010100); }
+        .reset .action-icon { background: linear-gradient(135deg, #fd7f20, #fc2e20); }
+        .logs .action-icon { background: linear-gradient(135deg, #fdb750, #fd7f20); }
+        .repair .action-icon { background: linear-gradient(135deg, #010100, #fc2e20); }
+
+        .action-title {
+            font-size: 1.25rem;
+            font-weight: 600;
+            color: #010100;
+            margin-bottom: 0.25rem;
+        }
+
+        .action-description {
+            color: #4a4a4a;
+            font-size: 0.875rem;
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-label {
+            display: block;
+            font-weight: 500;
+            color: #010100;
+            margin-bottom: 0.5rem;
+            font-size: 0.875rem;
+        }
+
+        .form-input, .form-select {
+            width: 100%;
+            padding: 0.75rem;
+            border: 2px solid #fd7f20;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: all 0.2s ease;
+            background: white;
+            color: #010100;
+        }
+
+        .form-input:focus, .form-select:focus {
+            outline: none;
+            border-color: #fc2e20;
+            box-shadow: 0 0 0 3px rgba(252, 46, 32, 0.2);
+        }
+
+        .btn {
+            width: 100%;
+            padding: 0.875rem 1.5rem;
+            border: none;
+            border-radius: 10px;
+            font-weight: 600;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-restart { background: linear-gradient(135deg, #fdb750, #fd7f20); color: white; }
+        .btn-shutdown { background: linear-gradient(135deg, #fc2e20, #010100); color: white; }
+        .btn-reset { background: linear-gradient(135deg, #fd7f20, #fc2e20); color: white; }
+        .btn-logs { background: linear-gradient(135deg, #fdb750, #fd7f20); color: #010100; }
+        .btn-repair { background: linear-gradient(135deg, #010100, #fc2e20); color: white; }
+
+        .todo-banner {
+            background: linear-gradient(135deg, #fef3cd, #fdb750);
+            color: #010100;
+            padding: 1rem 2rem;
+            text-align: center;
+            font-weight: 500;
+            border-bottom: 1px solid rgba(253, 127, 32, 0.3);
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @media (max-width: 768px) {
+            body { padding: 1rem; }
+            .container { border-radius: 16px; }
+            .header { padding: 1.5rem; }
+            .header h1 { font-size: 2rem; }
+            .device-info, .actions-container { padding: 1.5rem; }
+            .actions-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎯 Qube Management</h1>
+            <p class="subtitle">Advanced Device Control Interface</p>
+        </div>
+
+        <div class="todo-banner pulse">
+            📋 TODO: WiFi data integration pending
+        </div>
+
+        <div class="device-info">
+            <h2>Device Information</h2>
+            <div class="info-grid">
+                <div class="info-card">
+                    <div class="info-label">Device ID</div>
+                    <div class="info-value">Qube-1117</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-label">Device Name</div>
+                    <div class="info-value">TEST QUBE</div>
+                </div>
+                <div class="info-card">
+                    <div class="info-label">Registration Number</div>
+                    <div class="info-value">J5ML-IALI-A5Y5</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="actions-container">
+            <div class="actions-grid">
+                <div class="action-card restart">
+                    <div class="action-header">
+                        <div class="action-icon">🔄</div>
+                        <div>
+                            <div class="action-title">Restart Qube</div>
+                        </div>
+                    </div>
+                    <div class="action-description">
+                        Safely restart the device to apply updates or resolve issues
+                    </div>
+                    <form action="/reboot" onsubmit="return confirm('Are you sure you want to restart the device?');">
+                        <div class="form-group">
+                            <label class="form-label" for="mtnKey1">Maintenance Key</label>
+                            <input type="text" id="mtnKey1" name="mtnKey" class="form-input" placeholder="Enter maintenance key">
+                        </div>
+                        <button type="submit" class="btn btn-restart">Restart Device</button>
+                    </form>
+                </div>
+
+                <div class="action-card shutdown">
+                    <div class="action-header">
+                        <div class="action-icon">⏹️</div>
+                        <div>
+                            <div class="action-title">Shutdown Qube</div>
+                        </div>
+                    </div>
+                    <div class="action-description">
+                        Safely shutdown the device for maintenance or transport
+                    </div>
+                    <form action="/shutdown" onsubmit="return confirm('Are you sure you want to shutdown the device?');">
+                        <div class="form-group">
+                            <label class="form-label" for="mtnKey2">Maintenance Key</label>
+                            <input type="text" id="mtnKey2" name="mtnKey" class="form-input" placeholder="Enter maintenance key">
+                        </div>
+                        <button type="submit" class="btn btn-shutdown">Shutdown Device</button>
+                    </form>
+                </div>
+
+                <div class="action-card reset">
+                    <div class="action-header">
+                        <div class="action-icon">🔧</div>
+                        <div>
+                            <div class="action-title">Reset IPs</div>
+                        </div>
+                    </div>
+                    <div class="action-description">
+                        Reset network settings to defaults. DHCP will be enabled and WiFi will connect to "qube-net"
+                    </div>
+                    <form action="/reset-ips" onsubmit="return confirm('Are you sure you want to reset IPs?');">
+                        <div class="form-group">
+                            <label class="form-label" for="mtnKey3">Maintenance Key</label>
+                            <input type="text" id="mtnKey3" name="mtnKey" class="form-input" placeholder="Enter maintenance key">
+                        </div>
+                        <button type="submit" class="btn btn-reset">Reset Network Settings</button>
+                    </form>
+                </div>
+
+                <div class="action-card logs">
+                    <div class="action-header">
+                        <div class="action-icon">📋</div>
+                        <div>
+                            <div class="action-title">View Logs</div>
+                        </div>
+                    </div>
+                    <div class="action-description">
+                        Access different system logs for troubleshooting and monitoring
+                    </div>
+                    <form action="/logs">
+                        <div class="form-group">
+                            <label class="form-label" for="mtnKey4">Maintenance Key</label>
+                            <input type="text" id="mtnKey4" name="mtnKey" class="form-input" placeholder="Enter maintenance key">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="logType">Log Type</label>
+                            <select name="logType" id="logType" class="form-select">
+                                <option value="conf-agent">Configuration Agent</option>
+                                <option value="docker">Docker Service</option>
+                                <option value="container">Container Logs</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="btn btn-logs">View Selected Logs</button>
+                    </form>
+                </div>
+
+                <div class="action-card repair">
+                    <div class="action-header">
+                        <div class="action-icon">🛠️</div>
+                        <div>
+                            <div class="action-title">Repair File System</div>
+                        </div>
+                    </div>
+                    <div class="action-description">
+                        Scan and repair application and data file systems for corruption
+                    </div>
+                    <form action="/repair" onsubmit="return confirm('Are you sure you want to repair file systems?');">
+                        <div class="form-group">
+                            <label class="form-label" for="mtnKey5">Maintenance Key</label>
+                            <input type="text" id="mtnKey5" name="mtnKey" class="form-input" placeholder="Enter maintenance key">
+                        </div>
+                        <button type="submit" class="btn btn-repair">Repair File Systems</button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Add subtle interactions
+        document.querySelectorAll('.action-card').forEach(card => {
+            card.addEventListener('mouseenter', function() {
+                this.style.transform = 'translateY(-4px) scale(1.02)';
+            });
+            
+            card.addEventListener('mouseleave', function() {
+                this.style.transform = 'translateY(0) scale(1)';
+            });
+        });
+
+        // Add loading state to buttons
+        document.querySelectorAll('.btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                if (this.form.checkValidity()) {
+                    this.innerHTML = '⏳ Processing...';
+                    this.disabled = true;
+                }
+            });
+        });
+
+        // Add focus effects to inputs
+        document.querySelectorAll('.form-input, .form-select').forEach(input => {
+            input.addEventListener('focus', function() {
+                this.parentElement.style.transform = 'scale(1.02)';
+            });
+            
+            input.addEventListener('blur', function() {
+                this.parentElement.style.transform = 'scale(1)';
+            });
+        });
+    </script>
+</body>
+</html>

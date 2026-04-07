@@ -1,0 +1,14 @@
+network:
+  version: 2
+  ethernets:
+    INTF:
+      dhcp4: false
+      dhcp6: true
+      optional: true
+      addresses:
+        - ADDR4
+      nameservers:
+        addresses: [DNS4]
+      routes:
+        - to: default
+          via: GATE4

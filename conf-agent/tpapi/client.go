@@ -1,6 +1,8 @@
-// Package tpapi provides the HTTP client and data types for TP-API communication.
-// The TP-API is the device-facing API on port 8081 (HMAC authenticated).
-// Analogous to v1 http/http.go but for TP-API instead of core-switch.
+// Package tpapi provides the HTTP client and shared data types for TP-API
+// communication (port 8081, HMAC authenticated, device-facing only).
+//
+// Replaces the v1 conf-agent http.Send() / HMAC polling to conf-api-master.
+// Auth header: X-Qube-ID + Authorization: Bearer <HMAC token>
 package tpapi
 
 import (
@@ -22,13 +24,13 @@ type SyncState struct {
 
 // SyncConfig is the full config payload from GET /v1/sync/config.
 type SyncConfig struct {
-	Hash               string              `json:"hash"`
-	ConfigVersion      int                 `json:"config_version"`
-	DockerComposeYML   string              `json:"docker_compose_yml"`
-	Readers            []ReaderConfig      `json:"readers"`
-	Containers         []ContainerConfig   `json:"containers"`
-	CoreSwitchSettings map[string]string   `json:"coreswitch_settings"`
-	TelemetrySettings  []map[string]any    `json:"telemetry_settings"`
+	Hash               string            `json:"hash"`
+	ConfigVersion      int               `json:"config_version"`
+	DockerComposeYML   string            `json:"docker_compose_yml"`
+	Readers            []ReaderConfig    `json:"readers"`
+	Containers         []ContainerConfig `json:"containers"`
+	CoreSwitchSettings map[string]string `json:"coreswitch_settings"`
+	TelemetrySettings  []map[string]any  `json:"telemetry_settings"`
 }
 
 // ReaderConfig is one reader from the sync config.
@@ -61,7 +63,7 @@ type ContainerConfig struct {
 	Protocol    string         `json:"protocol"`
 }
 
-// WSMessage is a WebSocket message to/from the cloud.
+// WSMessage is a WebSocket message to/from the cloud API (port 8080).
 type WSMessage struct {
 	Type      string `json:"type"`
 	QubeID    string `json:"qube_id"`
@@ -70,7 +72,7 @@ type WSMessage struct {
 	Timestamp int64  `json:"timestamp"`
 }
 
-// Command is a remote command from the cloud.
+// Command is a remote command dispatched by the cloud API.
 type Command struct {
 	ID      string         `json:"id"`
 	Command string         `json:"command"`
@@ -85,6 +87,7 @@ type PollResponse struct {
 // ─── HTTP Client ──────────────────────────────────────────────────────────────
 
 // Client handles authenticated HTTP calls to the TP-API.
+// Authentication: X-Qube-ID header + Authorization: Bearer <qubeToken>
 type Client struct {
 	tpapiURL  string
 	qubeID    string
@@ -102,7 +105,7 @@ func NewClient(tpapiURL, qubeID, qubeToken string) *Client {
 	}
 }
 
-// Do makes an authenticated request (Qube token in header).
+// Do makes an authenticated request with the Qube token.
 func (c *Client) Do(method, path string, body any) ([]byte, int, error) {
 	var bodyReader io.Reader
 	if body != nil {
@@ -126,7 +129,7 @@ func (c *Client) Do(method, path string, body any) ([]byte, int, error) {
 	return data, resp.StatusCode, nil
 }
 
-// DoPublic makes an unauthenticated request (for device registration).
+// DoPublic makes an unauthenticated request (for device self-registration).
 func (c *Client) DoPublic(method, path string, body any) ([]byte, int, error) {
 	b, _ := json.Marshal(body)
 	req, err := http.NewRequest(method, c.tpapiURL+path, bytes.NewReader(b))
@@ -143,7 +146,7 @@ func (c *Client) DoPublic(method, path string, body any) ([]byte, int, error) {
 	return data, resp.StatusCode, nil
 }
 
-// WithAuth returns a new client with updated auth tokens.
+// WithAuth returns a new client with updated auth credentials.
 func (c *Client) WithAuth(qubeID, qubeToken string) *Client {
 	return NewClient(c.tpapiURL, qubeID, qubeToken)
 }

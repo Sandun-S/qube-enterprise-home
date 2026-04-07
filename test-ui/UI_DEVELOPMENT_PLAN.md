@@ -1002,13 +1002,20 @@ From: `GET /api/v1/qubes/{id}/containers`
 #### Commands Tab
 Command history + send new commands.
 
-- Recent commands list: id, type, status, sent_at, ack_at, result
+- Recent commands list: id, type, status, sent_at, ack_at, result, delivered_via
 - "Send Command" form:
-  - Command type dropdown: `ping`, `restart_qube`, `restart_reader`, `stop_container`,
-    `reload_config`, `get_logs`, `list_containers`, `update_sqlite`
-  - Payload field (JSON, shown conditionally)
+  - Command type dropdown (grouped):
+    - **Container/Config:** `ping`, `restart_qube`, `shutdown`, `restart_reader`, `stop_container`, `reload_config`, `get_logs`, `list_containers`, `update_sqlite`
+    - **Network:** `reset_ips`, `set_eth`, `set_wifi`, `set_firewall`
+    - **Identity/System:** `get_info`, `set_name`, `set_timezone`
+    - **Backup/Restore:** `backup_data`, `restore_data`
+    - **Maintenance:** `repair_fs`, `backup_image`, `restore_image`
+    - **Services:** `service_add`, `service_rm`, `service_edit`
+    - **Files:** `put_file`, `get_file`
+  - Dynamic payload form rendered per command type (see DEVELOPER_GUIDE.md §11)
   - Submit → `POST /api/v1/qubes/{id}/commands`
-- Display `delivered_via` (ws / queue) and result when ack received
+- Display `delivery` (websocket / queued) badge and result JSON when ack received
+- Auto-refresh command list every 5s while any command is in `pending`/`sent` state
 
 ---
 
@@ -1184,25 +1191,48 @@ This is a standalone full-page reader manager.
 
 ### 6.8 Commands & Remote Actions
 
-**Route:** `/fleet/:qubeId/commands` or inline in Qube Detail
+**Route:** `/fleet/:qubeId/commands` or inline in Qube Detail → Commands Tab
 
-**Command Types:**
+The enterprise conf-agent supports 28 commands grouped into 7 categories.
+Commands are delivered via WebSocket if the Qube is connected, otherwise queued for HTTP polling.
 
-| Command | Payload | Description |
-|---------|---------|-------------|
-| ping | {} | Test connectivity |
-| restart_qube | {} | Reboot the Qube device |
-| restart_reader | {"reader_id": "uuid"} | Restart specific reader container |
-| stop_container | {"container_name": "name"} | Stop a Docker container |
-| reload_config | {} | Force conf-agent config resync |
-| get_logs | {"container": "name", "lines": 100} | Retrieve container logs |
-| list_containers | {} | List running Docker services |
-| update_sqlite | {} | Force SQLite schema migration |
+**Command Categories & Types:**
+
+| Category | Commands |
+|----------|----------|
+| Container/Config | `ping`, `restart_qube`, `reboot`, `shutdown`, `restart_reader`, `stop_container`, `reload_config`, `update_sqlite`, `get_logs`, `list_containers` |
+| Network | `reset_ips`, `set_eth`, `set_wifi`, `set_firewall` |
+| Identity/System | `get_info`, `set_name`, `set_timezone` |
+| Backup/Restore | `backup_data`, `restore_data` |
+| Maintenance Mode | `repair_fs`, `backup_image`, `restore_image` |
+| Service Mgmt | `service_add`, `service_rm`, `service_edit` |
+| File Transfer | `put_file`, `get_file` |
+
+**Key payloads:**
+
+| Command | Key Payload Fields |
+|---------|-------------------|
+| `ping` | `target` (default: 8.8.8.8) |
+| `restart_reader` | `reader_id` or `service` name |
+| `stop_container` | `service` name |
+| `get_logs` | `service` (optional), `lines` (default: 100) |
+| `set_eth` | `interface`, `mode` (auto/static), + static: `address`, `gateway`, `dns` |
+| `set_wifi` | `interface`, `mode`, `ssid`, `password`, `key_mgmt`, + static fields |
+| `set_firewall` | `rules` — comma-separated `proto:net:port` entries |
+| `set_name` | `name` |
+| `set_timezone` | `timezone` (IANA name, e.g. `Asia/Colombo`) |
+| `backup_data` / `restore_data` | `type` (cifs/nfs), `path`, `user`, `pass` |
+| `service_add` | `name`, `type`, `version`, `ports` |
+| `service_rm` / `service_edit` | `name`, (edit: `ports`) |
+| `put_file` | `path` (relative, no `..`), `data` (base64) |
+| `get_file` | `path` |
 
 **UI:**
-- Command history table: id, type, payload, delivered_via, status, sent_at, ack_at, result
-- "Send Command" form with command type dropdown + dynamic payload form
-- Auto-refresh command list every 10s to show ack status
+- Grouped command dropdown (by category above)
+- Dynamic payload form rendered per command (see `commandPayloadFields` in DEVELOPER_GUIDE.md §11)
+- Maintenance mode commands show a warning: "Device will go offline for several minutes"
+- Command history table: command, delivery (ws/queued badge), status, sent_at, executed_at, result
+- Poll `GET /api/v1/commands/:id` every 2s while status is pending/sent
 - `POST /api/v1/qubes/{id}/commands`
 
 ---

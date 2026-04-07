@@ -95,54 +95,85 @@ This inserts a row in `qubes` so the device is ready to be claimed. `/boot/mit.t
 curl -fsSL https://get.docker.com | sh
 sudo usermod -aG docker $USER && newgrp docker
 docker swarm init
+docker network create --attachable --driver overlay qube-net
+sudo mkdir -p /opt/qube/data
 ```
 
-### 2. Create SQLite volume
+### 2. Deploy conf-agent (runs as systemd binary, not a Docker service)
+
+Extract the binary from the image and run it as a systemd service:
 
 ```bash
-docker volume create qube-data
-```
+# Extract binary
+docker pull ghcr.io/sandun-s/qube-enterprise-home/conf-agent:arm64.latest
+CONTAINER=$(docker create ghcr.io/sandun-s/qube-enterprise-home/conf-agent:arm64.latest)
+sudo docker cp $CONTAINER:/app/conf-agent /usr/local/bin/enterprise-conf-agent
+docker rm $CONTAINER
+sudo chmod +x /usr/local/bin/enterprise-conf-agent
 
-### 3. Deploy conf-agent
+# Env file
+sudo mkdir -p /opt/qube
+cat > /opt/qube/.env << EOF
+CLOUD_WS_URL=ws://<cloud-ip>:8080/ws
+TPAPI_URL=http://<cloud-ip>:8081
+SQLITE_PATH=/opt/qube/data/qube.db
+WORK_DIR=/opt/qube
+POLL_INTERVAL=30
+EOF
 
-```bash
-docker service create \
-  --name qube_conf-agent \
-  --restart-condition any \
-  --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock \
-  --mount type=volume,source=qube-data,target=/opt/qube/data \
-  --mount type=bind,source=/boot/mit.txt,target=/boot/mit.txt,readonly \
-  -e CLOUD_WS_URL=ws://<cloud-ip>:8080/ws \
-  -e TPAPI_URL=http://<cloud-ip>:8081 \
-  -e SQLITE_PATH=/opt/qube/data/qube.db \
-  -e WORK_DIR=/opt/qube \
-  -e POLL_INTERVAL=30 \
-  ghcr.io/sandun-s/qube-enterprise-home/enterprise-conf-agent:arm64.latest
+# Systemd service
+cat > /etc/systemd/system/enterprise-conf-agent.service << SVC
+[Unit]
+Description=Qube Enterprise Conf-Agent v2
+After=network-online.target docker.service
+Requires=docker.service
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/qube
+EnvironmentFile=/opt/qube/.env
+ExecStart=/usr/local/bin/enterprise-conf-agent
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=enterprise-conf-agent
+[Install]
+WantedBy=multi-user.target
+SVC
+
+systemctl daemon-reload
+systemctl enable enterprise-conf-agent
+systemctl start enterprise-conf-agent
 ```
 
 conf-agent will:
-1. Read `/boot/mit.txt` → `POST /v1/device/register` → get QUBE_TOKEN
-2. Connect WebSocket to cloud → begin receiving config updates
-3. On first config: write SQLite, run `docker stack deploy`
+1. Read `/boot/mit.txt` → `POST /v1/device/register` → polls until device is claimed
+2. Once claimed: save `QUBE_TOKEN` to `/opt/qube/.env`, connect WebSocket
+3. On first config sync: write SQLite, run `docker stack deploy` to bring up full edge stack
 
-### 4. Deploy enterprise-influx-to-sql
+### 3. Full edge stack (auto-deployed by conf-agent)
 
+conf-agent downloads a generated `docker-compose.yml` from the cloud and deploys it.
+**You do not deploy these manually.** The stack includes:
+
+| Service | Role |
+|---------|------|
+| `influxdb` | Edge data store |
+| `influxdb-relay` | Write buffer (core-switch → relay → influxdb) |
+| `core-switch` | Routes reader data to influxdb-relay |
+| `enterprise-influx-to-sql` | Reads influxdb → TP-API → Azure TimescaleDB |
+| Reader containers | Deployed automatically when you add readers in cloud portal |
+
+All services bind-mount `/opt/qube/data` (host path) for shared SQLite access.
+
+Data flow: `reader → core-switch:8585 → influxdb-relay:9096 → influxdb:8086`
+
+Verify after claim + sync:
 ```bash
-docker service create \
-  --name qube_influx-to-sql \
-  --restart-condition any \
-  --mount type=volume,source=qube-data,target=/opt/qube/data,readonly \
-  -e SQLITE_PATH=/opt/qube/data/qube.db \
-  -e TPAPI_URL=http://<cloud-ip>:8081 \
-  -e QUBE_ID=Q-1001 \
-  -e QUBE_TOKEN=<token from conf-agent registration> \
-  -e INFLUX_URL=http://127.0.0.1:8086 \
-  -e INFLUX_DB=edgex \
-  ghcr.io/sandun-s/qube-enterprise-home/enterprise-influx-to-sql:arm64.latest
+docker service ls   # all services should be 1/1
+journalctl -u enterprise-conf-agent -f   # watch for "stack deploy OK"
 ```
-
-QUBE_TOKEN is obtained by conf-agent during self-registration. Read it from conf-agent logs
-or the database: `SELECT auth_token_hash FROM qubes WHERE id='Q-1001';`
 
 ---
 
@@ -152,7 +183,7 @@ Reader containers are **not deployed manually**. They are automatically deployed
 when the user adds a reader in the cloud portal.
 
 Each reader container:
-- Mounts the `qube-data` volume (read-only)
+- Bind-mounts `/opt/qube/data` (read-only) for SQLite access
 - Reads its config from SQLite on startup
 - Sends data to `core-switch:8585` via HTTP
 

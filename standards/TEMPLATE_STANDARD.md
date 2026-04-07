@@ -203,6 +203,67 @@ The `connection_schema` uses **JSON Schema** format. The UI renders a dynamic fo
 }
 ```
 
+### BACnet/IP
+
+```json
+{
+    "objects": [
+        {
+            "field_key": "zone_temp_c",
+            "object_type": "analogInput",
+            "object_instance": 1,
+            "unit": "°C"
+        },
+        {
+            "field_key": "setpoint_c",
+            "object_type": "analogValue",
+            "object_instance": 10,
+            "unit": "°C"
+        }
+    ]
+}
+```
+
+### LoRaWAN
+
+```json
+{
+    "readings": [
+        {
+            "field_key": "temperature_c",
+            "field": "TempC_SHT",
+            "unit": "°C"
+        },
+        {
+            "field_key": "humidity_pct",
+            "field": "Hum_SHT",
+            "unit": "%"
+        }
+    ]
+}
+```
+
+### DNP3
+
+```json
+{
+    "points": [
+        {
+            "field_key": "voltage_v",
+            "point_type": "AnalogInput",
+            "index": 0,
+            "unit": "V"
+        },
+        {
+            "field_key": "breaker_status",
+            "point_type": "BinaryInput",
+            "index": 5,
+            "unit": ""
+        }
+    ]
+}
+```
+
 ## Protocol-Specific sensor_params_schema
 
 ### Modbus TCP
@@ -265,6 +326,42 @@ The `connection_schema` uses **JSON Schema** format. The UI renders a dynamic fo
         "headers_json": {"type": "string", "title": "Custom Headers (JSON)"}
     },
     "required": ["url"]
+}
+```
+
+### BACnet/IP
+
+```json
+{
+    "properties": {
+        "ip_address": {"type": "string", "title": "Device IP", "format": "ipv4"},
+        "device_instance": {"type": "integer", "title": "BACnet Device Instance"}
+    },
+    "required": ["ip_address", "device_instance"]
+}
+```
+
+### LoRaWAN
+
+```json
+{
+    "properties": {
+        "dev_eui": {"type": "string", "title": "Device EUI (Hex)"},
+        "app_key": {"type": "string", "title": "App Key (Hidden)", "format": "password"}
+    },
+    "required": ["dev_eui"]
+}
+```
+
+### DNP3
+
+```json
+{
+    "properties": {
+        "outstation_address": {"type": "integer", "title": "Outstation DNP3 Address", "default": 10},
+        "poll_interval_ms": {"type": "integer", "title": "Poll Interval (ms)", "default": 5000}
+    },
+    "required": ["outstation_address"]
 }
 ```
 

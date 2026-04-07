@@ -91,8 +91,19 @@ POST /api/v1/qubes/:id/commands
 → {"command_id":"<uuid>","delivered_via":"websocket"|"queue"}
 ```
 
-Valid commands: `ping`, `restart_qube`, `restart_reader`, `stop_container`,
-`reload_config`, `get_logs`, `list_containers`, `update_sqlite`
+Valid commands (28 total, grouped):
+
+| Category | Commands |
+|----------|----------|
+| Container/Config | `ping`, `restart_qube`, `reboot`, `shutdown`, `restart_reader`, `stop_container`, `reload_config`, `update_sqlite`, `get_logs`, `list_containers` |
+| Network | `reset_ips`, `set_eth`, `set_wifi`, `set_firewall` |
+| Identity/System | `get_info`, `set_name`, `set_timezone` |
+| Backup/Restore | `backup_data`, `restore_data` |
+| Maintenance | `repair_fs`, `backup_image`, `restore_image` |
+| Services | `service_add`, `service_rm`, `service_edit` |
+| File Transfer | `put_file`, `get_file` |
+
+See TESTING.md §11 for full payload reference per command.
 
 ---
 

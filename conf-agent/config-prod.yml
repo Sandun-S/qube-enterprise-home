@@ -1,0 +1,17 @@
+# conf-agent v2 — Production configuration reference
+# This file documents the YAML settings. Enterprise connection settings
+# are passed as environment variables (not in this YAML file).
+#
+# Environment variables to set on the Qube device:
+#
+#   CLOUD_WS_URL=ws://<cloud-ip>:8080/ws     # WebSocket to cloud (primary)
+#   TPAPI_URL=http://<cloud-ip>:8081          # TP-API HTTP (fallback)
+#   SQLITE_PATH=/opt/qube/data/qube.db        # SQLite config store
+#   WORK_DIR=/opt/qube                        # Working directory
+#   POLL_INTERVAL=30                          # Polling interval (seconds)
+#   MIT_TXT_PATH=/boot/mit.txt               # Device identity file
+#   # QUBE_ID and QUBE_TOKEN auto-obtained via /v1/device/register
+
+LogLevel: "INFO"
+Port: 8081
+DownloadTimeout: 7200

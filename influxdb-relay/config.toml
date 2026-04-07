@@ -1,0 +1,9 @@
+# influxdb-relay config — Qube Enterprise
+# Listens on :9096, relays writes to influxdb:8086 (Docker Swarm service name).
+# Buffer: 5 GB per output, up to 5 days backfill (432000s) if influxdb is down.
+[[http]]
+name = "qube_relay"
+bind-addr = "0.0.0.0:9096"
+output = [
+    { name="influxdb", location = "http://influxdb:8086/write", buffer-size-mb = 5000, max-batch-kb = 100, max-delay-interval = "432000s" },
+]

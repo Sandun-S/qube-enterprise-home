@@ -1,0 +1,13 @@
+network:
+  version: 2
+  wifis:
+    INTF:
+      dhcp4: true
+      dhcp6: true
+      optional: true
+      access-points:
+        "WWIIFFII":
+          auth:
+            key-management: "KKYY"
+            password: "PPAASS"
+

@@ -1,5 +1,6 @@
 // Package sqlite handles SQLite schema initialization and config writes for conf-agent.
 // The SQLite database is the shared config store read by all reader containers.
+// Only conf-agent writes to it; readers open read-only.
 package sqlite
 
 import (
@@ -10,7 +11,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/tpapi"
+	"conf-agent/tpapi"
 )
 
 // Init creates the SQLite schema if it doesn't exist.

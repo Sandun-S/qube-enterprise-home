@@ -46,7 +46,7 @@ func Deploy(workDir string) {
 	}
 }
 
-// RestartService restarts a named service (reader container) on the Qube.
+// RestartService restarts a named reader service on the Qube.
 func RestartService(service, workDir string) (string, error) {
 	swarmOut, _ := exec.Command("docker", "info", "--format", "{{.Swarm.LocalNodeState}}").Output()
 	isSwarm := strings.TrimSpace(string(swarmOut)) == "active"

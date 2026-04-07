@@ -30,7 +30,7 @@ qube-enterprise/
 │   │   ├── containers.go           # Container list (auto-managed)
 │   │   ├── telemetry.go            # Telemetry query endpoints (TimescaleDB)
 │   │   ├── hash.go                 # Config hash recomputation
-│   │   ├── commands.go             # Remote command dispatch (WS + DB queue)
+│   │   ├── commands.go             # Remote command dispatch (WS + DB queue) — 28 valid command types
 │   │   ├── registry.go             # Container registry settings
 │   │   ├── middleware.go           # JWT + RBAC
 │   │   ├── wshub.go                # WebSocket hub (Qube connections)
@@ -49,11 +49,20 @@ qube-enterprise/
 │   └── migrations-telemetry/       # Telemetry DB (qubedata)
 │       └── 001_timescale_init.sql  # TimescaleDB hypertable: sensor_readings
 │
-├── conf-agent/                     # Edge agent — runs on every Qube
-│   ├── main.go, register.go, websocket.go, poll.go
-│   ├── apply.go                    # Config JSON → SQLite writer
-│   ├── docker.go, deploy.go        # Docker API + stack deploy
-│   ├── heartbeat.go, commands.go   # Periodic heartbeat + remote commands
+├── conf-agent/                     # Edge agent — runs on every Qube (upgraded from conf-agent-master)
+│   ├── main.go                     # Startup: logrus + config + mit.txt + local HTTP + enterprise agent
+│   ├── configs/config.go           # Merged config: YAML (v1) + env var overrides + ReadMitTxt()
+│   ├── agent/agent.go              # WebSocket + polling loop + ExecCommand (28 command types)
+│   ├── docker/deploy.go            # Docker Swarm / Compose deploy
+│   ├── sqlite/sqlite.go            # SQLite schema init + WriteConfig (readers/sensors/settings)
+│   ├── tpapi/client.go             # TP-API HTTP client (replaces v1 HMAC conf-api client)
+│   ├── http/http.go                # Local management HTTP server (web UI on :Port)
+│   ├── http/run.go                 # v1 polling loop stub (replaced by agent/agent.go)
+│   ├── scripts/                    # 17 shell scripts for device management (from conf-agent-master)
+│   ├── html/                       # 5 web UI pages: index, reboot, shutdown, repair, reset-ips
+│   ├── network/                    # Netplan templates, iptables rules, systemd service unit
+│   ├── config.yml                  # YAML config (LogLevel, Port, DownloadTimeout)
+│   └── config-prod.yml             # Production config reference
 │
 ├── enterprise-influx-to-sql/       # Telemetry bridge
 │   └── main.go                     # Reads InfluxDB v1 + SQLite sensor_map → SenML → TP-API
@@ -410,6 +419,12 @@ INFLUX_DB=edgex
 8. **Protocol-driven UI.** Adding a protocol = 1 SQL INSERT. `reader_template.connection_schema` is a JSON Schema that drives the UI form for reader creation.
 
 9. **Sensor output modes:** `"influxdb"` (→ InfluxDB v1), `"live"` (→ WebSocket dashboard), `"influxdb,live"` (both). Readers check this from SQLite and route accordingly via core-switch.
+
+10. **conf-agent is an upgrade of conf-agent-master.** The enterprise conf-agent keeps the entire original structure (`scripts/`, `html/`, `network/`, `http/` local server, logrus, YAML config) and layers enterprise features on top. Key additions: `agent/agent.go` (WS + polling), `sqlite/sqlite.go`, `docker/deploy.go`, `tpapi/client.go`. The old HMAC-to-conf-api polling (`http/run.go`) is replaced by `agent.Start()`. Config is YAML (LogLevel/Port) + env var overrides (TPAPI_URL, CLOUD_WS_URL, etc.).
+
+11. **28 valid command types.** `cloud/internal/api/commands.go:validCommands` lists all. Groups: enterprise container/config (10), network (4), identity/system (3), backup/restore (2), maintenance mode (3), service management (3), file transfer (2). All dispatched via the same qube_commands table + WS/poll infrastructure — no API changes needed for new command types.
+
+12. **Local HTTP server on Qube.** conf-agent starts a web server on `conf.Port` (default 8081) for local device management: `/` (device info), `/reboot`, `/shutdown`, `/reset-ips`, `/repair`, `/logs`. Protected by the `maintain` key from `/boot/mit.txt`. Separate from the TP-API port.
 
 ## Related Documentation
 

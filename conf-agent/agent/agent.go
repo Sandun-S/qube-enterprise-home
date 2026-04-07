@@ -1,9 +1,21 @@
-// Package agent implements the conf-agent core logic:
-// WebSocket connection, HTTP polling fallback, config sync, and command execution.
+// Package agent implements the conf-agent v2 core: WebSocket cloud sync,
+// HTTP polling fallback, config application, and command execution.
+//
+// Command dispatch supports all v1 script-based operations (set_wifi, set_eth,
+// set_firewall, etc.) plus enterprise-specific commands (restart_reader, get_logs…).
+// Commands arrive via WebSocket "command" messages or TP-API /v1/commands/poll.
+//
+// Scripts run from WorkDir (default /opt/qube). In container deployments the
+// conf-agent container must have:
+//   - /boot/mit.txt mounted read-only (device identity)
+//   - /etc/netplan/ bind-mounted for network config commands
+//   - Host PID namespace or sudo for reboot/shutdown
+//   - Docker socket for container management
 package agent
 
 import (
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -17,17 +29,22 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/configs"
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/docker"
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/sqlite"
-	"github.com/Sandun-S/qube-enterprise-home/conf-agent/tpapi"
+	"github.com/sirupsen/logrus"
+
+	"conf-agent/configs"
+	"conf-agent/docker"
+	"conf-agent/sqlite"
+	"conf-agent/tpapi"
 )
 
-// Agent is the main conf-agent runtime state.
+// ─── Agent ────────────────────────────────────────────────────────────────────
+
+// Agent is the main conf-agent v2 runtime.
 type Agent struct {
-	cfg       configs.Config
+	cfg       *configs.Config
 	client    *tpapi.Client
 	db        *sql.DB
+	logger    *logrus.Logger
 	localHash string
 	hashFile  string
 
@@ -36,16 +53,16 @@ type Agent struct {
 	wsMu    sync.Mutex
 	wsAlive bool
 
-	// Shutdown
 	done chan struct{}
 }
 
 // New creates a new Agent and restores the last known config hash from disk.
-func New(cfg configs.Config, db *sql.DB) *Agent {
+func New(cfg *configs.Config, db *sql.DB, logger *logrus.Logger) *Agent {
 	a := &Agent{
 		cfg:      cfg,
 		client:   tpapi.NewClient(cfg.TPAPIURL, cfg.QubeID, cfg.QubeToken),
 		db:       db,
+		logger:   logger,
 		hashFile: filepath.Join(cfg.WorkDir, ".config_hash"),
 		done:     make(chan struct{}),
 	}
@@ -54,12 +71,6 @@ func New(cfg configs.Config, db *sql.DB) *Agent {
 		log.Printf("[agent] Restored local hash: %s", safeHash(a.localHash))
 	}
 	return a
-}
-
-// UpdateConfig updates the agent's config and rebuilds the TP-API client.
-func (a *Agent) UpdateConfig(cfg configs.Config) {
-	a.cfg = cfg
-	a.client = tpapi.NewClient(cfg.TPAPIURL, cfg.QubeID, cfg.QubeToken)
 }
 
 // Start launches the WebSocket loop and runs the polling loop (blocking).
@@ -97,8 +108,6 @@ func (a *Agent) wsLoop() {
 }
 
 func (a *Agent) connectWS() {
-	token := a.cfg.QubeToken
-
 	u, err := url.Parse(a.cfg.CloudWSURL)
 	if err != nil {
 		log.Printf("[ws] invalid WS URL: %v", err)
@@ -106,11 +115,10 @@ func (a *Agent) connectWS() {
 	}
 	q := u.Query()
 	q.Set("qube_id", a.cfg.QubeID)
-	q.Set("token", token)
+	q.Set("token", a.cfg.QubeToken)
 	u.RawQuery = q.Encode()
 
 	log.Printf("[ws] connecting to %s", u.Host)
-
 	conn, _, err := websocket.DefaultDialer.Dial(u.String(), nil)
 	if err != nil {
 		log.Printf("[ws] dial failed: %v", err)
@@ -166,7 +174,6 @@ func (a *Agent) readWS() {
 			log.Printf("[ws] invalid message: %v", err)
 			continue
 		}
-
 		a.handleWSMessage(msg)
 	}
 }
@@ -180,12 +187,11 @@ func (a *Agent) handleWSMessage(msg tpapi.WSMessage) {
 			return
 		}
 		hash, _ := payload["hash"].(string)
-		log.Printf("[ws] config_push received (hash=%s)", safeHash(hash))
+		log.Printf("[ws] config_push (hash=%s)", safeHash(hash))
 
 		if hash != "" && hash != a.localHash {
 			log.Println("[ws] hash mismatch — syncing config via HTTP")
 			a.syncConfig()
-
 			a.wsSend(tpapi.WSMessage{
 				Type:   "config_ack",
 				QubeID: a.cfg.QubeID,
@@ -206,8 +212,7 @@ func (a *Agent) handleWSMessage(msg tpapi.WSMessage) {
 		command, _ := payload["command"].(string)
 		cmdPayload, _ := payload["payload"].(map[string]any)
 
-		log.Printf("[ws] command received: %s (id=%s)", command, safeHash(cmdID))
-
+		log.Printf("[ws] command: %s (id=%s)", command, safeHash(cmdID))
 		cmd := tpapi.Command{ID: cmdID, Command: command, Payload: cmdPayload}
 		result, execErr := ExecCommand(cmd, a.cfg)
 		status := "executed"
@@ -231,7 +236,7 @@ func (a *Agent) handleWSMessage(msg tpapi.WSMessage) {
 		})
 
 	case "heartbeat_ack":
-		log.Println("[ws] heartbeat ack received")
+		log.Println("[ws] heartbeat ack")
 
 	default:
 		log.Printf("[ws] unknown message type: %s", msg.Type)
@@ -245,26 +250,20 @@ func (a *Agent) wsSend(msg tpapi.WSMessage) {
 	if !a.wsAlive || a.wsConn == nil {
 		return
 	}
-
 	a.wsConn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("[ws] marshal error: %v", err)
 		return
 	}
-	if err := a.wsConn.WriteMessage(websocket.TextMessage, data); err != nil {
-		log.Printf("[ws] write error: %v", err)
-	}
+	a.wsConn.WriteMessage(websocket.TextMessage, data)
 }
 
-// ─── Polling Loop (fallback when WS disconnected) ────────────────────────────
+// ─── Polling Loop (fallback) ─────────────────────────────────────────────────
 
 func (a *Agent) pollLoop() {
 	a.runPollCycle()
-
 	ticker := time.NewTicker(a.cfg.PollInterval)
 	defer ticker.Stop()
-
 	for {
 		select {
 		case <-ticker.C:
@@ -283,12 +282,12 @@ func (a *Agent) runPollCycle() {
 	a.wsMu.Unlock()
 
 	if wsUp {
-		log.Println("[cycle] WebSocket connected — checking state only")
+		log.Println("[cycle] WebSocket up — checking state only")
 		a.checkAndSync()
 		return
 	}
 
-	log.Println("[cycle] WebSocket disconnected — full poll cycle")
+	log.Println("[cycle] WebSocket down — full poll cycle")
 	a.sendHeartbeat()
 	a.executeCommandsHTTP()
 	a.checkAndSync()
@@ -307,7 +306,6 @@ func (a *Agent) checkAndSync() {
 		log.Println("[sync] hashes match — no action needed")
 		return
 	}
-
 	a.syncConfig()
 }
 
@@ -318,18 +316,16 @@ func (a *Agent) syncConfig() {
 		log.Printf("[sync] failed to get config: %v", err)
 		return
 	}
-
 	if err := a.applyConfig(sc); err != nil {
 		log.Printf("[sync] failed to apply config: %v", err)
 		return
 	}
-
 	a.localHash = sc.Hash
 	os.WriteFile(a.hashFile, []byte(sc.Hash), 0644)
-	log.Printf("[sync] config applied — hash=%s version=%d", safeHash(sc.Hash), sc.ConfigVersion)
+	log.Printf("[sync] applied — hash=%s version=%d", safeHash(sc.Hash), sc.ConfigVersion)
 }
 
-// ─── TP-API HTTP Calls ───────────────────────────────────────────────────────
+// ─── TP-API Calls ─────────────────────────────────────────────────────────────
 
 func (a *Agent) sendHeartbeat() {
 	_, status, err := a.client.Do("POST", "/v1/heartbeat", map[string]any{})
@@ -399,35 +395,31 @@ func (a *Agent) executeCommandsHTTP() {
 	}
 }
 
-// ─── Config Application ─────────────────────────────────────────────────────
+// ─── Config Application ──────────────────────────────────────────────────────
 
 func (a *Agent) applyConfig(sc *tpapi.SyncConfig) error {
-	// 1. Write docker-compose.yml
 	composePath := filepath.Join(a.cfg.WorkDir, "docker-compose.yml")
 	if err := os.WriteFile(composePath, []byte(sc.DockerComposeYML), 0644); err != nil {
 		return fmt.Errorf("write docker-compose.yml: %w", err)
 	}
 	log.Printf("[apply] wrote %s", composePath)
 
-	// 2. Write config to SQLite (readers, sensors, settings)
 	if err := sqlite.WriteConfig(a.db, sc); err != nil {
 		return fmt.Errorf("write sqlite: %w", err)
 	}
 
-	// 3. Deploy Docker
 	docker.Deploy(a.cfg.WorkDir)
 	return nil
 }
 
-// ─── Self-Registration ───────────────────────────────────────────────────────
+// ─── Self-Registration ────────────────────────────────────────────────────────
 
-// SelfRegister polls the TP-API until the device is claimed and returns the QUBE_TOKEN.
+// SelfRegister polls TP-API until the device is claimed and returns QUBE_TOKEN.
 func SelfRegister(client *tpapi.Client, qubeID, registerKey, workDir string) string {
 	if registerKey == "" {
-		log.Println("[register] No register_key available — cannot self-register")
+		log.Println("[register] No register_key — cannot self-register")
 		return ""
 	}
-
 	log.Printf("[register] Polling for claim status (device_id=%s)...", qubeID)
 
 	for {
@@ -435,7 +427,6 @@ func SelfRegister(client *tpapi.Client, qubeID, registerKey, workDir string) str
 			"device_id":    qubeID,
 			"register_key": registerKey,
 		})
-
 		if err != nil {
 			log.Printf("[register] request failed: %v — retrying in 30s", err)
 			time.Sleep(30 * time.Second)
@@ -449,7 +440,7 @@ func SelfRegister(client *tpapi.Client, qubeID, registerKey, workDir string) str
 		case 200:
 			token, _ := resp["qube_token"].(string)
 			if token == "" {
-				log.Printf("[register] got 200 but no qube_token in response")
+				log.Printf("[register] got 200 but no qube_token")
 				time.Sleep(30 * time.Second)
 				continue
 			}
@@ -462,7 +453,7 @@ func SelfRegister(client *tpapi.Client, qubeID, registerKey, workDir string) str
 			if r, ok := resp["retry_secs"].(float64); ok {
 				retrySecs = int(r)
 			}
-			log.Printf("[register] Device not yet claimed. Register key '%s' in portal. Retrying in %ds...",
+			log.Printf("[register] Not yet claimed. Register key '%s' in portal. Retry in %ds...",
 				registerKey, retrySecs)
 			time.Sleep(time.Duration(retrySecs) * time.Second)
 
@@ -482,7 +473,6 @@ func saveTokenToEnv(workDir, qubeID, token string) {
 	if b, err := os.ReadFile(envPath); err == nil {
 		existing = string(b)
 	}
-
 	lines := strings.Split(existing, "\n")
 	foundToken, foundID := false, false
 	for i, line := range lines {
@@ -501,7 +491,6 @@ func saveTokenToEnv(workDir, qubeID, token string) {
 	if !foundID {
 		lines = append(lines, "QUBE_ID="+qubeID)
 	}
-
 	if err := os.WriteFile(envPath, []byte(strings.Join(lines, "\n")), 0600); err != nil {
 		log.Printf("[register] WARNING: could not save token to %s: %v", envPath, err)
 	} else {
@@ -509,11 +498,23 @@ func saveTokenToEnv(workDir, qubeID, token string) {
 	}
 }
 
-// ─── Command Executor ────────────────────────────────────────────────────────
+// ─── Command Executor ─────────────────────────────────────────────────────────
+//
+// ExecCommand handles all remote commands dispatched by the enterprise cloud API.
+// Commands are grouped into:
+//   - Enterprise commands: ping, restart_reader, get_logs, list_containers, etc.
+//   - Device management (v1 compat): reboot, shutdown, get_info, set_wifi, etc.
+//   - File operations (v1 compat): put_file, get_file
+//   - Service management (v1 compat): service_add, service_rm, service_edit
+//
+// Script-based commands run from cfg.WorkDir using bash.
+// All paths are validated to prevent path traversal.
 
-// ExecCommand executes a remote command and returns the result.
-func ExecCommand(cmd tpapi.Command, cfg configs.Config) (map[string]any, error) {
+func ExecCommand(cmd tpapi.Command, cfg *configs.Config) (map[string]any, error) {
 	switch cmd.Command {
+
+	// ── Enterprise: connectivity ──────────────────────────────────────────────
+
 	case "ping":
 		target, _ := cmd.Payload["target"].(string)
 		if target == "" {
@@ -525,28 +526,22 @@ func ExecCommand(cmd tpapi.Command, cfg configs.Config) (map[string]any, error) 
 		}
 		return map[string]any{"output": out, "latency_ms": parsePingLatency(out), "target": target}, nil
 
+	// ── Enterprise: container management ─────────────────────────────────────
+
 	case "restart_reader":
 		readerID, _ := cmd.Payload["reader_id"].(string)
 		service, _ := cmd.Payload["service"].(string)
-		if service == "" && readerID == "" {
-			return nil, fmt.Errorf("reader_id or service name required")
-		}
 		if service == "" {
 			service = readerID
+		}
+		if service == "" {
+			return nil, fmt.Errorf("reader_id or service required")
 		}
 		out, err := docker.RestartService(service, cfg.WorkDir)
 		if err != nil {
 			return nil, fmt.Errorf("restart failed: %s", out)
 		}
 		return map[string]any{"restarted": service, "output": out}, nil
-
-	case "restart_qube":
-		log.Println("[cmd] REBOOT requested — rebooting in 3s")
-		go func() {
-			time.Sleep(3 * time.Second)
-			exec.Command("sudo", "reboot").Run()
-		}()
-		return map[string]any{"rebooting": true}, nil
 
 	case "stop_container":
 		service, _ := cmd.Payload["service"].(string)
@@ -559,15 +554,12 @@ func ExecCommand(cmd tpapi.Command, cfg configs.Config) (map[string]any, error) 
 		}
 		return map[string]any{"stopped": service, "output": out}, nil
 
-	case "reload_config":
-		hashFile := filepath.Join(cfg.WorkDir, ".config_hash")
-		os.WriteFile(hashFile, []byte(""), 0644)
-		return map[string]any{"message": "local hash cleared — will resync on next cycle"}, nil
-
-	case "update_sqlite":
-		hashFile := filepath.Join(cfg.WorkDir, ".config_hash")
-		os.WriteFile(hashFile, []byte(""), 0644)
-		return map[string]any{"message": "SQLite update triggered — will resync on next cycle"}, nil
+	case "list_containers":
+		out, err := docker.Run("docker", "ps", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}")
+		if err != nil {
+			return nil, fmt.Errorf("docker ps failed: %v", err)
+		}
+		return map[string]any{"containers": out}, nil
 
 	case "get_logs":
 		service, _ := cmd.Payload["service"].(string)
@@ -593,19 +585,339 @@ func ExecCommand(cmd tpapi.Command, cfg configs.Config) (map[string]any, error) 
 		}
 		return map[string]any{"logs": out, "service": service}, nil
 
-	case "list_containers":
-		out, err := docker.Run("docker", "ps", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}")
+	// ── Enterprise: config management ────────────────────────────────────────
+
+	case "reload_config", "update_sqlite":
+		hashFile := filepath.Join(cfg.WorkDir, ".config_hash")
+		os.WriteFile(hashFile, []byte(""), 0644)
+		return map[string]any{"message": "local hash cleared — will resync on next cycle"}, nil
+
+	// ── Device management: reboot / shutdown ──────────────────────────────────
+
+	case "restart_qube", "reboot":
+		log.Println("[cmd] REBOOT requested — rebooting in 3s")
+		go func() {
+			time.Sleep(3 * time.Second)
+			// scripts/reboot.sh just logs and exits with 99
+			runScript(cfg.WorkDir, "scripts/reboot.sh")
+			exec.Command("sudo", "/usr/sbin/reboot").Run()
+		}()
+		return map[string]any{"rebooting": true}, nil
+
+	case "shutdown":
+		log.Println("[cmd] SHUTDOWN requested — shutting down in 3s")
+		go func() {
+			time.Sleep(3 * time.Second)
+			runScript(cfg.WorkDir, "scripts/shutdown.sh")
+			exec.Command("sudo", "/usr/sbin/shutdown", "-h", "now").Run()
+		}()
+		return map[string]any{"shutting_down": true}, nil
+
+	// ── Device management: network ────────────────────────────────────────────
+
+	case "reset_ips":
+		out, err := runScript(cfg.WorkDir, "scripts/reset_ips.sh")
 		if err != nil {
-			return nil, fmt.Errorf("docker ps failed: %v", err)
+			return nil, fmt.Errorf("reset_ips failed: %s — %v", out, err)
 		}
-		return map[string]any{"containers": out}, nil
+		return map[string]any{"output": out}, nil
+
+	case "set_eth":
+		// payload: {"interface":"eth0","mode":"auto"} or
+		//          {"interface":"eth0","mode":"static","address":"192.168.1.10/24","gateway":"192.168.1.1","dns":"8.8.8.8"}
+		iface, _ := cmd.Payload["interface"].(string)
+		mode, _ := cmd.Payload["mode"].(string)
+		if iface == "" || mode == "" {
+			return nil, fmt.Errorf("interface and mode required")
+		}
+		args := []string{iface, mode}
+		if mode == "static" {
+			addr, _ := cmd.Payload["address"].(string)
+			gw, _ := cmd.Payload["gateway"].(string)
+			dns, _ := cmd.Payload["dns"].(string)
+			args = append(args, addr, gw, dns)
+		}
+		out, err := runScript(cfg.WorkDir, append([]string{"scripts/set_eth.sh"}, args...)...)
+		if err != nil {
+			return nil, fmt.Errorf("set_eth failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out}, nil
+
+	case "set_wifi":
+		// payload: {"interface":"wlan0","mode":"auto","ssid":"MyWifi","password":"secret","key_mgmt":"psk"} or
+		//          {"interface":"wlan0","mode":"static","address":"...","gateway":"...","dns":"...","ssid":"...","password":"...","key_mgmt":"psk"}
+		iface, _ := cmd.Payload["interface"].(string)
+		mode, _ := cmd.Payload["mode"].(string)
+		if iface == "" || mode == "" {
+			return nil, fmt.Errorf("interface and mode required")
+		}
+		ssid, _ := cmd.Payload["ssid"].(string)
+		password, _ := cmd.Payload["password"].(string)
+		keyMgmt, _ := cmd.Payload["key_mgmt"].(string)
+		if keyMgmt == "" {
+			keyMgmt = "psk"
+		}
+		var args []string
+		if mode == "auto" {
+			// set_wifi.sh: <interface> auto <ssid> <passwd> <key-mgmnt>
+			args = []string{iface, "auto", ssid, password, keyMgmt}
+		} else {
+			// set_wifi.sh: <interface> <ipv4/subnet> <gateway> <dns> <ssid> <passwd> <key-mgmnt>
+			addr, _ := cmd.Payload["address"].(string)
+			gw, _ := cmd.Payload["gateway"].(string)
+			dns, _ := cmd.Payload["dns"].(string)
+			args = []string{iface, addr, gw, dns, ssid, password, keyMgmt}
+		}
+		out, err := runScript(cfg.WorkDir, append([]string{"scripts/set_wifi.sh"}, args...)...)
+		if err != nil {
+			return nil, fmt.Errorf("set_wifi failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out}, nil
+
+	case "set_firewall":
+		// payload: {"rules":"tcp:10.0.0.0/8:1883,tcp:0:8080"}
+		// Rules format: <proto>:<net-or-0>:<port-or-0> comma-separated
+		rules, _ := cmd.Payload["rules"].(string)
+		if rules == "" {
+			return nil, fmt.Errorf("rules required (e.g. tcp:10.0.0.0/8:1883)")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/set_firewall.sh", rules)
+		if err != nil {
+			return nil, fmt.Errorf("set_firewall failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out}, nil
+
+	// ── Device management: identity / system ─────────────────────────────────
+
+	case "set_name":
+		name, _ := cmd.Payload["name"].(string)
+		if name == "" {
+			return nil, fmt.Errorf("name required")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/set_name.sh", name)
+		if err != nil {
+			return nil, fmt.Errorf("set_name failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out}, nil
+
+	case "set_timezone":
+		tz, _ := cmd.Payload["timezone"].(string)
+		if tz == "" {
+			return nil, fmt.Errorf("timezone required (e.g. Asia/Colombo)")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/set_timezone.sh", tz)
+		if err != nil {
+			return nil, fmt.Errorf("set_timezone failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out}, nil
+
+	case "get_info":
+		// Runs scripts/get_info.sh which outputs eth/wlan IPs, MACs, SSID, open ports.
+		out, err := runScript(cfg.WorkDir, "scripts/get_info.sh")
+		if err != nil {
+			return nil, fmt.Errorf("get_info failed: %s — %v", out, err)
+		}
+		// Parse the key: value output into a map
+		info := parseKeyValueOutput(out)
+		info["raw"] = out
+		return info, nil
+
+	// ── Data backup / restore ─────────────────────────────────────────────────
+
+	case "backup_data":
+		// payload: {"type":"cifs","path":"\\\\192.168.1.1\\share","user":"u","pass":"p"}
+		//       or {"type":"nfs","path":"192.168.1.1:/nfs-share"}
+		mountType, _ := cmd.Payload["type"].(string)
+		mountPath, _ := cmd.Payload["path"].(string)
+		user, _ := cmd.Payload["user"].(string)
+		pass, _ := cmd.Payload["pass"].(string)
+		if mountType == "" || mountPath == "" {
+			return nil, fmt.Errorf("type and path required")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/backup_data.sh", mountType, mountPath, user, pass)
+		if err != nil {
+			return nil, fmt.Errorf("backup_data failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out}, nil
+
+	case "restore_data":
+		mountType, _ := cmd.Payload["type"].(string)
+		mountPath, _ := cmd.Payload["path"].(string)
+		user, _ := cmd.Payload["user"].(string)
+		pass, _ := cmd.Payload["pass"].(string)
+		if mountType == "" || mountPath == "" {
+			return nil, fmt.Errorf("type and path required")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/restore_data.sh", mountType, mountPath, user, pass)
+		if err != nil {
+			return nil, fmt.Errorf("restore_data failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out}, nil
+
+	// ── Maintenance mode operations ───────────────────────────────────────────
+	// These reboot the device into maintenance mode, run the target script,
+	// then reboot back to normal. Device will be temporarily offline.
+
+	case "backup_image":
+		out, err := runScript(cfg.WorkDir, "scripts/maintenance_start.sh", "scripts/backup_image.sh")
+		if err != nil && !isMaintenanceReboot(err) {
+			return nil, fmt.Errorf("backup_image failed: %s — %v", out, err)
+		}
+		return map[string]any{"message": "Entering maintenance mode for image backup — device rebooting", "output": out}, nil
+
+	case "restore_image":
+		out, err := runScript(cfg.WorkDir, "scripts/maintenance_start.sh", "scripts/restore_image.sh")
+		if err != nil && !isMaintenanceReboot(err) {
+			return nil, fmt.Errorf("restore_image failed: %s — %v", out, err)
+		}
+		return map[string]any{"message": "Entering maintenance mode for image restore — device rebooting", "output": out}, nil
+
+	case "repair_fs":
+		out, err := runScript(cfg.WorkDir, "scripts/maintenance_start.sh", "scripts/repair_fs.sh")
+		if err != nil && !isMaintenanceReboot(err) {
+			return nil, fmt.Errorf("repair_fs failed: %s — %v", out, err)
+		}
+		return map[string]any{"message": "Entering maintenance mode for filesystem repair — device rebooting", "output": out}, nil
+
+	// ── Service management (v1 compat) ────────────────────────────────────────
+
+	case "service_add":
+		// payload: {"name":"myservice","type":"modbus","version":"1.2.3","ports":"8080,8081"}
+		name, _ := cmd.Payload["name"].(string)
+		svcType, _ := cmd.Payload["type"].(string)
+		version, _ := cmd.Payload["version"].(string)
+		ports, _ := cmd.Payload["ports"].(string)
+		if name == "" || svcType == "" || version == "" {
+			return nil, fmt.Errorf("name, type, and version required")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/service_add.sh", name, svcType, version, ports)
+		if err != nil {
+			return nil, fmt.Errorf("service_add failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out, "service": name}, nil
+
+	case "service_rm":
+		name, _ := cmd.Payload["name"].(string)
+		if name == "" {
+			return nil, fmt.Errorf("name required")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/service_rm.sh", name)
+		if err != nil {
+			return nil, fmt.Errorf("service_rm failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out, "service": name}, nil
+
+	case "service_edit":
+		name, _ := cmd.Payload["name"].(string)
+		ports, _ := cmd.Payload["ports"].(string)
+		if name == "" {
+			return nil, fmt.Errorf("name required")
+		}
+		out, err := runScript(cfg.WorkDir, "scripts/service_edit.sh", name, ports)
+		if err != nil {
+			return nil, fmt.Errorf("service_edit failed: %s — %v", out, err)
+		}
+		return map[string]any{"output": out, "service": name}, nil
+
+	// ── File transfer ─────────────────────────────────────────────────────────
+
+	case "put_file":
+		// payload: {"path":"/relative/path/file.txt","data":"<base64>"}
+		// File is written to /mit<path> (same convention as v1 conf-agent)
+		filePath, _ := cmd.Payload["path"].(string)
+		dataB64, _ := cmd.Payload["data"].(string)
+		if filePath == "" || dataB64 == "" {
+			return nil, fmt.Errorf("path and data required")
+		}
+		if !pathValidate(filePath) {
+			return nil, fmt.Errorf("invalid path")
+		}
+		data, err := base64.StdEncoding.DecodeString(dataB64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64: %v", err)
+		}
+		destPath := "/mit" + filePath
+		if err := os.MkdirAll(filepath.Dir(destPath), 0755); err != nil {
+			return nil, fmt.Errorf("mkdir failed: %v", err)
+		}
+		if err := os.WriteFile(destPath, data, 0644); err != nil {
+			return nil, fmt.Errorf("write failed: %v", err)
+		}
+		return map[string]any{"written": destPath, "bytes": len(data)}, nil
+
+	case "get_file":
+		// payload: {"path":"/relative/path/file.txt"}
+		filePath, _ := cmd.Payload["path"].(string)
+		if filePath == "" {
+			return nil, fmt.Errorf("path required")
+		}
+		if !pathValidate(filePath) {
+			return nil, fmt.Errorf("invalid path")
+		}
+		srcPath := "/mit" + filePath
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return nil, fmt.Errorf("read failed: %v", err)
+		}
+		return map[string]any{
+			"path": srcPath,
+			"data": base64.StdEncoding.EncodeToString(data),
+			"size": len(data),
+		}, nil
 
 	default:
 		return nil, fmt.Errorf("unknown command: %s", cmd.Command)
 	}
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+// runScript runs a shell script from workDir with the given arguments.
+// The script path is the first element, remaining elements are args.
+func runScript(workDir string, scriptAndArgs ...string) (string, error) {
+	if len(scriptAndArgs) == 0 {
+		return "", fmt.Errorf("no script specified")
+	}
+	args := append([]string{scriptAndArgs[0]}, scriptAndArgs[1:]...)
+	cmd := exec.Command("bash", args...)
+	cmd.Dir = workDir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// isMaintenanceReboot returns true if the error is from a maintenance exit code (99=reboot).
+// maintenance_start.sh always exits 99 to trigger a reboot — this is expected.
+func isMaintenanceReboot(err error) bool {
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		return exitErr.ExitCode() == 99
+	}
+	return false
+}
+
+// pathValidate rejects paths with traversal or injection characters.
+// Matches the v1 conf-agent pathValidate() function.
+func pathValidate(txt string) bool {
+	return !strings.Contains(txt, "..") &&
+		!strings.Contains(txt, "$") &&
+		!strings.Contains(txt, "\\") &&
+		!strings.Contains(txt, ";")
+}
+
+// parseKeyValueOutput parses "key: value" lines (e.g. get_info.sh output) into a map.
+func parseKeyValueOutput(output string) map[string]any {
+	result := make(map[string]any)
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			result[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	}
+	return result
+}
 
 func parsePingLatency(output string) float64 {
 	for _, line := range strings.Split(output, "\n") {
