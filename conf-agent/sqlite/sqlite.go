@@ -34,8 +34,11 @@ func Init(db *sql.DB) {
 		config_json TEXT NOT NULL DEFAULT '{}',
 		tags_json   TEXT NOT NULL DEFAULT '{}',
 		output      TEXT NOT NULL DEFAULT 'influxdb',
-		table_name  TEXT NOT NULL DEFAULT ''
+		table_name  TEXT NOT NULL DEFAULT '',
+		status      TEXT NOT NULL DEFAULT 'active'
 	)`)
+	// Migrate existing DBs that were created without the status column
+	db.Exec(`ALTER TABLE sensors ADD COLUMN status TEXT NOT NULL DEFAULT 'active'`)
 
 	db.Exec(`CREATE TABLE IF NOT EXISTS coreswitch_settings (
 		key   TEXT PRIMARY KEY,
@@ -86,8 +89,8 @@ func WriteConfig(db *sql.DB, sc *tpapi.SyncConfig) error {
 		for _, s := range rd.Sensors {
 			sCfgJSON, _ := json.Marshal(s.ConfigJSON)
 			sTagsJSON, _ := json.Marshal(s.TagsJSON)
-			tx.Exec(`INSERT INTO sensors (id, reader_id, name, config_json, tags_json, output, table_name)
-				VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			tx.Exec(`INSERT INTO sensors (id, reader_id, name, config_json, tags_json, output, table_name, status)
+				VALUES (?, ?, ?, ?, ?, ?, ?, 'active')`,
 				s.ID, rd.ID, s.Name, string(sCfgJSON), string(sTagsJSON), s.Output, s.TableName)
 		}
 	}
