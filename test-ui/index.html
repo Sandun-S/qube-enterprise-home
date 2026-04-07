@@ -601,7 +601,7 @@ async function custClaim(){
 }
 
 async function loadCatalog(){
-  const r=await api('GET','/api/v1/device-templates');
+  const r=await api('GET','/api/v1/device-templates','',CUST_TOKEN||SA_TOKEN);
   if(r.ok)allTemplates=r.data;
 }
 
