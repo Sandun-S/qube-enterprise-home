@@ -53,10 +53,35 @@ func updateRegistryHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			}
 		}
 
+		// Re-resolve all reader container images with the new registry settings
+		// and recompute config hashes for affected qubes so conf-agents resync.
+		affectedQubes := map[string]bool{}
+		crows, err := pool.Query(ctx, `
+			SELECT c.id, c.qube_id, COALESCE(rt.image_suffix,''), rd.protocol
+			FROM containers c
+			JOIN readers rd ON rd.id = c.reader_id
+			LEFT JOIN reader_templates rt ON rt.id = rd.template_id
+			WHERE c.reader_id IS NOT NULL AND c.status = 'active'`)
+		if err == nil {
+			defer crows.Close()
+			for crows.Next() {
+				var containerID, qubeID, imageSuffix, protocol string
+				if crows.Scan(&containerID, &qubeID, &imageSuffix, &protocol) == nil {
+					newImage := resolveReaderImage(pool, protocol, imageSuffix)
+					pool.Exec(ctx, `UPDATE containers SET image=$1 WHERE id=$2`, newImage, containerID)
+					affectedQubes[qubeID] = true
+				}
+			}
+		}
+		for qubeID := range affectedQubes {
+			recomputeConfigHash(ctx, pool, qubeID)
+		}
+
 		settings, _ := loadRegistrySettings(ctx, pool)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"updated":  len(updates),
-			"settings": settings,
+			"updated":        len(updates),
+			"qubes_resynced": len(affectedQubes),
+			"settings":       settings,
 		})
 	}
 }
@@ -102,7 +127,8 @@ func resolveImages(s *RegistrySettings) map[string]string {
 	case "github":
 		base := s.GithubBase
 		resolved["conf_agent"]    = base + "/conf-agent:" + arch
-		resolved["influx_sql"]    = base + "/influx-to-sql:" + arch
+		resolved["influx_sql"]    = base + "/enterprise-influx-to-sql:" + arch
+		resolved["core_switch"]   = base + "/core-switch:" + arch
 		resolved["modbus_reader"] = base + "/modbus-reader:" + arch
 		resolved["snmp_reader"]   = base + "/snmp-reader:" + arch
 		resolved["mqtt_reader"]   = base + "/mqtt-reader:" + arch
@@ -114,6 +140,8 @@ func resolveImages(s *RegistrySettings) map[string]string {
 			s.GitlabBase+"/enterprise-conf-agent:"+arch)
 		resolved["influx_sql"]    = getOrDefault(s.Images, "img_influx_sql",
 			s.GitlabBase+"/enterprise-influx-to-sql:"+arch)
+		resolved["core_switch"]   = getOrDefault(s.Images, "img_core_switch",
+			s.GitlabBase+"/core-switch:"+arch)
 		resolved["modbus_reader"] = getOrDefault(s.Images, "img_modbus_reader",
 			s.GitlabBase+"/modbus-reader:"+arch)
 		resolved["snmp_reader"]   = getOrDefault(s.Images, "img_snmp_reader",
@@ -128,6 +156,7 @@ func resolveImages(s *RegistrySettings) map[string]string {
 	case "custom":
 		resolved["conf_agent"]    = getOrDefault(s.Images, "img_conf_agent", "")
 		resolved["influx_sql"]    = getOrDefault(s.Images, "img_influx_sql", "")
+		resolved["core_switch"]   = getOrDefault(s.Images, "img_core_switch", "")
 		resolved["modbus_reader"] = getOrDefault(s.Images, "img_modbus_reader", "")
 		resolved["snmp_reader"]   = getOrDefault(s.Images, "img_snmp_reader", "")
 		resolved["mqtt_reader"]   = getOrDefault(s.Images, "img_mqtt_reader", "")
