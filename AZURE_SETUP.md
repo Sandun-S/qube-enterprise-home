@@ -3,6 +3,9 @@
 VM: `qubevm` (20.197.15.165, port 2002, user azureuser)
 Registry: GitHub (`ghcr.io/sandun-s/qube-enterprise-home`)
 
+**Cloud VM runs:** PostgreSQL (management + telemetry), cloud-api, test-ui
+**Does NOT run:** InfluxDB (that lives on the Qube edge device)
+
 ---
 
 ## Step 1 — Create directories on the VM
@@ -13,7 +16,7 @@ ssh qubevm "sudo mkdir -p /opt/qube-enterprise/migrations /opt/qube-enterprise/m
 
 ---
 
-## Step 2 — Copy files from local machine (run from repo root)
+## Step 2 — Copy migration files from local machine (run from repo root)
 
 ```bash
 rsync -av cloud/migrations/ qubevm:/opt/qube-enterprise/migrations/
@@ -32,51 +35,31 @@ rsync -av scripts/setup-cloud.sh qubevm:~/
 
 ## Step 3 — Run setup script on the VM
 
-`CLOUD_API_IMAGE` = the image used to run cloud-api **on this VM**.
-
 ```bash
 ssh qubevm
 chmod +x setup-cloud.sh
-sudo CLOUD_API_IMAGE=ghcr.io/sandun-s/qube-enterprise-home/cloud-api:amd64.latest \
-     ./setup-cloud.sh
+sudo ./setup-cloud.sh
 ```
 
-When done, check it's up:
+This generates `/opt/qube-enterprise/docker-compose.yml` and starts all services.
+
+When done, verify:
 ```bash
 curl http://localhost:8080/health | jq .
-cat /opt/qube-enterprise/cloud-credentials.txt   # JWT_SECRET saved here
+cat /opt/qube-enterprise/cloud-credentials.txt
 ```
 
 ---
 
-## Step 4 — Update reader container registry to GitHub (via API)
-
-`QUBE_IMAGE_REGISTRY` = where cloud-api tells **Qubes** to pull reader containers from.
-The setup script defaults this to GitLab — update it to GitHub here.
-
-```bash
-# Get superadmin token
-SA_TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"iotteam@internal.local","password":"iotteam2024"}' \
-  | jq -r '.token')
-
-echo $SA_TOKEN   # should not be empty
-
-# Switch registry to GitHub
-curl -X PUT http://localhost:8080/api/v1/admin/registry \
-  -H "Authorization: Bearer $SA_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home"}'
-```
-
----
-
-## Step 5 — Open Azure firewall ports
+## Step 4 — Open Azure firewall ports
 
 In Azure Portal → VM → **Networking** → Add inbound port rules:
-- `8080` — Cloud API + WebSocket (frontend + Qubes)
-- `8081` — TP-API (Qubes only)
+
+| Port | Purpose |
+|------|---------|
+| `8080` | Cloud API + WebSocket (frontend + Qubes) |
+| `8081` | TP-API (Qubes only) |
+| `8888` | Test UI |
 
 Do **not** expose port `5432` (Postgres).
 
@@ -85,13 +68,63 @@ Verify from local machine:
 curl http://20.197.15.165:8080/health | jq .
 ```
 
+Open test UI in browser: `http://20.197.15.165:8888`
+
+---
+
+## Step 5 — Log in to test UI
+
+Open `http://20.197.15.165:8888` → **Superadmin** tab:
+- Email: `iotteam@internal.local`
+- Password: `iotteam2024`
+
+---
+
+## CI/CD — Automatic deploys
+
+After setup, every push to `main` automatically:
+1. Builds `cloud-api` and `test-ui` images → pushes to GHCR
+2. SSH into the VM → pulls new images → restarts containers
+
+No manual steps needed after initial setup.
+
+Requires GitHub Actions secrets:
+| Secret | Value |
+|--------|-------|
+| `CLOUD_VM_HOST` | `20.197.15.165` |
+| `CLOUD_VM_SSH_PORT` | `2002` |
+| `CLOUD_VM_USER` | `azureuser` |
+| `CLOUD_VM_SSH_KEY` | Private SSH key |
+
+And Actions variable:
+| Variable | Value |
+|----------|-------|
+| `ENABLE_DEPLOY` | `true` |
+
 ---
 
 ## Summary
 
 | Env var | What it controls |
-|---|---|
-| `CLOUD_API_IMAGE` | Docker image for cloud-api on this VM |
-| `QUBE_IMAGE_REGISTRY` | Registry Qubes use to pull reader containers (set via API) |
+|---------|-----------------|
+| `CLOUD_API_IMAGE` | Docker image for cloud-api (default: GHCR amd64.latest) |
+| `TEST_UI_IMAGE` | Docker image for test-ui (default: GHCR amd64.latest) |
+| `JWT_SECRET` | Auto-generated if not set, saved to cloud-credentials.txt |
 
 Default superadmin: `iotteam@internal.local` / `iotteam2024`
+
+---
+
+## Existing VM — Remove stale InfluxDB
+
+If InfluxDB is running on the cloud VM from an older setup, remove it:
+
+```bash
+cd /opt/qube-enterprise
+docker compose stop influxdb
+docker compose rm -f influxdb
+docker volume rm qube-enterprise_influxdb_data
+```
+
+Then remove the `influxdb` service block from `/opt/qube-enterprise/docker-compose.yml`
+and the `influxdb_data` volume entry.

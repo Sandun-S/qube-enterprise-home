@@ -1,15 +1,14 @@
 #!/bin/bash
 # setup-cloud.sh — Qube Enterprise v2 Cloud VM Setup
-# Works for Multipass VM test and production cloud VM.
 # Usage: chmod +x setup-cloud.sh && sudo ./setup-cloud.sh
 #
 # Expects the following already copied to the VM:
 #   $WORK_DIR/migrations/            — cloud/migrations/*.sql
 #   $WORK_DIR/migrations-telemetry/  — cloud/migrations-telemetry/*.sql
-#   /usr/local/bin/qube-cloud-api    — cloud-api binary (or set CLOUD_API_IMAGE)
 set -e
 
-CLOUD_API_IMAGE="${CLOUD_API_IMAGE:-registry.gitlab.com/iot-team4/product/enterprise-cloud-api:amd64.latest}"
+CLOUD_API_IMAGE="${CLOUD_API_IMAGE:-ghcr.io/sandun-s/qube-enterprise-home/cloud-api:amd64.latest}"
+TEST_UI_IMAGE="${TEST_UI_IMAGE:-ghcr.io/sandun-s/qube-enterprise-home/test-ui:amd64.latest}"
 DB_PASS="${DB_PASS:-qubepass}"
 DB_NAME="${DB_NAME:-qubedb}"
 DB_USER="${DB_USER:-qubeadmin}"
@@ -47,13 +46,11 @@ if [ ! -d "migrations" ] || [ ! -d "migrations-telemetry" ]; then
 fi
 
 cat > docker-compose.yml << COMPOSE
-version: "3.8"
 networks:
   qube_net:
     driver: bridge
 volumes:
   postgres_data:
-  influxdb_data:
 services:
   postgres:
     image: timescale/timescaledb:latest-pg16
@@ -76,16 +73,6 @@ services:
       interval: 5s
       retries: 20
 
-  influxdb:
-    image: influxdb:1.8
-    restart: unless-stopped
-    networks: [qube_net]
-    ports: ["8086:8086"]
-    volumes: [influxdb_data:/var/lib/influxdb]
-    environment:
-      INFLUXDB_DB: edgex
-      INFLUXDB_HTTP_AUTH_ENABLED: "false"
-
   cloud-api:
     image: $CLOUD_API_IMAGE
     restart: unless-stopped
@@ -99,20 +86,21 @@ services:
       DATABASE_URL:           postgres://$DB_USER:$DB_PASS@postgres:5432/$DB_NAME?sslmode=disable
       TELEMETRY_DATABASE_URL: postgres://$DB_USER:$DB_PASS@postgres:5432/qubedata?sslmode=disable
       JWT_SECRET:             $JWT_SECRET
-      QUBE_IMAGE_REGISTRY:    registry.gitlab.com/iot-team4/product
-COMPOSE
+      QUBE_IMAGE_REGISTRY:    ghcr.io/sandun-s/qube-enterprise-home
 
-cat > .env << ENV
-JWT_SECRET=$JWT_SECRET
-DB_PASS=$DB_PASS
-CLOUD_IP=$CLOUD_IP
-ENV
+  test-ui:
+    image: $TEST_UI_IMAGE
+    restart: unless-stopped
+    networks: [qube_net]
+    ports:
+      - "8888:80"
+COMPOSE
 
 echo "JWT_SECRET=$JWT_SECRET"    > cloud-credentials.txt
 echo "CLOUD_IP=$CLOUD_IP"       >> cloud-credentials.txt
 echo "Superadmin: iotteam@internal.local / iotteam2024" >> cloud-credentials.txt
 
-docker compose pull cloud-api 2>/dev/null || true
+docker compose pull
 docker compose up -d
 
 echo "Waiting for Cloud API..."
@@ -123,9 +111,9 @@ done
 curl -sf http://localhost:8080/health | jq . || true
 
 echo ""
-echo "== Cloud API running =="
+echo "== Stack running =="
 echo "   Cloud API:  http://$CLOUD_IP:8080"
 echo "   TP-API:     http://$CLOUD_IP:8081"
-echo "   InfluxDB:   http://$CLOUD_IP:8086"
+echo "   Test UI:    http://$CLOUD_IP:8888"
 echo "   Superadmin: iotteam@internal.local / iotteam2024"
 echo "   Credentials saved to: $WORK_DIR/cloud-credentials.txt"

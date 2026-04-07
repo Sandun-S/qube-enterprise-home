@@ -776,7 +776,7 @@ function populateQubeSelect(){
 async function loadGatewaysForQube(){
   const qubeId=v('c-target-qube');
   if(!qubeId)return;
-  const r=await api('GET',`/api/v1/qubes/${qubeId}/gateways`);
+  const r=await api('GET',`/api/v1/qubes/${qubeId}/readers`);
   qubeGateways=r.ok?r.data:[];
   updateConnectionNotice();
 }
@@ -859,12 +859,12 @@ async function custAddSensor(){
     const autoName=proto_id==='snmp'
       ?'SNMP_GW'           // SNMP: generic name since it handles all SNMP devices
       :safeName+'_GW';     // Others: named after device type
-    const gwR=await api('POST',`/api/v1/qubes/${qubeId}/gateways`,
+    const gwR=await api('POST',`/api/v1/qubes/${qubeId}/readers`,
       {name:autoName,protocol:proto_id,
        host:singleContainerProtocols.includes(proto_id)?'':host,
        port,config_json:connVals});
-    if(!gwR.ok){msgEl('c-add-msg','err','Gateway creation failed: '+(gwR.data.error||'error'));return;}
-    gatewayId=gwR.data.gateway_id;
+    if(!gwR.ok){msgEl('c-add-msg','err','Reader creation failed: '+(gwR.data.error||'error'));return;}
+    gatewayId=gwR.data.reader_id;
     gatewayName=autoName;
     gwAction='new gateway created';
     msgEl('c-add-msg','ok',`New gateway "${autoName}" created...`);
@@ -875,7 +875,7 @@ async function custAddSensor(){
   try{tags=JSON.parse(v('c-tags')||'{}');}catch(e){}
 
   msgEl('c-add-msg','ok','Adding sensor...');
-  const sR=await api('POST',`/api/v1/gateways/${gatewayId}/sensors`,
+  const sR=await api('POST',`/api/v1/readers/${gatewayId}/sensors`,
     {name:v('c-sensor-name'),template_id:selectedTemplate.id,address_params:ap,tags_json:tags});
   if(!sR.ok){msgEl('c-add-msg','err','Sensor failed: '+(sR.data.error||'error'));return;}
 
@@ -1263,7 +1263,7 @@ async function testConn(){
 
 // Init
 document.getElementById('cfg-url').value = BASE;
-loadProtocols();
+// loadProtocols() is called after login — no token available at page init
 </script>
 </body>
 </html>
