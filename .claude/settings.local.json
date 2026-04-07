@@ -27,7 +27,9 @@
       "Bash(grep -E \"^R=$_ESCAPED_OPEN_PAREN_4b74832081acd9c6__api|^R=$_ESCAPED_OPEN_PAREN_4b74832081acd9c6__tp_api|assert_status\" /mnt/d/Sandun/Projects/qube-enterprise-home/test/test_api.sh)",
       "Bash(grep -E \"curl.*-X \\(GET|POST|PUT|PATCH|DELETE\\)|curl -s $BASE|curl -s $TPBASE\" /mnt/d/Sandun/Projects/qube-enterprise-home/TESTING.md)",
       "Bash(grep -E \"curl -s $BASE|curl -s \"\"$BASE\" /mnt/d/Sandun/Projects/qube-enterprise-home/TESTING.md)",
-      "Bash(chmod:*)"
+      "Bash(chmod:*)",
+      "Read(//home/sanduns/go/bin/**)",
+      "Read(//usr/**)"
     ]
   }
 }
