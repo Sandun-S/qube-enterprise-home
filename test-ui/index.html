@@ -104,7 +104,7 @@ pre{background:#0a0c12;border:1px solid #2d3748;border-radius:6px;padding:12px;f
   <div class="card">
     <div class="card-title">Connection</div>
     <label>Cloud API Base URL</label>
-    <input id="cfg-url" value="http://localhost:8080" placeholder="http://your-cloud-ip:8080">
+    <input id="cfg-url" placeholder="http://your-cloud-ip:8080">
     <div style="margin-top:12px;display:flex;gap:8px">
       <button class="btn btn-p" onclick="testConn()">Test Connection</button>
     </div>
@@ -425,7 +425,9 @@ pre{background:#0a0c12;border:1px solid #2d3748;border-radius:6px;padding:12px;f
 </div>
 
 <script>
-let BASE='http://localhost:8080';
+let BASE=(location.hostname==='localhost'||location.hostname==='127.0.0.1')
+  ?'http://localhost:8080'
+  :`http://${location.hostname}:8080`;
 let CUST_TOKEN='',SA_TOKEN='';
 let allTemplates=[],allProtocols=[],selectedTemplate=null,myQubes=[];
 let editingId=null,formRegs=[];
@@ -1259,6 +1261,7 @@ async function testConn(){
 }
 
 // Init
+document.getElementById('cfg-url').value = BASE;
 loadProtocols();
 </script>
 </body>

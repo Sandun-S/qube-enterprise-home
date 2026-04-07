@@ -222,7 +222,7 @@ jobs:
             echo "${{ secrets.GITHUB_TOKEN }}" | \
               docker login ghcr.io -u ${{ github.actor }} --password-stdin
             cd /opt/qube-enterprise
-            docker compose pull cloud-api
-            docker compose up -d cloud-api
+            docker compose -f docker-compose.dev.yml pull cloud-api
+            docker compose -f docker-compose.dev.yml up -d cloud-api test-ui
             sleep 5
             curl -sf http://localhost:8080/health && echo "Deploy OK"
