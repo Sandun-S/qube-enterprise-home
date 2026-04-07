@@ -57,7 +57,12 @@ func updateRegistryHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		// and recompute config hashes for affected qubes so conf-agents resync.
 		affectedQubes := map[string]bool{}
 		crows, err := pool.Query(ctx, `
-			SELECT c.id, c.qube_id, COALESCE(rt.image_suffix,''), rd.protocol
+			SELECT c.id, c.qube_id,
+			       COALESCE(rt.image_suffix,
+			                (SELECT image_suffix FROM reader_templates
+			                 WHERE protocol=rd.protocol LIMIT 1),
+			                '') AS image_suffix,
+			       rd.protocol
 			FROM containers c
 			JOIN readers rd ON rd.id = c.reader_id
 			LEFT JOIN reader_templates rt ON rt.id = rd.template_id
