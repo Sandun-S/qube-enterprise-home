@@ -509,7 +509,7 @@ const PROTO_FALLBACK=[
 ];
 
 async function loadProtocols(){
-  const r=await api('GET','/api/v1/protocols','','');
+  const r=await api('GET','/api/v1/protocols','',CUST_TOKEN||SA_TOKEN);
   if(r.ok&&r.data?.length){
     allProtocols=r.data.map(p=>({
       ...p,
@@ -601,7 +601,7 @@ async function custClaim(){
 }
 
 async function loadCatalog(){
-  const r=await api('GET','/api/v1/templates');
+  const r=await api('GET','/api/v1/device-templates');
   if(r.ok)allTemplates=r.data;
 }
 
@@ -946,6 +946,7 @@ async function saLogin(){
   const r=await api('POST','/api/v1/auth/login',{email:v('sa-email'),password:v('sa-pw')},'');
   if(r.ok&&['superadmin','admin'].includes(r.data.role)){
     SA_TOKEN=r.data.token;
+    setAuth(v('sa-email'),r.data.role);
     msgEl('sa-login-msg','ok','Logged in as '+r.data.role);
     document.getElementById('sa-login-card').style.display='none';
     document.getElementById('sa-main').style.display='block';
@@ -985,7 +986,7 @@ function saPopulateProtoSelect(){
 
 async function saLoadTemplates(){
   const proto=v('sa-proto-filter');
-  const r=await api('GET','/api/v1/templates'+(proto?'?protocol='+proto:''),'',SA_TOKEN);
+  const r=await api('GET','/api/v1/device-templates'+(proto?'?protocol='+proto:''),'',SA_TOKEN);
   if(!r.ok){document.getElementById('sa-tmpl-list').innerHTML=`<div class="err">${r.data.error}</div>`;return;}
   if(!r.data.length){document.getElementById('sa-tmpl-list').innerHTML='<div class="empty-state"><span class="empty-icon">📋</span>No templates yet<br><small>Click + New Template to add one</small></div>';return;}
   document.getElementById('sa-tmpl-list').innerHTML=r.data.map(t=>`
@@ -1023,7 +1024,7 @@ function saNewTemplate(){
 }
 
 async function saOpenEditor(id){
-  const r=await api('GET',`/api/v1/templates/${id}`,'',SA_TOKEN);
+  const r=await api('GET',`/api/v1/device-templates/${id}`,'',SA_TOKEN);
   if(!r.ok)return;
   const t=r.data;
   editingId=id;
@@ -1189,8 +1190,8 @@ async function saSaveTemplate(){
   try{fields=JSON.parse(v('sa-fields-json'));}catch(e){msgEl('sa-editor-msg','err','influx_fields_json: invalid JSON');return;}
   const body={name:v('sa-name'),protocol:v('sa-proto'),description:v('sa-desc'),config_json:cfg,influx_fields_json:fields};
   const r=editingId
-    ?await api('PUT',`/api/v1/templates/${editingId}`,body,SA_TOKEN)
-    :await api('POST','/api/v1/templates',body,SA_TOKEN);
+    ?await api('PUT',`/api/v1/device-templates/${editingId}`,body,SA_TOKEN)
+    :await api('POST','/api/v1/device-templates',body,SA_TOKEN);
   if(r.ok){
     msgEl('sa-editor-msg','ok',(editingId?'Updated':'Created')+' ✓');
     if(!editingId){editingId=r.data.id;document.getElementById('sa-patch-btn').style.display='inline-block';document.getElementById('sa-preview-btn').style.display='inline-block';}
@@ -1200,19 +1201,19 @@ async function saSaveTemplate(){
 
 async function saPatchAll(){
   if(!editingId)return;
-  const r=await api('GET',`/api/v1/templates/${editingId}`,'',SA_TOKEN);
+  const r=await api('GET',`/api/v1/device-templates/${editingId}`,'',SA_TOKEN);
   if(!r.ok)return;
   const curr=(r.data.config_json?.registers||[]).length;
   for(let i=curr-1;i>=0;i--)
-    await api('PATCH',`/api/v1/templates/${editingId}/registers`,{action:'delete',index:i},SA_TOKEN);
+    await api('PATCH',`/api/v1/device-templates/${editingId}/registers`,{action:'delete',index:i},SA_TOKEN);
   for(const reg of formRegs)
-    await api('PATCH',`/api/v1/templates/${editingId}/registers`,{action:'add',entry:reg},SA_TOKEN);
+    await api('PATCH',`/api/v1/device-templates/${editingId}/registers`,{action:'add',entry:reg},SA_TOKEN);
   msgEl('sa-editor-msg','ok',`Patched ${formRegs.length} registers via PATCH API`);
 }
 
 async function saPreview(){
   if(!editingId){msgEl('sa-editor-msg','err','Save first');return;}
-  const r=await api('GET',`/api/v1/templates/${editingId}/preview`,'',SA_TOKEN);
+  const r=await api('GET',`/api/v1/device-templates/${editingId}/preview`,'',SA_TOKEN);
   if(r.ok){
     const rows=r.data.rows||[];
     let csvText='(no rows generated)';
@@ -1227,7 +1228,7 @@ async function saPreview(){
 
 async function saDeleteTemplate(id){
   if(!confirm('Delete this template? Existing sensors using it will lose their template reference.'))return;
-  const r=await api('DELETE',`/api/v1/templates/${id}`,'',SA_TOKEN);
+  const r=await api('DELETE',`/api/v1/device-templates/${id}`,'',SA_TOKEN);
   if(r.ok){if(editingId===id)saCloseEditor();saLoadTemplates();}
   else alert('Failed: '+r.data.error);
 }
