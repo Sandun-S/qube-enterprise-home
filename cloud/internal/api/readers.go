@@ -333,15 +333,16 @@ func resolveReaderImage(pool *pgxpool.Pool, protocol, imageSuffix string) string
 	if err != nil || imageSuffix == "" {
 		return "busybox:latest"
 	}
+	arch := settings.Arch + ".latest"
 	switch settings.Mode {
 	case "github":
-		return settings.GithubBase + "/" + imageSuffix + ":arm64.latest"
+		return settings.GithubBase + "/" + imageSuffix + ":" + arch
 	case "gitlab":
 		imgKey := "img_" + strings.ReplaceAll(imageSuffix, "-", "_")
 		if v, ok := settings.Images[imgKey]; ok && v != "" {
 			return v
 		}
-		return settings.GitlabBase + "/" + imageSuffix + ":arm64.latest"
+		return settings.GitlabBase + "/" + imageSuffix + ":" + arch
 	default:
 		imgKey := "img_" + strings.ReplaceAll(imageSuffix, "-", "_")
 		if v, ok := settings.Images[imgKey]; ok && v != "" {

@@ -533,18 +533,27 @@ curl -s $BASE/api/v1/users/me \
 curl -s $BASE/api/v1/admin/registry \
   -H "Authorization: Bearer $SA_TOKEN" | jq .
 
-# Switch to GitHub registry
+# Switch to GitHub registry — arm64 (real Qube: Raspberry Pi / Kadas)
 curl -s -X PUT $BASE/api/v1/admin/registry \
   -H "Authorization: Bearer $SA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home"}' | jq .
+  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home","arch":"arm64"}' | jq .
 
-# Switch to GitLab (production)
+# Switch to GitHub registry — amd64 (Multipass x86_64 dev VMs)
 curl -s -X PUT $BASE/api/v1/admin/registry \
   -H "Authorization: Bearer $SA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mode":"gitlab","gitlab_base":"registry.gitlab.com/iot-team4/product"}' | jq .
+  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home","arch":"amd64"}' | jq .
+
+# Switch to GitLab (production — arm64 by default)
+curl -s -X PUT $BASE/api/v1/admin/registry \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"gitlab","gitlab_base":"registry.gitlab.com/iot-team4/product","arch":"arm64"}' | jq .
 ```
+
+> `arch` controls the image tag suffix sent to all Qubes (`amd64.latest` vs `arm64.latest`).
+> Default is `arm64`. Switch any time — takes effect on next conf-agent sync.
 
 ---
 

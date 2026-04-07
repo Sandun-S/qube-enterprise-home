@@ -12,6 +12,7 @@ import (
 // RegistrySettings holds all image config resolved for the current mode
 type RegistrySettings struct {
 	Mode       string            `json:"mode"`
+	Arch       string            `json:"arch"`        // "amd64" or "arm64" (default: arm64)
 	GithubBase string            `json:"github_base"`
 	GitlabBase string            `json:"gitlab_base"`
 	Images     map[string]string `json:"images"`
@@ -76,6 +77,7 @@ func loadRegistrySettings(ctx context.Context, pool *pgxpool.Pool) (*RegistrySet
 
 	s := &RegistrySettings{
 		Mode:       getOrDefault(cfg, "mode", "github"),
+		Arch:       getOrDefault(cfg, "arch", "arm64"),
 		GithubBase: getOrDefault(cfg, "github_base", "ghcr.io/sandun-s/qube-enterprise-home"),
 		GitlabBase: getOrDefault(cfg, "gitlab_base", "registry.gitlab.com/iot-team4/product"),
 		Images:     map[string]string{},
@@ -95,32 +97,33 @@ func loadRegistrySettings(ctx context.Context, pool *pgxpool.Pool) (*RegistrySet
 func resolveImages(s *RegistrySettings) map[string]string {
 	resolved := map[string]string{}
 
+	arch := s.Arch + ".latest"
 	switch s.Mode {
 	case "github":
 		base := s.GithubBase
-		resolved["conf_agent"]    = base + "/conf-agent:arm64.latest"
-		resolved["influx_sql"]    = base + "/influx-to-sql:arm64.latest"
-		resolved["modbus_reader"] = base + "/modbus-reader:arm64.latest"
-		resolved["snmp_reader"]   = base + "/snmp-reader:arm64.latest"
-		resolved["mqtt_reader"]   = base + "/mqtt-reader:arm64.latest"
-		resolved["opcua_reader"]  = base + "/opcua-reader:arm64.latest"
-		resolved["http_reader"]   = base + "/http-reader:arm64.latest"
+		resolved["conf_agent"]    = base + "/conf-agent:" + arch
+		resolved["influx_sql"]    = base + "/influx-to-sql:" + arch
+		resolved["modbus_reader"] = base + "/modbus-reader:" + arch
+		resolved["snmp_reader"]   = base + "/snmp-reader:" + arch
+		resolved["mqtt_reader"]   = base + "/mqtt-reader:" + arch
+		resolved["opcua_reader"]  = base + "/opcua-reader:" + arch
+		resolved["http_reader"]   = base + "/http-reader:" + arch
 
 	case "gitlab":
 		resolved["conf_agent"]    = getOrDefault(s.Images, "img_conf_agent",
-			s.GitlabBase+"/enterprise-conf-agent:arm64.latest")
+			s.GitlabBase+"/enterprise-conf-agent:"+arch)
 		resolved["influx_sql"]    = getOrDefault(s.Images, "img_influx_sql",
-			s.GitlabBase+"/enterprise-influx-to-sql:arm64.latest")
+			s.GitlabBase+"/enterprise-influx-to-sql:"+arch)
 		resolved["modbus_reader"] = getOrDefault(s.Images, "img_modbus_reader",
-			s.GitlabBase+"/modbus-reader:arm64.latest")
+			s.GitlabBase+"/modbus-reader:"+arch)
 		resolved["snmp_reader"]   = getOrDefault(s.Images, "img_snmp_reader",
-			s.GitlabBase+"/snmp-reader:arm64.latest")
+			s.GitlabBase+"/snmp-reader:"+arch)
 		resolved["mqtt_reader"]   = getOrDefault(s.Images, "img_mqtt_reader",
-			s.GitlabBase+"/mqtt-reader:arm64.latest")
+			s.GitlabBase+"/mqtt-reader:"+arch)
 		resolved["opcua_reader"]  = getOrDefault(s.Images, "img_opcua_reader",
-			s.GitlabBase+"/opcua-reader:arm64.latest")
+			s.GitlabBase+"/opcua-reader:"+arch)
 		resolved["http_reader"]   = getOrDefault(s.Images, "img_http_reader",
-			s.GitlabBase+"/http-reader:arm64.latest")
+			s.GitlabBase+"/http-reader:"+arch)
 
 	case "custom":
 		resolved["conf_agent"]    = getOrDefault(s.Images, "img_conf_agent", "")

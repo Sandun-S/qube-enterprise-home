@@ -391,6 +391,11 @@ func imageForService(pool *pgxpool.Pool, serviceKey string) string {
 			rows.Scan(&k, &v)
 			cfg[k] = v
 		}
+		arch := cfg["arch"]
+		if arch == "" {
+			arch = "arm64"
+		}
+		archTag := arch + ".latest"
 		mode := cfg["mode"]
 		switch mode {
 		case "github":
@@ -403,9 +408,9 @@ func imageForService(pool *pgxpool.Pool, serviceKey string) string {
 				"influx_sql": "influx-to-sql",
 			}
 			if name, ok := shortNames[serviceKey]; ok {
-				return base + "/" + name + ":arm64.latest"
+				return base + "/" + name + ":" + archTag
 			}
-			return base + "/" + serviceKey + ":arm64.latest"
+			return base + "/" + serviceKey + ":" + archTag
 		case "gitlab", "custom":
 			imgKey := "img_" + serviceKey
 			if v, ok := cfg[imgKey]; ok && v != "" {
@@ -420,9 +425,9 @@ func imageForService(pool *pgxpool.Pool, serviceKey string) string {
 				"influx_sql": "enterprise-influx-to-sql",
 			}
 			if name, ok := prefixMap[serviceKey]; ok {
-				return base + "/" + name + ":arm64.latest"
+				return base + "/" + name + ":" + archTag
 			}
-			return base + "/" + serviceKey + ":arm64.latest"
+			return base + "/" + serviceKey + ":" + archTag
 		}
 	}
 	reg := os.Getenv("QUBE_IMAGE_REGISTRY")

@@ -78,7 +78,7 @@ set -ex
 # Pull and extract binary
 docker pull ghcr.io/sandun-s/qube-enterprise-home/conf-agent:amd64.latest
 CONTAINER=$(docker create ghcr.io/sandun-s/qube-enterprise-home/conf-agent:amd64.latest)
-sudo docker cp $CONTAINER:/enterprise-conf-agent /usr/local/bin/enterprise-conf-agent
+sudo docker cp $CONTAINER:/app/conf-agent /usr/local/bin/enterprise-conf-agent
 docker rm $CONTAINER
 sudo chmod +x /usr/local/bin/enterprise-conf-agent
 echo "Binary: $(ls -lh /usr/local/bin/enterprise-conf-agent)"
@@ -177,30 +177,35 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 ---
 
-## Step 6 — Verify reader registry points to GitHub
+## Step 6 — Configure registry: GitHub + amd64 arch
 
-Check that Azure is configured to send Qubes to your GHCR (should already be set from AZURE_SETUP.md Step 4):
+Multipass VMs are x86_64 so the cloud must send `amd64.latest` image tags to the Qube.
+Set both the registry source and the target architecture:
 
 ```bash
 SA_TOKEN=$(curl -s -X POST http://20.197.15.165:8080/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"iotteam@internal.local","password":"iotteam2024"}' | jq -r .token)
 
-curl -s -H "Authorization: Bearer $SA_TOKEN" \
-  http://20.197.15.165:8080/api/v1/admin/registry | jq .
-```
-
-If not set to GitHub, update it:
-
-```bash
-curl -X PUT http://20.197.15.165:8080/api/v1/admin/registry \
+# Set GitHub registry + amd64 arch (required for Multipass x86_64 VMs)
+curl -s -X PUT http://20.197.15.165:8080/api/v1/admin/registry \
   -H "Authorization: Bearer $SA_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home"}'
+  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home","arch":"amd64"}' | jq .
+```
+
+Verify:
+
+```bash
+curl -s -H "Authorization: Bearer $SA_TOKEN" \
+  http://20.197.15.165:8080/api/v1/admin/registry | jq '{mode,arch,github_base}'
+# Expected: {"mode":"github","arch":"amd64","github_base":"ghcr.io/sandun-s/qube-enterprise-home"}
 ```
 
 Now when you add a reader via the portal, conf-agent pulls e.g.:
 `ghcr.io/sandun-s/qube-enterprise-home/snmp-reader:amd64.latest`
+
+> **When switching to real Raspberry Pi Qubes:** set `"arch":"arm64"` to flip back globally.
 
 ---
 
@@ -232,7 +237,7 @@ multipass exec qube-device-vm -- bash << 'EOF'
 set -ex
 docker pull ghcr.io/sandun-s/qube-enterprise-home/conf-agent:amd64.latest
 CONTAINER=$(docker create ghcr.io/sandun-s/qube-enterprise-home/conf-agent:amd64.latest)
-sudo docker cp $CONTAINER:/enterprise-conf-agent /usr/local/bin/enterprise-conf-agent
+sudo docker cp $CONTAINER:/app/conf-agent /usr/local/bin/enterprise-conf-agent
 docker rm $CONTAINER
 sudo systemctl restart enterprise-conf-agent
 ls -lh /usr/local/bin/enterprise-conf-agent

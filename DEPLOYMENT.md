@@ -158,10 +158,21 @@ Each reader container:
 
 The container image is resolved from the reader template's `image_suffix` and the
 `registry_settings` table. Update registry via:
+```bash
+# GitHub + arm64 (real Raspberry Pi / Kadas Qubes — default)
+curl -X PUT http://<cloud-ip>:8080/api/v1/admin/registry \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home","arch":"arm64"}'
+
+# GitHub + amd64 (Multipass x86_64 dev VMs)
+curl -X PUT http://<cloud-ip>:8080/api/v1/admin/registry \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home","arch":"amd64"}'
 ```
-PUT /api/v1/admin/registry  (superadmin)
-{"mode":"github","github_base":"ghcr.io/sandun-s/qube-enterprise-home"}
-```
+
+> `arch` defaults to `arm64` if not set. Switch it any time — takes effect on next conf-agent sync.
 
 ---
 
