@@ -428,7 +428,7 @@ func imageForService(pool *pgxpool.Pool, serviceKey string) string {
 			}
 			shortNames := map[string]string{
 				"conf_agent":   "conf-agent",
-				"influx_sql":   "influx-to-sql",
+				"influx_sql":   "enterprise-influx-to-sql",
 				"core_switch":  "core-switch",
 			}
 			if name, ok := shortNames[serviceKey]; ok {

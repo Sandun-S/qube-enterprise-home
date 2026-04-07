@@ -80,7 +80,7 @@ jobs:
           cache-from: type=gha,scope=conf-agent
           cache-to:   type=gha,mode=max,scope=conf-agent
 
-  # ── Reader services + influx-to-sql — amd64 + arm64 ─────────────────────
+  # ── Reader services + influx-to-sql + core-switch — amd64 + arm64 ──────────
   # amd64 = Multipass/x86 dev VMs, arm64 = real Qube (Raspberry Pi / Kadas)
   readers:
     name: ${{ matrix.name }} (amd64+arm64)
@@ -94,6 +94,8 @@ jobs:
         include:
           - name: enterprise-influx-to-sql
             context: ./enterprise-influx-to-sql
+          - name: core-switch
+            context: ./core-switch
           - name: mqtt-reader
             context: ./mqtt-reader
           - name: snmp-reader
