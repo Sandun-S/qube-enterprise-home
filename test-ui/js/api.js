@@ -4,7 +4,19 @@
  */
 
 const API = {
-  baseUrl: localStorage.getItem('qube_api_url') || `${window.location.protocol}//${window.location.hostname}:8080`,
+  baseUrl: (() => {
+    const stored = localStorage.getItem('qube_api_url');
+    const fallback = `${window.location.protocol}//${window.location.hostname}:8080`;
+    if (stored) {
+      try {
+        const url = new URL(stored);
+        // If accessing via actual IP/hostname but config is stuck on localhost, use fallback
+        if (window.location.hostname !== 'localhost' && url.hostname === 'localhost') return fallback;
+        return stored;
+      } catch (e) { return fallback; }
+    }
+    return fallback;
+  })(),
   token: localStorage.getItem('qube_token') || '',
 
   setBaseUrl(url) {

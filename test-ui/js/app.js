@@ -110,6 +110,7 @@ const App = {
             const res = await API.login(email, password);
             API.setToken(res.token);
             await this.checkAuth();
+            this.route(); // Trigger page load after auth
             Components.showAlert('Logged in successfully');
         } catch (err) {
             errorEl.textContent = err.message;
@@ -128,7 +129,8 @@ const App = {
             const res = await API.register(orgName, email, password);
             API.setToken(res.token);
             await this.checkAuth();
-            Components.showAlert('Organization created!');
+            this.route(); // Trigger page load after auth
+            Components.showAlert('Account created successfully');
         } catch (err) {
             errorEl.textContent = err.message;
             errorEl.classList.remove('hidden');
