@@ -42,7 +42,18 @@ const App = {
     initWS() {
         if (this.ws) this.ws.close();
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${protocol}//${window.location.host}/ws/dashboard?token=${API.token}`;
+        
+        // Use API.baseUrl as the source of truth for the host/port
+        // API.baseUrl is typically http://hostname:8080
+        let host = window.location.host;
+        try {
+            const apiHost = new URL(API.baseUrl).host;
+            if (apiHost) host = apiHost;
+        } catch (e) {
+            console.warn('Could not parse API.baseUrl for WebSocket', e);
+        }
+
+        const wsUrl = `${protocol}//${host}/ws/dashboard?token=${API.token}`;
         
         this.ws = new WebSocket(wsUrl);
         this.ws.onmessage = (e) => {

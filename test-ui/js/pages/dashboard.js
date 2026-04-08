@@ -58,15 +58,36 @@ const Dashboard = {
             const qubes = await API.getQubes();
             document.getElementById('stat-qubes').textContent = qubes.length;
             
-            let totalReaders = 0;
-            let totalSensors = 0;
-            
             const qubeStatusList = document.getElementById('qube-status-list');
             qubeStatusList.innerHTML = '';
 
-            for (const qube of qubes) {
-                const readers = await API.getQubeReaders(qube.id);
-                totalReaders += readers.length;
+            // Map each qube to a promise that fetches its readers and sensors in parallel
+            const qubeDataPromises = qubes.map(async (qube) => {
+                try {
+                    const readers = await API.getQubeReaders(qube.id);
+                    const readersWithSensors = await Promise.all(readers.map(async (reader) => {
+                        try {
+                            const sensors = await API.getReaderSensors(reader.id);
+                            return { ...reader, sensors };
+                        } catch (e) {
+                            console.warn(`Failed to fetch sensors for reader ${reader.id}`, e);
+                            return { ...reader, sensors: [] };
+                        }
+                    }));
+                    return { ...qube, readers: readersWithSensors };
+                } catch (e) {
+                    console.warn(`Failed to fetch data for qube ${qube.id}`, e);
+                    return { ...qube, readers: [] };
+                }
+            });
+
+            const qubeResults = await Promise.all(qubeDataPromises);
+
+            let totalReaders = 0;
+            let totalSensors = 0;
+
+            for (const qube of qubeResults) {
+                totalReaders += qube.readers.length;
                 
                 // Render small status row
                 const row = document.createElement('div');
@@ -83,9 +104,8 @@ const Dashboard = {
                 `;
                 qubeStatusList.appendChild(row);
 
-                for (const reader of readers) {
-                    const sensors = await API.getReaderSensors(reader.id);
-                    totalSensors += sensors.length;
+                for (const reader of qube.readers) {
+                    totalSensors += (reader.sensors || []).length;
                 }
             }
 
@@ -96,6 +116,10 @@ const Dashboard = {
         } catch (err) {
             console.error('Dashboard init failed', err);
             this.logActivity(`Error: ${err.message}`, 'error');
+            const qubeStatusList = document.getElementById('qube-status-list');
+            if (qubeStatusList) {
+                qubeStatusList.innerHTML = `<div class="badge badge-error" style="width:100%">${err.message}</div>`;
+            }
         }
     },
 
