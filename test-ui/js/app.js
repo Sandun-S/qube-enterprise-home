@@ -121,6 +121,12 @@ const App = {
             errorEl.classList.remove('hidden');
         }
     },
+    
+    async handleDevLogin() {
+        document.getElementById('auth-email').value = 'iotteam@internal.local';
+        document.getElementById('auth-password').value = 'iotteam2024';
+        this.handleLogin();
+    },
 
     async handleRegister() {
         const orgName = document.getElementById('reg-name').value;
@@ -155,6 +161,7 @@ const App = {
         // Action Buttons
         document.getElementById('btn-login')?.addEventListener('click', () => this.handleLogin());
         document.getElementById('btn-register')?.addEventListener('click', () => this.handleRegister());
+        document.getElementById('btn-dev-superadmin')?.addEventListener('click', () => this.handleDevLogin());
         document.getElementById('logout-btn')?.addEventListener('click', () => API.logout());
 
         // Keyboard support (Enter key)
