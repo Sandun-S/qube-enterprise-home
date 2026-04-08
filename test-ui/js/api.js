@@ -77,6 +77,11 @@ const API = {
     }
   },
 
+  get(path) { return this.request('GET', path); },
+  post(path, body) { return this.request('POST', path, body); },
+  put(path, body) { return this.request('PUT', path, body); },
+  delete(path) { return this.request('DELETE', path); },
+
   // Auth
   login(email, password) {
     return this.request('POST', '/api/v1/auth/login', { email, password });
@@ -169,11 +174,23 @@ const API = {
   getReader(id) {
     return this.request('GET', `/api/v1/readers/${id}`);
   },
+  updateReader(id, data) {
+    return this.request('PUT', `/api/v1/readers/${id}`, data);
+  },
+  deleteReader(id) {
+    return this.request('DELETE', `/api/v1/readers/${id}`);
+  },
   getReaderSensors(id) {
     return this.request('GET', `/api/v1/readers/${id}/sensors`);
   },
   createSensor(readerId, data) {
     return this.request('POST', `/api/v1/readers/${readerId}/sensors`, data);
+  },
+  updateSensor(sensorId, data) {
+    return this.request('PUT', `/api/v1/sensors/${sensorId}`, data);
+  },
+  deleteSensor(sensorId) {
+    return this.request('DELETE', `/api/v1/sensors/${sensorId}`);
   },
 
   // Telemetry
