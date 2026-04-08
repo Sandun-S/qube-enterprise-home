@@ -53,8 +53,8 @@ const Onboarding = {
     },
 
     async init() {
-        const qubes = await API.getQubes();
-        if (qubes.length > 0) this.state.qubeId = qubes[0].id;
+        this._qubes = await API.getQubes();
+        if (this._qubes.length > 0) this.state.qubeId = this._qubes[0].id;
         await this.goToStep(1);
     },
 
@@ -78,9 +78,25 @@ const Onboarding = {
 
     async renderStep1(container) {
         const protocols = await API.getProtocols();
+        const qubes = this._qubes || [];
+        const qubeSelector = qubes.length > 1 ? `
+            <div class="form-group" style="max-width:320px;margin-bottom:20px;">
+                <label>Target Qube Device</label>
+                <select id="qube-selector-step1">
+                    ${qubes.map(q => `<option value="${q.id}" ${q.id === this.state.qubeId ? 'selected' : ''}>${q.name || q.id}</option>`).join('')}
+                </select>
+                <div class="page-subtitle" style="font-size:11px;margin-top:4px;">Which Qube will this device connect to?</div>
+            </div>
+        ` : qubes.length === 0 ? `
+            <div class="badge badge-error" style="margin-bottom:16px;padding:10px 16px;">No Qube devices found — claim one from the Fleet page first.</div>
+        ` : `
+            <div class="page-subtitle" style="margin-bottom:16px;font-size:12px;">Target Qube: <strong>${qubes[0].name || qubes[0].id}</strong></div>
+        `;
+
         container.innerHTML = `
             <div class="card">
                 <h3 class="card-title">Step 1: Select Communication Protocol</h3>
+                ${qubeSelector}
                 <div class="grid grid-3">
                     ${protocols.map(p => `
                         <div class="proto-card" data-id="${p.id}">
@@ -92,6 +108,10 @@ const Onboarding = {
                 </div>
             </div>
         `;
+
+        document.getElementById('qube-selector-step1')?.addEventListener('change', (e) => {
+            this.state.qubeId = e.target.value;
+        });
 
         container.querySelectorAll('.proto-card').forEach(card => {
             card.onclick = async () => {
@@ -133,6 +153,33 @@ const Onboarding = {
     },
 
     async renderStep3(container) {
+        // Guard: no qube selected
+        if (!this.state.qubeId) {
+            container.innerHTML = `
+                <div class="card text-center">
+                    <div style="font-size:48px;margin-bottom:16px;">⚠️</div>
+                    <h3 class="card-title">No Qube Device Found</h3>
+                    <p class="page-subtitle" style="margin:12px 0 24px;">You need to claim a Qube device before adding sensors to it.<br>Go to the Fleet page and claim a Qube first.</p>
+                    ${(this._qubes && this._qubes.length > 0) ? `
+                        <div class="form-group" style="max-width:300px;margin:0 auto 20px;">
+                            <label>Select Qube</label>
+                            <select id="qube-select">
+                                ${this._qubes.map(q => `<option value="${q.id}">${q.name || q.id}</option>`).join('')}
+                            </select>
+                        </div>
+                        <button class="btn btn-primary" id="btn-select-qube">Use Selected Qube</button>
+                    ` : `<a href="#fleet" class="btn btn-primary">Go to Fleet</a>`}
+                    <div class="mt-20"><button class="btn btn-ghost" id="btn-back">← Back</button></div>
+                </div>
+            `;
+            document.getElementById('btn-back')?.addEventListener('click', () => this.goToStep(2));
+            document.getElementById('btn-select-qube')?.addEventListener('click', () => {
+                this.state.qubeId = document.getElementById('qube-select').value;
+                this.goToStep(3);
+            });
+            return;
+        }
+
         const readers = await API.getQubeReaders(this.state.qubeId);
         const rTemplates = await API.getReaderTemplates(this.state.protocol.id);
         this.state.readerTemplate = rTemplates[0] || { name: 'Generic Reader', connection_schema: { type: 'object', properties: {} } };
