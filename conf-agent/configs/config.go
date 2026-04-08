@@ -59,27 +59,30 @@ type MitTxt struct {
 var log *logrus.Logger
 
 // LoadConfigs reads the YAML config file and returns a *Config.
-// Identical signature to v1 conf-agent-master for drop-in compatibility.
+// The config file is optional — if missing, defaults + env vars are used.
+// This supports bare-binary deployment (Multipass/systemd) where no config.yml
+// is present and all settings come from environment variables.
 func LoadConfigs(l *logrus.Logger, confFile string) *Config {
 	log = l
 
+	conf := &Config{}
+
 	fd, err := os.Open(confFile)
 	if err != nil {
-		log.Fatalf("Cannot open config file %s - %s", confFile, err.Error())
-	}
-	defer fd.Close()
-
-	conf := &Config{}
-	decoder := yaml.NewDecoder(fd)
-	if err := decoder.Decode(conf); err != nil {
-		log.Fatal("Config file parse error: ", err)
-	}
-
-	// Set log level from YAML
-	if conf.LogLevel != "" {
-		lvl, err := logrus.ParseLevel(conf.LogLevel)
-		if err == nil {
-			log.SetLevel(lvl)
+		// Config file is optional in v2: all enterprise settings come from env vars.
+		log.Warnf("[config] config file %s not found — using defaults + env vars", confFile)
+	} else {
+		defer fd.Close()
+		decoder := yaml.NewDecoder(fd)
+		if err := decoder.Decode(conf); err != nil {
+			log.Fatalf("Config file parse error: %s", err)
+		}
+		// Set log level from YAML
+		if conf.LogLevel != "" {
+			lvl, err := logrus.ParseLevel(conf.LogLevel)
+			if err == nil {
+				log.SetLevel(lvl)
+			}
 		}
 	}
 

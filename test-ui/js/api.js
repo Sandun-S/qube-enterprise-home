@@ -53,7 +53,10 @@ const API = {
     }
 
     try {
-      const response = await fetch(url, options);
+      // Diagnostic log
+      console.log(`[API] ${method} ${url.toString()}`);
+
+      const response = await fetch(url.toString(), options);
       
       // Handle 401 Unauthorized
       if (response.status === 401 && !path.includes('/auth/login')) {

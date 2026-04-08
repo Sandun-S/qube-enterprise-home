@@ -13,6 +13,7 @@ const App = {
 
     async init() {
         console.log('Qube v2 App Initializing...');
+        console.log('API Base URL:', API.baseUrl);
         this.bindEvents();
         
         if (API.token) {
@@ -77,10 +78,11 @@ const App = {
     },
 
     updateUserUI(user) {
-        document.getElementById('user-email').textContent = user.email;
+        document.getElementById('user-email').textContent = user.email || 'unknown';
         const roleBadge = document.getElementById('user-role');
-        roleBadge.textContent = user.role.toUpperCase();
-        roleBadge.className = `badge badge-${user.role === 'superadmin' ? 'warning' : user.role === 'admin' ? 'success' : 'blue'}`;
+        const role = (user.role || 'viewer').toLowerCase();
+        roleBadge.textContent = role.toUpperCase();
+        roleBadge.className = `badge badge-${role === 'superadmin' ? 'warning' : role === 'admin' ? 'success' : 'blue'}`;
         
         // Role-based visibility
         document.querySelectorAll('[data-page="registry"], [data-page="reader-templates"]').forEach(el => {
@@ -106,8 +108,10 @@ const App = {
         const errorEl = document.getElementById('auth-error');
         
         try {
+            console.log('Attempting login for:', email);
             errorEl.classList.add('hidden');
             const res = await API.login(email, password);
+            console.log('Login success, checking auth...');
             API.setToken(res.token);
             await this.checkAuth();
             this.route(); // Trigger page load after auth
@@ -152,6 +156,21 @@ const App = {
         document.getElementById('btn-login')?.addEventListener('click', () => this.handleLogin());
         document.getElementById('btn-register')?.addEventListener('click', () => this.handleRegister());
         document.getElementById('logout-btn')?.addEventListener('click', () => API.logout());
+
+        // Keyboard support (Enter key)
+        const loginInputs = ['auth-email', 'auth-password'];
+        loginInputs.forEach(id => {
+            document.getElementById(id)?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.handleLogin();
+            });
+        });
+
+        const regInputs = ['reg-name', 'reg-email', 'reg-password'];
+        regInputs.forEach(id => {
+            document.getElementById(id)?.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') this.handleRegister();
+            });
+        });
 
         // Sidebar Nav
         document.querySelectorAll('.nav-item').forEach(item => {
