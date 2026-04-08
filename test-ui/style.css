@@ -355,7 +355,7 @@ tr:hover td { background: rgba(255, 255, 255, 0.02); }
 .flex-between { display: flex; align-items: center; justify-content: space-between; }
 .text-center { text-align: center; }
 .mt-20 { margin-top: 20px; }
-.hidden { display: none; }
+.hidden { display: none !important; }
 
 /* Status Dot */
 .dot {
