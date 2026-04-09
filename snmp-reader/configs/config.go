@@ -77,12 +77,27 @@ func LoadConfigs(db *sql.DB, readerID string) (*Config, error) {
 		return nil, fmt.Errorf("parse reader config: %w", err)
 	}
 
+	// Support both naming conventions: prefer the exact field, fall back to alt name
+	pollSec := getInt(m, "poll_interval_sec", 0)
+	if pollSec == 0 {
+		pollSec = getInt(m, "fetch_interval_sec", 30)
+	}
+	timeoutMs := getInt(m, "timeout_ms", 0)
+	if timeoutMs == 0 {
+		// timeout_sec is what the UI collects; convert to ms
+		timeoutMs = getInt(m, "timeout_sec", 5) * 1000
+	}
+	retries := getInt(m, "retries", 0)
+	if retries == 0 {
+		retries = getInt(m, "worker_count", 2) // legacy alias
+	}
+
 	return &Config{
 		ReaderID:        readerID,
 		ReaderName:      name,
-		PollIntervalSec: getInt(m, "poll_interval_sec", 30),
-		TimeoutMs:       getInt(m, "timeout_ms", 5000),
-		Retries:         getInt(m, "retries", 2),
+		PollIntervalSec: pollSec,
+		TimeoutMs:       timeoutMs,
+		Retries:         retries,
 	}, nil
 }
 
@@ -114,7 +129,11 @@ func LoadDevices(db *sql.DB, readerID string) ([]Device, error) {
 			json.Unmarshal([]byte(configStr.String), &cfg)
 		}
 
+		// Support both host and ip_address (old UI default)
 		host := getString(cfg, "host", "")
+		if host == "" {
+			host = getString(cfg, "ip_address", "")
+		}
 		if host == "" {
 			continue // skip sensors with no host
 		}
@@ -129,13 +148,19 @@ func LoadDevices(db *sql.DB, readerID string) ([]Device, error) {
 			json.Unmarshal([]byte(tagsStr.String), &tagsMap)
 		}
 
+		// Support both version and snmp_version (template UI default)
+		version := getString(cfg, "version", "")
+		if version == "" {
+			version = getString(cfg, "snmp_version", "2c")
+		}
+
 		devices = append(devices, Device{
 			SensorID:  sensorID,
 			Name:      name,
 			Host:      host,
 			Port:      getInt(cfg, "port", 161),
 			Community: getString(cfg, "community", "public"),
-			Version:   getString(cfg, "version", "2c"),
+			Version:   version,
 			OIDs:      oids,
 			Tags:      FormatTags(tagsMap),
 			Output:    output,

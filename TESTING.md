@@ -271,8 +271,22 @@ curl -s -X PATCH $BASE/api/v1/device-templates/$DT_ID/config \
 
 ## 8. Readers — create for each protocol
 
+> **Note:** For most workflows prefer the [Smart Sensor Creation](#9a-smart-sensor-creation-recommended)
+> endpoint which auto-finds or creates the reader. Use the reader endpoints below only when you
+> need explicit control or want to pre-create a reader before adding sensors.
+
+### Reader connection config — correct field names per protocol
+
+| Protocol | Required reader fields | Optional reader fields |
+|----------|------------------------|------------------------|
+| `modbus_tcp` | `host`, `port` | `slave_id` (def 1), `poll_interval_sec` (def 10), `single_read_count` (def 100) |
+| `snmp` | _(none — multi-target)_ | `poll_interval_sec` (def 30), `timeout_ms` (def 5000), `retries` (def 2) |
+| `mqtt` | `broker_host`, `broker_port` | `username`, `password`, `client_id`, `qos` (def 1) |
+| `opcua` | `endpoint` | `security_mode` (def None), `security_policy` (def None), `poll_interval_sec` (def 10) |
+| `http` | _(none — multi-target)_ | `poll_interval_sec` (def 30), `timeout_ms` (def 10000) |
+
 ```bash
-# Modbus TCP reader
+# Modbus TCP reader — one per device/gateway endpoint
 curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/readers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
@@ -280,11 +294,17 @@ curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/readers \
     \"name\": \"Main PLC Reader\",
     \"protocol\": \"modbus_tcp\",
     \"template_id\": \"$MODBUS_RT_ID\",
-    \"config_json\": {\"host\":\"192.168.10.1\",\"port\":502,\"poll_interval_sec\":20}
+    \"config_json\": {
+      \"host\":\"192.168.10.1\",
+      \"port\":502,
+      \"slave_id\":1,
+      \"poll_interval_sec\":10,
+      \"single_read_count\":100
+    }
   }" | jq .
 READER_ID=<paste reader_id>
 
-# SNMP reader
+# SNMP reader — one shared container per Qube handles all SNMP devices
 SNMP_RT_ID=$(curl -s $BASE/api/v1/reader-templates \
   -H "Authorization: Bearer $TOKEN" | \
   jq -r '.[] | select(.protocol=="snmp") | .id')
@@ -293,14 +313,14 @@ curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/readers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
-    \"name\": \"SNMP Network Reader\",
+    \"name\": \"SNMP Reader\",
     \"protocol\": \"snmp\",
     \"template_id\": \"$SNMP_RT_ID\",
-    \"config_json\": {\"fetch_interval_sec\":30,\"timeout_sec\":10}
+    \"config_json\": {\"poll_interval_sec\":30,\"timeout_ms\":5000,\"retries\":2}
   }" | jq .
 SNMP_READER_ID=<paste reader_id>
 
-# MQTT reader
+# MQTT reader — one per broker; broker_host + broker_port (not broker_url)
 MQTT_RT_ID=$(curl -s $BASE/api/v1/reader-templates \
   -H "Authorization: Bearer $TOKEN" | \
   jq -r '.[] | select(.protocol=="mqtt") | .id')
@@ -309,12 +329,38 @@ curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/readers \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d "{
-    \"name\": \"MQTT Floor 2\",
+    \"name\": \"MQTT Broker Floor 2\",
     \"protocol\": \"mqtt\",
     \"template_id\": \"$MQTT_RT_ID\",
-    \"config_json\": {\"broker\":\"tcp://192.168.1.10:1883\",\"client_id\":\"qube-floor2\",\"poll_interval_sec\":10}
+    \"config_json\": {
+      \"broker_host\":\"192.168.1.10\",
+      \"broker_port\":1883,
+      \"client_id\":\"qube-floor2\",
+      \"qos\":1
+    }
   }" | jq .
 MQTT_READER_ID=<paste reader_id>
+
+# OPC-UA reader — one per server endpoint
+OPCUA_RT_ID=$(curl -s $BASE/api/v1/reader-templates \
+  -H "Authorization: Bearer $TOKEN" | \
+  jq -r '.[] | select(.protocol=="opcua") | .id')
+
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/readers \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"SCADA OPC-UA Server\",
+    \"protocol\": \"opcua\",
+    \"template_id\": \"$OPCUA_RT_ID\",
+    \"config_json\": {
+      \"endpoint\":\"opc.tcp://192.168.1.20:4840\",
+      \"security_mode\":\"None\",
+      \"security_policy\":\"None\",
+      \"poll_interval_sec\":10
+    }
+  }" | jq .
+OPCUA_READER_ID=<paste reader_id>
 
 # Get a single reader
 curl -s $BASE/api/v1/readers/$READER_ID \
@@ -336,6 +382,20 @@ curl -s $BASE/api/v1/qubes/$QUBE_ID/readers \
 
 ## 9. Sensors — add to readers
 
+### Sensor per-device config — correct field names per protocol
+
+| Protocol | Per-device params in `sensor_params_schema` |
+|----------|---------------------------------------------|
+| `modbus_tcp` | `unit_id` (Slave ID), `register_offset` (optional) |
+| `snmp` | `host` (device IP), `port` (def 161), `community` (def public), `snmp_version` (def 2c) |
+| `mqtt` | _(no per-device params — `topic` goes in each measurement entry)_ |
+| `opcua` | `namespace_index` (optional) |
+| `http` | `url` (required), `method`, `auth_type`, `username`, `password`, `bearer_token` |
+
+> **MQTT note:** The MQTT reader reads `topic` from inside each `json_paths` entry.
+> If using a device template with a top-level `topic` param (e.g. CCS panels), the reader
+> uses that as a fallback for all entries missing their own topic.
+
 ```bash
 # Modbus sensor using device template
 curl -s -X POST $BASE/api/v1/readers/$READER_ID/sensors \
@@ -344,58 +404,65 @@ curl -s -X POST $BASE/api/v1/readers/$READER_ID/sensors \
   -d "{
     \"name\": \"Main Energy Meter\",
     \"template_id\": \"$DT_ID\",
-    \"params\": {\"unit_id\":1},
+    \"params\": {\"unit_id\":1,\"register_offset\":0},
     \"tags_json\": {\"location\":\"MDB\",\"phase\":\"3P\"},
     \"output\": \"influxdb\",
     \"table_name\": \"Measurements\"
   }" | jq .
 SENSOR_ID=<paste sensor_id>
 
-# Sensor without template — manual config_json
-curl -s -X POST $BASE/api/v1/readers/$READER_ID/sensors \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "Panel B Meter",
-    "params": {
-      "unit_id": 2,
-      "registers": [
-        {"name":"active_power_w","address":1294,"type":"float32","unit":"W"}
-      ]
-    },
-    "output": "influxdb,live"
-  }' | jq .
-
-# SNMP sensor with OIDs
+# SNMP sensor — note: host not ip_address
 curl -s -X POST $BASE/api/v1/readers/$SNMP_READER_ID/sensors \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Main UPS",
     "params": {
-      "ip_address": "192.168.1.100",
+      "host": "192.168.1.100",
+      "port": 161,
       "community": "public",
-      "version": "2c"
+      "snmp_version": "2c",
+      "oids": [
+        {"oid":".1.3.6.1.4.1.318.1.1.1.2.2.1.0","field_key":"battery_pct","scale":1.0},
+        {"oid":".1.3.6.1.4.1.318.1.1.1.2.2.3.0","field_key":"battery_v","scale":0.1}
+      ]
     },
     "output": "influxdb"
   }' | jq .
 
-# MQTT sensor
+# MQTT sensor — topics go in each json_paths entry, or as a top-level fallback
 curl -s -X POST $BASE/api/v1/readers/$MQTT_READER_ID/sensors \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "name": "Temperature Sensor Floor 2",
     "params": {
-      "topic": "sensors/floor2/temp",
-      "json_path": "$.value"
+      "json_paths": [
+        {"topic":"sensors/floor2/temp","json_path":"$.temperature","field_key":"temperature_c","unit":"C"},
+        {"topic":"sensors/floor2/temp","json_path":"$.humidity","field_key":"humidity_pct","unit":"%"}
+      ]
     },
     "output": "influxdb,live"
   }' | jq .
 
+# MQTT sensor using CCS template (top-level topic pattern)
+curl -s -X POST $BASE/api/v1/readers/$MQTT_READER_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"CCS PowerRoom PM1\",
+    \"template_id\": \"$CCS_DT_ID\",
+    \"params\": {\"topic\":\"ccs_data\",\"qos\":0,\"panel_index\":0},
+    \"output\": \"influxdb\"
+  }" | jq .
+
 # List sensors for a reader
 curl -s $BASE/api/v1/readers/$READER_ID/sensors \
   -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name,output}]'
+
+# List all sensors across all readers for a qube
+curl -s $BASE/api/v1/qubes/$QUBE_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name,reader_id,protocol}]'
 
 # Update sensor tags or output mode
 curl -s -X PUT $BASE/api/v1/sensors/$SENSOR_ID \
@@ -403,6 +470,76 @@ curl -s -X PUT $BASE/api/v1/sensors/$SENSOR_ID \
   -H "Content-Type: application/json" \
   -d '{"tags_json":{"location":"MDB","phase":"3P","floor":"1"},"output":"influxdb,live"}' | jq .
 # Returns: {"updated":true,"new_hash":"..."}
+```
+
+---
+
+## 9a. Smart sensor creation (recommended)
+
+**`POST /api/v1/qubes/:id/sensors`** — automatically finds or creates the right reader container,
+then creates the sensor. Preferred over manually managing readers.
+
+### How it works
+
+| Protocol (`reader_standard`) | Reader selection |
+|------------------------------|-----------------|
+| `snmp`, `http` (`multi_target`) | Uses the single existing reader for this protocol on the Qube. Creates one automatically if none exists. |
+| `modbus_tcp`, `mqtt`, `opcua` (`endpoint`) | Computes an endpoint fingerprint. Reuses matching reader. Creates a new reader + container if no match. |
+
+### Modbus — auto reader (same endpoint reused)
+
+```bash
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"name\": \"Energy Meter Rack A\",
+    \"template_id\": \"$DT_ID\",
+    \"params\": {\"unit_id\":3},
+    \"reader_config\": {\"host\":\"192.168.10.1\",\"port\":502,\"slave_id\":1,\"poll_interval_sec\":10},
+    \"reader_name\": \"Main PLC Reader\",
+    \"output\": \"influxdb\",
+    \"table_name\": \"Measurements\"
+  }" | jq .
+# Returns: {"sensor_id":"...","reader_id":"...","new_hash":"..."}
+# If 192.168.10.1:502 reader already exists, it's reused — no new container deployed.
+```
+
+### SNMP — auto reader (always shared, no connection config needed)
+
+```bash
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "APC UPS Room 3",
+    "template_id": "<snmp-ups-template-id>",
+    "params": {
+      "host": "192.168.1.101",
+      "community": "public",
+      "snmp_version": "2c"
+    },
+    "reader_config": {},
+    "output": "influxdb"
+  }' | jq .
+# Finds existing SNMP reader on this Qube, or creates one. No connection form needed.
+```
+
+### MQTT — auto reader (matched by broker_host:broker_port)
+
+```bash
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/sensors \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Floor 3 Temp Sensor",
+    "template_id": "<mqtt-template-id>",
+    "params": {"topic": "sensors/floor3/env"},
+    "reader_config": {"broker_host":"192.168.1.10","broker_port":1883,"qos":1},
+    "reader_name": "Main MQTT Broker",
+    "output": "influxdb,live"
+  }' | jq .
+# If a reader already exists for 192.168.1.10:1883, it's reused.
 ```
 
 ---
@@ -581,6 +718,43 @@ curl ... -d '{"command":"get_file","payload":{"path":"/config/myfile.cfg"}}'
 # result: {"path":"/mit/config/myfile.cfg","data":"<base64>","size":1234}
 ```
 
+#### Device discovery (new — requires conf-agent handler)
+
+```bash
+# mqtt_discover — subscribe to broker for N seconds, returns received field mappings
+# Qube subscribes to broker_host:broker_port on topic filter for duration_sec,
+# then acks with all unique topic+JSON-path pairs found.
+curl ... -d '{
+  "command": "mqtt_discover",
+  "payload": {
+    "broker_host": "192.168.1.10",
+    "broker_port": 1883,
+    "topic": "#",
+    "username": "",
+    "password": "",
+    "duration_sec": 30
+  }
+}'
+# ack result: {"messages":[{"topic":"...","payload":"{...}"},...]}
+
+# snmp_walk — run an SNMP walk on a device, returns all OID→value pairs
+curl ... -d '{
+  "command": "snmp_walk",
+  "payload": {
+    "host": "192.168.1.20",
+    "port": 161,
+    "community": "public",
+    "version": "2c",
+    "root_oid": ".1.3.6.1"
+  }
+}'
+# ack result: {"oids":[{"oid":".1.3.6.1.2.1...","type":"INTEGER","value":"100"},...]}
+```
+
+> **Note:** `mqtt_discover` and `snmp_walk` are registered command types in the cloud API.
+> The conf-agent ExecCommand handlers for these are not yet implemented — results come via
+> the standard ack mechanism once implemented.
+
 ---
 
 ## 12. Telemetry ingest and query
@@ -731,3 +905,21 @@ Reader needs `READER_ID` env var — set by conf-agent from containers table.
 
 **WebSocket not connecting:** Port 8080 must be reachable from Qube. Check firewall.
 conf-agent falls back to HTTP polling automatically after 30s.
+
+**MQTT reader produces no data:** Two common causes:
+1. Reader config uses `broker_url` key — updated readers expect `broker_host`+`broker_port`.
+   Fix: update reader config_json to use the split fields.
+2. Sensor's `json_paths` entries have no `topic` field AND no top-level `topic` in the sensor
+   config — reader skips all entries. Fix: ensure `topic` is either in each json_paths entry
+   OR set as a top-level key via `params: {topic: "..."}` when adding the sensor.
+
+**SNMP devices not polled:** Reader skips sensors where `host` is empty. Common if old sensors
+used `ip_address` instead of `host`. Fix: update sensors via PUT with correct `host` field.
+The reader now accepts both, but the canonical key is `host`.
+
+**Smart sensor creation fails with "reader not found":** The `POST /api/v1/qubes/:id/sensors`
+endpoint requires `template_id` in the body. Missing this returns 400.
+
+**Modbus reader ignores slave_id set in sensor params:** `slave_id` is a reader-level setting
+(one reader = one device). It is read from `readers.config_json`, not from individual sensors.
+To poll multiple Modbus slaves, create multiple readers (one per slave_id).

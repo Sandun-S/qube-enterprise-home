@@ -594,11 +594,11 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description,
     '{
         "type": "object",
         "properties": {
-            "ip_address":   {"type": "string",  "title": "Device IP",        "format": "ipv4"},
-            "community":    {"type": "string",  "title": "Community String", "default": "public"},
-            "snmp_version": {"type": "string",  "title": "SNMP Version",     "enum": ["1","2c","3"], "default": "2c"}
+            "host":      {"type": "string",  "title": "Device IP",        "format": "ipv4"},
+            "community": {"type": "string",  "title": "Community String", "default": "public"},
+            "version":   {"type": "string",  "title": "SNMP Version",     "enum": ["1","2c","3"], "default": "2c"}
         },
-        "required": ["ip_address"]
+        "required": ["host"]
     }'
 ),
 (
@@ -618,11 +618,11 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description,
     '{
         "type": "object",
         "properties": {
-            "ip_address":   {"type": "string",  "title": "Device IP",        "format": "ipv4"},
-            "community":    {"type": "string",  "title": "Community String", "default": "public"},
-            "snmp_version": {"type": "string",  "title": "SNMP Version",     "enum": ["1","2c","3"], "default": "2c"}
+            "host":      {"type": "string",  "title": "Device IP",        "format": "ipv4"},
+            "community": {"type": "string",  "title": "Community String", "default": "public"},
+            "version":   {"type": "string",  "title": "SNMP Version",     "enum": ["1","2c","3"], "default": "2c"}
         },
-        "required": ["ip_address"]
+        "required": ["host"]
     }'
 );
 ```
@@ -832,7 +832,10 @@ const state = {
 │
 ├── Telemetry          ← data explorer + live dashboard (all roles)
 │   ├── Live View
-│   └── History
+│   ├── History
+│   ├── Sensor Summary
+│   ├── MQTT Discovery  ← send mqtt_discover command, map results to template
+│   └── SNMP Walk       ← send snmp_walk command, browse OIDs, build template
 │
 ├── Templates          ← device + reader templates (viewer read, editor+ write)
 │   ├── Device Templates
@@ -1041,33 +1044,36 @@ This is the primary user workflow for adding a new sensor to a Qube.
 - "Custom (no template)" option for advanced users
 - User selects one → proceeds
 
-**Step 4 — Configure Sensor Connection**
+**Step 4 — Configure Connection**
 
-This step depends on `reader_standard`:
+This step depends on `reader_standard` from the protocol record:
 
 *For `endpoint` protocols (Modbus TCP, OPC-UA, MQTT, LoRaWAN, DNP3):*
-- Check if an existing reader for this protocol+endpoint already exists on the selected Qube
-  (`GET /api/v1/qubes/{id}/readers` then filter by protocol + compare config)
-- If exists: show "Reuse existing reader: [name at host:port]" option + "Create new reader" option
-- If not exists: show reader creation form (dynamic from `connection_schema`)
-- Reader name field
+- Fetch existing readers: `GET /api/v1/qubes/{id}/readers?protocol=<protocol>`
+- Show existing reader cards (click to reuse) with name and connection summary
+- Show a "New connection" option with a form rendered from `connection_schema`
+- Reader name field (only shown when creating a new connection)
+- If user selects an existing reader card: no connection form shown, skip to Step 5
 
 *For `multi_target` protocols (SNMP, HTTP, BACnet):*
-- Check if a reader for this protocol already exists on the Qube
-- If exists: always reuse (only one container per multi_target protocol per Qube)
-- If not exists: show reader config form (general settings: intervals, workers)
+- **No connection form shown.** One shared container handles all devices.
+- Show status indicator:
+  - "Shared SNMP container exists — ready to add sensors" (green badge)
+  - "Shared SNMP container will be created automatically" (info badge, if none exists yet)
+- Skip directly to Step 5 (sensor params)
+- The connection is handled automatically by the server.
 
 **Step 5 — Configure Sensor Parameters**
 - Sensor name field
 - Dynamic form rendered from selected `device_template.sensor_params_schema`
-  - For Modbus: Unit ID, register offset
-  - For SNMP: IP address, community, SNMP version
-  - For MQTT: topic, QoS, payload format
-  - For OPC-UA: namespace index
-  - For HTTP: URL, method, auth type, credentials
-  - For LoRaWAN: Device EUI, App EUI
-  - For BACnet: IP address, device instance, property
-  - For DNP3: outstation address
+  - Modbus: Unit ID, register offset
+  - SNMP: `host` (device IP), `port` (161), `community`, `version`
+  - MQTT: `topic` (subscribe topic, supports wildcards)
+  - OPC-UA: `namespace_index`
+  - HTTP: `url`, `method`, `auth_type`, credentials
+  - LoRaWAN: `dev_eui`, `app_eui`
+  - BACnet: `host` (device IP), `device_instance`, `property_id`
+  - DNP3: `outstation_address`
 - Output mode: `influxdb` / `live` / `influxdb,live` (dropdown)
 - Tags (key=value pairs, add/remove rows)
 - Table name (default "Measurements")
@@ -1077,18 +1083,33 @@ This step depends on `reader_standard`:
   - Qube: Q-1001 (Server Room)
   - Protocol: Modbus TCP
   - Device: Schneider PM5100
-  - Reader: "Rack Panel" at 192.168.1.100:502
+  - Connection: 192.168.1.100:502 (reusing "Rack Panel") — OR — New reader at 192.168.1.10:502
   - Sensor Name: "Panel-A Main Breaker"
   - Params: Unit ID: 1
   - Output: influxdb
   - Fields: active_power_w, voltage_ll_v, current_a, energy_kwh (from template)
 - "Back" and "Add Sensor" buttons
 
-**On submit:**
-1. If new reader needed: `POST /api/v1/qubes/{id}/readers`
-2. `POST /api/v1/readers/{reader_id}/sensors` with merged config
-3. Show success: "Sensor added. Config sync in progress..."
-4. Optional: show WebSocket sync status indicator
+**On submit — always use the smart endpoint:**
+```http
+POST /api/v1/qubes/{id}/sensors
+```
+```json
+{
+  "name": "Panel-A Main Breaker",
+  "template_id": "<device_template_uuid>",
+  "params": {"unit_id": 1},
+  "reader_config": {"host": "192.168.1.10", "port": 502, "poll_interval_sec": 20},
+  "reader_name": "Rack Panel A",
+  "output": "influxdb",
+  "tags_json": {"location": "Server Room"}
+}
+```
+- For `multi_target` protocols: omit `reader_config` entirely — server handles it.
+- For `endpoint` protocols where user selected an existing reader: include `reader_config`
+  matching that reader's connection (fingerprint match = reuse, no new container created).
+- Show success: "Sensor added. Config sync in progress..."
+- Poll `GET /api/v1/qubes/{id}` every 5s and show sync status (see `new_hash` in response).
 
 ---
 
@@ -1161,7 +1182,7 @@ This is a standalone full-page reader manager.
 ### 6.7 Telemetry & Data Explorer
 
 **Route:** `/telemetry`
-**Tabs:** Live View | History | Sensor Summary
+**Tabs:** Live View | History | Sensor Summary | MQTT Discovery | SNMP Walk
 
 #### Live View Tab
 
@@ -1187,6 +1208,69 @@ This is a standalone full-page reader manager.
 - Table: sensor name, field keys, latest values, units, timestamp
 - Color coding: green (< 5 min old), yellow (< 30 min), red (> 30 min / no data)
 
+#### MQTT Discovery Tab
+
+Used to discover what topics and JSON fields an MQTT broker publishes — so you can build an
+accurate MQTT device template.
+
+**UI flow:**
+1. Select target Qube (dropdown)
+2. Enter broker details: Host, Port (default 1883), Wildcard Topic (default `#`), Duration (30s)
+3. Click "Start Discovery" → sends `mqtt_discover` command:
+   ```http
+   POST /api/v1/qubes/{qubeId}/commands
+   {"command": "mqtt_discover", "payload": {"broker_host": "...", "broker_port": 1883, "topic": "#", "duration_sec": 30}}
+   ```
+4. Poll `GET /api/v1/commands/{id}` every 2s until executed
+5. Display results table:
+
+| Topic | Detected Fields | Sample Value |
+|-------|-----------------|--------------|
+| shellies/em-ABC/emeter/0/status | power, voltage, current, pf | {"power": 245.5, ...} |
+| sensors/room1/temp | value, unit | {"value": 22.4, "unit": "C"} |
+
+6. "Build Template" button: pre-fills a new device template with:
+   - `json_paths` entries for each detected field
+   - `sensor_params_schema` with a `topic` field pre-filled with the selected topic
+   - Redirects to `/templates/device` with the form pre-filled
+
+**Step-by-step guide shown below the results:**
+> 1. Note the topic pattern (e.g. `shellies/em-ABC123/emeter/0/status`)
+> 2. Replace the device-specific part with a wildcard or param (e.g. use `topic` in sensor params)
+> 3. For each detected field, add a `json_paths` entry with the field name and JSONPath
+> 4. Create the device template, then add sensors using that template
+
+#### SNMP Walk Tab
+
+Used to discover all OIDs and values on an SNMP device — so you can pick the right OIDs for
+an SNMP device template.
+
+**UI flow:**
+1. Select target Qube
+2. Enter device details: Host IP, Community (default `public`), SNMP Version (default `2c`),
+   Root OID (default `.1.3.6.1`)
+3. Click "Walk Device" → sends `snmp_walk` command:
+   ```http
+   POST /api/v1/qubes/{qubeId}/commands
+   {"command": "snmp_walk", "payload": {"host": "10.0.1.50", "community": "public", "version": "2c", "oid": ".1.3.6.1"}}
+   ```
+4. Poll until executed, then display results table:
+
+| OID | Type | Value |
+|-----|------|-------|
+| .1.3.6.1.2.1.1.1.0 | OctetString | APC Smart-UPS 1500 |
+| .1.3.6.1.4.1.318.1.1.1.2.2.1.0 | Integer | 100 |
+| .1.3.6.1.4.1.318.1.1.1.4.2.2.0 | Integer | 1245 |
+
+5. Search/filter bar to find relevant OIDs (by OID string or value)
+6. Checkbox per row → "Add to Template" button builds an SNMP device template
+
+**Step-by-step guide:**
+> 1. Search for the metric you need (e.g. "power", "temperature", "battery")
+> 2. Check the OID rows you want to monitor
+> 3. Click "Build Template" to create an SNMP device template with those OIDs
+> 4. Name each field (field_key) and set the unit
+
 ---
 
 ### 6.8 Commands & Remote Actions
@@ -1207,6 +1291,7 @@ Commands are delivered via WebSocket if the Qube is connected, otherwise queued 
 | Maintenance Mode | `repair_fs`, `backup_image`, `restore_image` |
 | Service Mgmt | `service_add`, `service_rm`, `service_edit` |
 | File Transfer | `put_file`, `get_file` |
+| Discovery | `mqtt_discover`, `snmp_walk` |
 
 **Key payloads:**
 
@@ -1431,16 +1516,17 @@ Shows:
 | `/api/v1/qubes/claim` | POST | Fleet — Claim Qube |
 | `/api/v1/qubes/{id}` | GET | Qube Detail — Overview |
 | `/api/v1/qubes/{id}` | PUT | Qube Detail — Edit |
-| `/api/v1/qubes/{id}/readers` | GET | Qube Detail — Readers Tab |
-| `/api/v1/qubes/{id}/readers` | POST | Onboarding Wizard Step 4 |
+| `/api/v1/qubes/{id}/readers` | GET | Qube Detail — Readers Tab, Onboarding reader card display |
+| `/api/v1/qubes/{id}/readers` | POST | Manual reader creation (advanced, not wizard) |
 | `/api/v1/qubes/{id}/sensors` | GET | Qube Detail — Sensors Tab, Org Sensors |
+| `/api/v1/qubes/{id}/sensors` | POST | **Onboarding Wizard submit** (smart endpoint — auto-reader) |
 | `/api/v1/qubes/{id}/containers` | GET | Qube Detail — Containers Tab |
-| `/api/v1/qubes/{id}/commands` | POST | Commands Tab — Send Command |
+| `/api/v1/qubes/{id}/commands` | POST | Commands Tab — Send Command, MQTT Discovery, SNMP Walk |
 | `/api/v1/readers/{id}` | GET | Reader Detail |
 | `/api/v1/readers/{id}` | PUT | Reader Edit |
 | `/api/v1/readers/{id}` | DELETE | Reader Delete |
 | `/api/v1/readers/{id}/sensors` | GET | Reader → Sensors list |
-| `/api/v1/readers/{id}/sensors` | POST | Onboarding Wizard Step 5 |
+| `/api/v1/readers/{id}/sensors` | POST | Sensor creation when reader is explicitly specified |
 | `/api/v1/sensors/{id}` | PUT | Sensor Edit |
 | `/api/v1/sensors/{id}` | DELETE | Sensor Delete |
 | `/api/v1/protocols` | GET | Onboarding Wizard Step 2, Protocols page |
@@ -1482,7 +1568,11 @@ These are Qube-facing. The UI can show their status/format for debugging purpose
 
 ## 8. Sensor Add Flow (Template-Driven)
 
-This is the most critical workflow. Here is the complete data flow with exact API calls:
+This is the most critical workflow. Use the **smart sensor endpoint** (`POST /api/v1/qubes/:id/sensors`)
+which handles reader creation/reuse automatically. The old two-step flow still works but is no
+longer recommended for the onboarding wizard.
+
+### Smart Sensor Creation (Recommended)
 
 ```
 User selects Qube → User selects Protocol → User selects Device Template
@@ -1493,63 +1583,57 @@ GET /api/v1/device-templates?protocol=modbus_tcp
 User fills in sensor_params_schema form fields (e.g. unit_id=3, register_offset=0)
 
 For endpoint protocol (Modbus TCP):
-    User enters connection config (host=192.168.1.10, port=502) or selects existing reader
+    User enters connection details (host=192.168.1.10, port=502) or selects existing reader
 
-    If new reader needed:
-        POST /api/v1/qubes/{qubeId}/readers
-        body: {
-            name: "Rack Panel A",
-            protocol: "modbus_tcp",
-            template_id: "<reader_template_uuid>",
-            config_json: {"host":"192.168.1.10","port":502,"poll_interval_sec":20}
-        }
-        → response: {id: "<reader_uuid>", ...}
-
-POST /api/v1/readers/{reader_uuid}/sensors
+POST /api/v1/qubes/{qubeId}/sensors
 body: {
     name: "PM5100 Rack A",
-    device_template_id: "<device_template_uuid>",
+    template_id: "<device_template_uuid>",
     params: {
         "unit_id": 3,
         "register_offset": 0
     },
+    reader_config: {"host":"192.168.1.10","port":502,"poll_interval_sec":20},
+    reader_name: "Rack Panel A",
     output: "influxdb",
-    tags_json: "name=PM5100_RackA,location=ServerRoom",
+    tags_json: {"name":"PM5100_RackA","location":"ServerRoom"},
     table_name: "Measurements"
 }
-→ Cloud merges device_template.sensor_config + params → sensor.config_json
-→ Cloud calls recomputeConfigHash() → pushes WebSocket "config_update" to Qube
+→ Server finds or creates the correct reader (matches by fingerprint modbus://192.168.1.10:502)
+→ Server merges device_template.sensor_config + params → sensor.config_json
+→ Server calls recomputeConfigHash() → pushes WebSocket "config_update" to Qube
 → conf-agent receives push → writes SQLite → restarts reader container
 → Reader reads SQLite → begins polling registers
 ```
 
-**For SNMP (multi_target):**
+**For SNMP (multi_target) — no reader_config needed:**
 ```
-Check if SNMP reader exists on Qube:
-    GET /api/v1/qubes/{id}/readers → filter by protocol === "snmp"
-
-If no SNMP reader exists:
-    POST /api/v1/qubes/{qubeId}/readers
-    body: {
-        name: "SNMP Reader",
-        protocol: "snmp",
-        template_id: "<snmp_reader_template_uuid>",
-        config_json: {"fetch_interval_sec":15, "timeout_sec":10, "worker_count":2}
-    }
-
-POST /api/v1/readers/{snmp_reader_id}/sensors
+POST /api/v1/qubes/{qubeId}/sensors
 body: {
     name: "APC UPS DataCenter",
-    device_template_id: "<apc_ups_template_uuid>",
+    template_id: "<apc_ups_template_uuid>",
     params: {
-        "ip_address": "10.0.1.50",
+        "host": "10.0.1.50",
         "community": "public",
-        "snmp_version": "2c"
+        "version": "2c"
     },
     output: "influxdb",
-    tags_json: "name=APC_UPS_DC1,location=DataCenter"
+    tags_json: {"name":"APC_UPS_DC1","location":"DataCenter"}
 }
+→ Server finds existing SNMP reader on Qube, or creates one automatically
+→ Sensor is created under that reader
+→ No need to check for existing readers in the UI
 ```
+
+**Key field name corrections** (use these exact names in `params`):
+
+| Protocol | Field | Old (wrong) | Correct |
+|----------|-------|-------------|---------|
+| SNMP | Device IP | `ip_address` | `host` |
+| SNMP | SNMP version | `snmp_version` | `version` |
+| SNMP | Poll interval | `fetch_interval_sec` (reader) | `poll_interval_sec` (reader) |
+| SNMP | Timeout | `timeout_sec` (reader) | `timeout_ms` (reader) |
+| MQTT | Broker host | full `broker_url` | `broker_host` + `broker_port` |
 
 ---
 
@@ -1627,10 +1711,10 @@ When creating/editing a device template, render a table appropriate to the proto
 | Protocol | Array Key | Column Headers |
 |----------|-----------|----------------|
 | modbus_tcp | registers | field_key, register_type (Holding/Input/Coil), address, data_type (uint16/int16/float32/uint32/int32), scale, unit |
-| snmp | oids | field_key, oid, unit |
-| mqtt | json_paths | field_key, json_path, unit |
+| snmp | oids | field_key, oid, scale (optional multiplier), unit |
+| mqtt | json_paths | field_key, json_path, topic (optional per-field override), unit |
 | opcua | nodes | field_key, node_id (ns=X;i=Y), type (float/int/bool/string), unit |
-| http | json_paths | field_key, json_path, unit |
+| http | json_paths | field_key, json_path, scale (optional multiplier), unit |
 | bacnet | objects | field_key, object_type (enum), object_instance, unit |
 | lorawan | readings | field_key, field (raw field name from NS payload), unit |
 | dnp3 | points | field_key, group, variation, index, unit |
@@ -1734,15 +1818,15 @@ In the Fleet list and Qube Detail header, show a sync indicator:
 **Deliverables:**
 - [ ] Protocol selection step (cards from `/protocols`)
 - [ ] Device template selection (cards from `/device-templates?protocol=`)
-- [ ] Reader creation form (rendered from `connection_schema`)
-- [ ] Existing reader detection + reuse
+- [ ] Auto-reader logic: endpoint protocols show existing reader cards + new connection form
+- [ ] Auto-reader logic: multi_target protocols show status badge, no connection form
 - [ ] Sensor params form (rendered from `sensor_params_schema`)
-- [ ] Review + submit flow
-- [ ] Success confirmation with config sync status
+- [ ] Review + submit flow using `POST /api/v1/qubes/{id}/sensors` (smart endpoint)
+- [ ] Success confirmation with config sync status (poll `new_hash` vs `qube.config_hash`)
 - [ ] Sensor list on Qube Detail — Sensors Tab
 
 **Key APIs:** `/protocols`, `/device-templates`, `/reader-templates`,
-`/qubes/{id}/readers` (GET+POST), `/readers/{id}/sensors` (POST)
+`/qubes/{id}/readers` (GET), `/qubes/{id}/sensors` (POST — smart endpoint)
 
 ---
 
@@ -1784,8 +1868,11 @@ In the Fleet list and Qube Detail header, show a sync indicator:
 - [ ] Sensor Summary table (latest values for all org sensors)
 - [ ] Export to CSV
 - [ ] Dashboard widgets (fleet health donut, online count, etc.)
+- [ ] MQTT Discovery tab: form → `mqtt_discover` command → topic/field results table → build template
+- [ ] SNMP Walk tab: form → `snmp_walk` command → OID/value results table → build template
 
-**Key APIs:** `/data/sensors/{id}/latest`, `/data/readings`, WebSocket `/ws/dashboard`
+**Key APIs:** `/data/sensors/{id}/latest`, `/data/readings`, WebSocket `/ws/dashboard`,
+`/qubes/{id}/commands` (mqtt_discover, snmp_walk), `/commands/{id}` (poll result)
 
 ---
 

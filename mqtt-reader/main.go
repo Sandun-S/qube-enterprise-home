@@ -68,9 +68,16 @@ func main() {
 	}
 
 	// ── Parse reader connection config ───────────────────────────────────
-	brokerURL := getString(readerCfg.Config, "broker_url", "tcp://localhost:1883")
+	// Support both broker_url (full URL) and broker_host+broker_port (split form from UI)
+	brokerURL := getString(readerCfg.Config, "broker_url", "")
+	if brokerURL == "" {
+		host := getString(readerCfg.Config, "broker_host", "localhost")
+		port := getInt(readerCfg.Config, "broker_port", 1883)
+		brokerURL = fmt.Sprintf("tcp://%s:%d", host, port)
+	}
 	username := getString(readerCfg.Config, "username", "")
 	password := getString(readerCfg.Config, "password", "")
+	clientID := getString(readerCfg.Config, "client_id", "")
 	qos := getInt(readerCfg.Config, "qos", 1)
 
 	log.Infof("MQTT broker: %s (qos=%d)", brokerURL, qos)
@@ -83,13 +90,20 @@ func main() {
 			log.Warnf("Sensor %s has no json_paths array", s.Name)
 			continue
 		}
+
+		// A top-level "topic" in sensor config acts as default for all json_paths entries
+		// that don't specify their own topic. This is the standard pattern when topic is
+		// a per-device parameter (set in device template sensor_params_schema).
+		defaultTopic := getString(s.Config, "topic", "")
+
 		for _, p := range paths {
 			pm, ok := p.(map[string]any)
 			if !ok {
 				continue
 			}
-			topic := getString(pm, "topic", "")
+			topic := getString(pm, "topic", defaultTopic)
 			if topic == "" {
+				log.Warnf("Sensor %s: json_paths entry has no topic and no default topic — skipping", s.Name)
 				continue
 			}
 			rules = append(rules, topicRule{
@@ -112,9 +126,14 @@ func main() {
 	// ── Connect to MQTT broker ───────────────────────────────────────────
 	topics := uniqueTopics(rules)
 
+	resolvedClientID := clientID
+	if resolvedClientID == "" {
+		resolvedClientID = fmt.Sprintf("qube-mqtt-reader-%s", readerID[:8])
+	}
+
 	opts := mqtt.NewClientOptions().
 		AddBroker(brokerURL).
-		SetClientID(fmt.Sprintf("qube-mqtt-reader-%s", readerID[:8])).
+		SetClientID(resolvedClientID).
 		SetAutoReconnect(true).
 		SetConnectRetry(true).
 		SetConnectRetryInterval(10 * time.Second).

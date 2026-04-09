@@ -64,6 +64,10 @@ var validCommands = map[string]bool{
 	// ── File transfer ─────────────────────────────────────────────────────────
 	"put_file": true, // push file to device; payload: {"path":"/relative/path","data":"<base64>"}
 	"get_file": true, // pull file from device; payload: {"path":"/relative/path"}
+
+	// ── Device discovery ──────────────────────────────────────────────────────
+	"mqtt_discover": true, // subscribe to MQTT broker for N seconds, return field mappings; payload: {"broker_host":"...","broker_port":1883,"topic":"#","duration_sec":30}
+	"snmp_walk":     true, // run SNMP walk on a device, return OID→value list; payload: {"host":"...","port":161,"community":"public","version":"2c","root_oid":".1.3.6.1"}
 }
 
 // POST /api/v1/qubes/:id/commands

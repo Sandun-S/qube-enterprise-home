@@ -23,11 +23,13 @@ const MEASUREMENT_FIELDS = {
     snmp: [
         { key: 'field_key',      label: 'Field Key',     type: 'text',   required: true,  placeholder: 'e.g. battery_capacity_pct' },
         { key: 'oid',            label: 'OID',           type: 'text',   required: true,  placeholder: '.1.3.6.1.2.1.33.1.2.1.0' },
+        { key: 'scale',          label: 'Scale',         type: 'number', placeholder: '1.0', default: 1.0 },
         { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. %, V, min' },
     ],
     mqtt: [
         { key: 'field_key',      label: 'Field Key',     type: 'text',   required: true,  placeholder: 'e.g. temperature' },
-        { key: 'json_path',      label: 'JSON Path',     type: 'text',   required: true,  placeholder: '$.temperature' },
+        { key: 'topic',          label: 'MQTT Topic',    type: 'text',   required: true,  placeholder: 'sensors/device1/data (supports + and # wildcards)' },
+        { key: 'json_path',      label: 'JSON Path',     type: 'text',   placeholder: '$.temperature (leave blank for full payload)' },
         { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. C, %, hPa' },
     ],
     opcua: [
@@ -37,9 +39,10 @@ const MEASUREMENT_FIELDS = {
         { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. W, V' },
     ],
     http: [
-        { key: 'field_key',      label: 'Field Key',     type: 'text',   required: true,  placeholder: 'e.g. temperature' },
-        { key: 'json_path',      label: 'JSON Path',     type: 'text',   required: true,  placeholder: '$.data.temperature' },
-        { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. C, %, kWh' },
+        { key: 'field_key',  label: 'Field Key',  type: 'text',   required: true,  placeholder: 'e.g. temperature' },
+        { key: 'json_path',  label: 'JSON Path',  type: 'text',   required: true,  placeholder: '$.data.temperature' },
+        { key: 'scale',      label: 'Scale',      type: 'number', placeholder: '1.0', default: 1.0 },
+        { key: 'unit',       label: 'Unit',       type: 'text',   placeholder: 'e.g. C, %, kWh' },
     ],
 };
 
@@ -257,11 +260,38 @@ const Templates = {
 
     _defaultParamsSchema(protoId) {
         const defaults = {
-            modbus_tcp: { type: 'object', properties: { unit_id: { type: 'integer', title: 'Modbus Unit ID', default: 1 }, register_offset: { type: 'integer', title: 'Register Address Offset', default: 0 } }, required: ['unit_id'] },
-            snmp:       { type: 'object', properties: { ip_address: { type: 'string', title: 'Device IP' }, community: { type: 'string', title: 'Community String', default: 'public' }, snmp_version: { type: 'string', title: 'SNMP Version', default: '2c' } }, required: ['ip_address'] },
-            mqtt:       { type: 'object', properties: { topic: { type: 'string', title: 'MQTT Topic' }, qos: { type: 'integer', title: 'QoS Level', default: 1 } }, required: ['topic'] },
-            opcua:      { type: 'object', properties: { namespace_index: { type: 'integer', title: 'Namespace Index', default: 2 } }, required: [] },
-            http:       { type: 'object', properties: { endpoint: { type: 'string', title: 'Endpoint URL' }, method: { type: 'string', title: 'HTTP Method', default: 'GET' } }, required: ['endpoint'] },
+            // Modbus TCP: one reader per device endpoint; unit_id differentiates devices on a shared gateway
+            modbus_tcp: { type: 'object', properties: {
+                unit_id:         { type: 'integer', title: 'Modbus Unit ID (1–247)', default: 1 },
+                register_offset: { type: 'integer', title: 'Register Address Offset', default: 0 },
+            }, required: ['unit_id'] },
+
+            // SNMP: multi-target reader (one reader per Qube); each sensor = one physical device
+            snmp: { type: 'object', properties: {
+                host:         { type: 'string',  title: 'Device IP Address' },
+                port:         { type: 'integer', title: 'SNMP Port', default: 161 },
+                community:    { type: 'string',  title: 'Community String', default: 'public' },
+                snmp_version: { type: 'string',  title: 'SNMP Version', default: '2c' },
+            }, required: ['host'] },
+
+            // MQTT: one reader per broker (broker details are reader-level, not per-device)
+            // Per-device: nothing required — topics are defined per measurement
+            mqtt: { type: 'object', properties: {}, required: [] },
+
+            // OPC-UA: one reader per server endpoint; namespace differentiates device nodes
+            opcua: { type: 'object', properties: {
+                namespace_index: { type: 'integer', title: 'OPC-UA Namespace Index', default: 2 },
+            }, required: [] },
+
+            // HTTP: multi-target reader; each sensor polls its own URL + auth
+            http: { type: 'object', properties: {
+                url:          { type: 'string',  title: 'Endpoint URL (required)' },
+                method:       { type: 'string',  title: 'HTTP Method', default: 'GET' },
+                auth_type:    { type: 'string',  title: 'Auth Type (none / basic / bearer)', default: 'none' },
+                username:     { type: 'string',  title: 'Username (for basic auth)' },
+                password:     { type: 'string',  title: 'Password (for basic auth)' },
+                bearer_token: { type: 'string',  title: 'Bearer Token' },
+            }, required: ['url'] },
         };
         return defaults[protoId] || { type: 'object', properties: {}, required: [] };
     },

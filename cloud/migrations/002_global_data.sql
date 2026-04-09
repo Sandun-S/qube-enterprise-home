@@ -13,7 +13,9 @@ INSERT INTO protocols (id, label, description, reader_standard) VALUES
 
 -- ===================== READER TEMPLATES =====================
 
--- Modbus TCP Reader
+-- Modbus TCP Reader (endpoint: one container per device/gateway)
+-- slave_id = Modbus unit ID of the target device (1–247)
+-- single_read_count = max registers per request (reduce if device is slow)
 INSERT INTO reader_templates (protocol, name, description, image_suffix, connection_schema, env_defaults) VALUES
 (
     'modbus_tcp',
@@ -24,16 +26,19 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
         "type": "object",
         "properties": {
             "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"},
-            "port": {"type": "integer", "title": "Port", "default": 502, "minimum": 1, "maximum": 65535},
-            "poll_interval_sec": {"type": "integer", "title": "Poll Interval (seconds)", "default": 20, "minimum": 1, "maximum": 3600},
-            "timeout_ms": {"type": "integer", "title": "Timeout (ms)", "default": 3000}
+            "port": {"type": "integer", "title": "Modbus TCP Port", "default": 502, "minimum": 1, "maximum": 65535},
+            "slave_id": {"type": "integer", "title": "Slave / Unit ID", "default": 1, "minimum": 1, "maximum": 247},
+            "poll_interval_sec": {"type": "integer", "title": "Poll Interval (seconds)", "default": 10, "minimum": 1, "maximum": 3600},
+            "single_read_count": {"type": "integer", "title": "Max Registers Per Request", "default": 100, "minimum": 1, "maximum": 125}
         },
         "required": ["host", "port"]
     }',
     '{"LOG_LEVEL": "info"}'
 ),
 
--- SNMP Reader
+-- SNMP Reader (multi-target: one container per Qube, each sensor = one SNMP device)
+-- Reader-level config: poll timing and retry behaviour only.
+-- Per-device config (host, community, OIDs) lives in each sensor's config_json.
 (
     'snmp',
     'SNMP Reader',
@@ -42,15 +47,16 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
     '{
         "type": "object",
         "properties": {
-            "fetch_interval_sec": {"type": "integer", "title": "Fetch Interval (seconds)", "default": 15, "minimum": 5, "maximum": 3600},
-            "timeout_sec": {"type": "integer", "title": "Timeout (seconds)", "default": 10},
-            "worker_count": {"type": "integer", "title": "Worker Threads", "default": 2, "minimum": 1, "maximum": 10}
+            "poll_interval_sec": {"type": "integer", "title": "Poll Interval (seconds)", "default": 30, "minimum": 5, "maximum": 3600},
+            "timeout_ms": {"type": "integer", "title": "Request Timeout (ms)", "default": 5000},
+            "retries": {"type": "integer", "title": "Retries per Device", "default": 2, "minimum": 0, "maximum": 10}
         }
     }',
     '{"LOG_LEVEL": "info"}'
 ),
 
--- MQTT Reader
+-- MQTT Reader (endpoint: one container per broker)
+-- Reader-level config: broker connection. Per-device: topics defined in each sensor's measurements.
 (
     'mqtt',
     'MQTT Reader',
@@ -59,18 +65,19 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
     '{
         "type": "object",
         "properties": {
-            "broker_host": {"type": "string", "title": "Broker URL", "description": "Include protocol prefix, e.g. tcp://192.168.1.10"},
+            "broker_host": {"type": "string", "title": "Broker Host (IP or hostname)", "description": "e.g. 192.168.1.10 or broker.example.com"},
             "broker_port": {"type": "integer", "title": "Broker Port", "default": 1883, "minimum": 1, "maximum": 65535},
             "username": {"type": "string", "title": "Username"},
             "password": {"type": "string", "title": "Password", "format": "password"},
-            "client_id": {"type": "string", "title": "Client ID", "description": "Leave blank to auto-generate"}
+            "client_id": {"type": "string", "title": "Client ID", "description": "Leave blank to auto-generate"},
+            "qos": {"type": "integer", "title": "QoS Level (0=at most once, 1=at least once, 2=exactly once)", "default": 1, "minimum": 0, "maximum": 2}
         },
         "required": ["broker_host", "broker_port"]
     }',
     '{"LOG_LEVEL": "info"}'
 ),
 
--- OPC-UA Reader
+-- OPC-UA Reader (endpoint: one container per OPC-UA server)
 (
     'opcua',
     'OPC-UA Reader',
@@ -81,6 +88,7 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
         "properties": {
             "endpoint": {"type": "string", "title": "OPC-UA Endpoint", "description": "e.g. opc.tcp://192.168.1.18:4840"},
             "security_mode": {"type": "string", "title": "Security Mode", "enum": ["None", "Sign", "SignAndEncrypt"], "default": "None"},
+            "security_policy": {"type": "string", "title": "Security Policy", "enum": ["None", "Basic128Rsa15", "Basic256", "Basic256Sha256"], "default": "None"},
             "poll_interval_sec": {"type": "integer", "title": "Poll Interval (seconds)", "default": 10, "minimum": 1, "maximum": 3600}
         },
         "required": ["endpoint"]
@@ -88,18 +96,18 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
     '{"LOG_LEVEL": "info"}'
 ),
 
--- HTTP Reader
+-- HTTP Reader (multi-target: one container per Qube, each sensor polls its own URL)
+-- Reader-level config: timing/concurrency only. Per-device: URL + auth in sensor config.
 (
     'http',
     'HTTP REST Reader',
-    'Polls HTTP/REST endpoints — one container handles all HTTP targets',
+    'Polls HTTP/REST endpoints — one container handles all HTTP targets on the Qube',
     'http-reader',
     '{
         "type": "object",
         "properties": {
             "poll_interval_sec": {"type": "integer", "title": "Poll Interval (seconds)", "default": 30, "minimum": 5, "maximum": 3600},
-            "timeout_sec": {"type": "integer", "title": "Request Timeout (seconds)", "default": 10},
-            "worker_count": {"type": "integer", "title": "Worker Threads", "default": 2, "minimum": 1, "maximum": 10}
+            "timeout_ms": {"type": "integer", "title": "Request Timeout (ms)", "default": 10000}
         }
     }',
     '{"LOG_LEVEL": "info"}'
@@ -231,11 +239,11 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "ip_address": {"type": "string", "title": "Device IP", "format": "ipv4"},
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"},
             "community": {"type": "string", "title": "Community String", "default": "public"},
             "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1", "2c", "3"], "default": "2c"}
         },
-        "required": ["ip_address"]
+        "required": ["host"]
     }'
 ),
 (
@@ -272,11 +280,11 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "ip_address": {"type": "string", "title": "Device IP", "format": "ipv4"},
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"},
             "community": {"type": "string", "title": "Community String", "default": "public"},
             "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1", "2c", "3"], "default": "2c"}
         },
-        "required": ["ip_address"]
+        "required": ["host"]
     }'
 ),
 (
@@ -336,11 +344,11 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "ip_address": {"type": "string", "title": "Device IP", "format": "ipv4"},
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"},
             "community": {"type": "string", "title": "Community String", "default": "public"},
             "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1", "2c", "3"], "default": "2c"}
         },
-        "required": ["ip_address"]
+        "required": ["host"]
     }'
 ),
 
@@ -399,11 +407,11 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "ip_address": {"type": "string", "title": "Device IP", "format": "ipv4"},
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"},
             "community": {"type": "string", "title": "Community String", "default": "public"},
             "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1", "2c", "3"], "default": "2c"}
         },
-        "required": ["ip_address"]
+        "required": ["host"]
     }'
 ),
 

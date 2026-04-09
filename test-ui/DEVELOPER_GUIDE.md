@@ -184,10 +184,12 @@ This is the most important section. Read it completely before building any senso
   "connection_schema": {
     "type": "object",
     "properties": {
-      "host":              {"type": "string",  "title": "Device IP Address", "format": "ipv4"},
-      "port":              {"type": "integer", "title": "Port",              "default": 502},
-      "poll_interval_sec": {"type": "integer", "title": "Poll Interval (s)", "default": 20},
-      "timeout_ms":        {"type": "integer", "title": "Timeout (ms)",      "default": 3000}
+      "host":               {"type": "string",  "title": "Device IP Address", "format": "ipv4"},
+      "port":               {"type": "integer", "title": "Port",              "default": 502},
+      "poll_interval_sec":  {"type": "integer", "title": "Poll Interval (s)", "default": 20},
+      "timeout_ms":         {"type": "integer", "title": "Timeout (ms)",      "default": 3000},
+      "slave_id":           {"type": "integer", "title": "Default Slave ID",  "default": 1},
+      "single_read_count":  {"type": "integer", "title": "Max Registers/Read","default": 100}
     },
     "required": ["host", "port"]
   },
@@ -603,80 +605,136 @@ The Qube's conf-agent will receive the push and update SQLite within seconds.
 
 ### 4.2 Endpoint vs Multi-Target Protocols
 
-This changes how Step 3–5 works:
-
 **Endpoint protocols** (Modbus TCP, OPC-UA, MQTT, LoRaWAN, DNP3):
 - One reader container = one connection endpoint
-- Multiple sensors can share a reader IF they use the same host/port/broker
-- If different host: new reader + new container
-- `connection_schema` fields: host, port, broker URL, etc.
+- Multiple sensors share a reader IF they use the same host/port/broker
+- Different endpoint → new reader + new container
+- `connection_schema` fields: host, port, broker, endpoint URL etc.
 
 **Multi-target protocols** (SNMP, HTTP, BACnet):
 - One reader container handles ALL targets on the Qube
-- There is only ONE reader per protocol per Qube
+- There is exactly ONE reader per protocol per Qube
 - Each sensor has its OWN target address in `params`
-- `connection_schema` fields: intervals, workers, threads (no host)
-- `sensor_params_schema` fields: ip_address, url, device_instance (per-sensor target)
+- `connection_schema` fields: intervals, timeouts (no host — host is per-sensor)
+- `sensor_params_schema` fields: host, url, device_instance (per-sensor target)
 
-```js
-function getReaderStandard(protocol) {
-    const multiTarget = ['snmp', 'http', 'bacnet'];
-    return multiTarget.includes(protocol) ? 'multi_target' : 'endpoint';
-}
+**The server handles all this automatically** via the smart sensor endpoint (section 4.4).
+For the UI, you only need to:
+- Show a connection form for endpoint protocols (so user can enter host/port/broker)
+- For multi_target: show a status indicator "Shared SNMP container — no connection setup needed"
 
-async function handleProtocolSelection(protocol, qubeId) {
-    const readers = await api.get(`/api/v1/qubes/${qubeId}/readers`);
-    const standard = getReaderStandard(protocol);
-    
-    if (standard === 'multi_target') {
-        // Find or create the single reader for this protocol
-        const existing = readers.find(r => r.protocol === protocol);
-        if (existing) {
-            return { reader: existing, needsNewReader: false };
-        } else {
-            return { reader: null, needsNewReader: true, showConnectionForm: true };
-        }
-    } else {
-        // endpoint: ask user for connection details, check for match
-        return { reader: null, needsNewReader: null, showConnectionForm: true };
-    }
+### 4.3 Reader Reuse Logic (Server-Side)
+
+The smart endpoint (`POST /api/v1/qubes/:id/sensors`) does all reader resolution server-side:
+
+```
+For multi_target protocols (SNMP, HTTP):
+  → Looks for existing active reader on this Qube with matching protocol
+  → If found: reuses it
+  → If not found: creates one automatically with reader template defaults
+
+For endpoint protocols (Modbus TCP, MQTT, OPC-UA):
+  → Computes endpoint fingerprint from reader_config:
+      Modbus: "modbus://host:port"
+      MQTT:   "mqtt://broker_host:broker_port"
+      OPC-UA: the full endpoint URL
+  → Scans existing readers for matching fingerprint
+  → If match found: reuses that reader (no new container)
+  → If no match: creates new reader + container
+```
+
+The UI does NOT need to implement reader matching logic — just send `reader_config` in the
+request body and let the server decide.
+
+### 4.4 Smart Sensor Creation (Recommended Endpoint)
+
+**Use this instead of manual reader creation for the onboarding wizard.**
+
+```http
+POST /api/v1/qubes/Q-1001/sensors
+Authorization: Bearer <editor_token>
+Content-Type: application/json
+```
+
+**Request body:**
+```json
+{
+  "name": "PM5100 Rack A Main Breaker",
+  "template_id": "def-456",
+  "params": {
+    "unit_id": 3,
+    "register_offset": 0
+  },
+  "reader_config": {
+    "host": "192.168.1.10",
+    "port": 502,
+    "poll_interval_sec": 20,
+    "timeout_ms": 3000
+  },
+  "reader_name": "Rack Panel A",
+  "output": "influxdb",
+  "tags_json": {"name": "PM5100_RackA", "location": "Server Room"},
+  "table_name": "Measurements"
 }
 ```
 
-### 4.3 Reader Reuse Logic
+**Fields:**
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | Yes | Sensor display name |
+| `template_id` | Yes | Device template UUID |
+| `params` | No | Per-sensor params from `sensor_params_schema` |
+| `reader_config` | Endpoint protocols only | Connection details (host/port/broker/endpoint) |
+| `reader_name` | No | Label for a newly created reader (auto-named if blank) |
+| `output` | No | `"influxdb"` (default) / `"live"` / `"influxdb,live"` |
+| `tags_json` | No | InfluxDB/TimescaleDB tags |
+| `table_name` | No | Defaults to `"Measurements"` |
 
-```js
-async function resolveReader(protocol, qubeId, userConnectionConfig) {
-    const readers = await api.get(`/api/v1/qubes/${qubeId}/readers`);
-    const standard = getReaderStandard(protocol);
-    
-    if (standard === 'multi_target') {
-        return readers.find(r => r.protocol === protocol) || null;
-    }
-    
-    // For endpoint: match on relevant connection fields
-    return readers.find(r => {
-        if (r.protocol !== protocol) return false;
-        const cfg = r.config_json || {};
-        switch (protocol) {
-            case 'modbus_tcp':
-            case 'dnp3':
-                return cfg.host === userConnectionConfig.host &&
-                       cfg.port === userConnectionConfig.port;
-            case 'opcua':
-                return cfg.endpoint === userConnectionConfig.endpoint;
-            case 'mqtt':
-                return cfg.broker_host === userConnectionConfig.broker_host &&
-                       cfg.broker_port === userConnectionConfig.broker_port;
-            case 'lorawan':
-                return cfg.ns_host === userConnectionConfig.ns_host &&
-                       cfg.app_id === userConnectionConfig.app_id;
-            default:
-                return false;
-        }
-    }) || null;
+**Response `201 Created`:**
+```json
+{
+  "sensor_id": "s-ccc",
+  "reader_id": "rd-111",
+  "new_hash": "sha256:ghijkl...",
+  "message": "Sensor created. Config will sync to Qube SQLite."
 }
 ```
+
+**SNMP example** (multi_target — no reader_config needed):
+```json
+{
+  "name": "APC UPS DataCenter",
+  "template_id": "<apc_ups_template_uuid>",
+  "params": {
+    "host": "10.0.1.50",
+    "community": "public",
+    "version": "2c"
+  },
+  "output": "influxdb",
+  "tags_json": {"location": "DataCenter", "device_type": "ups"}
+}
+```
+
+**MQTT example** (endpoint — broker connection in reader_config):
+```json
+{
+  "name": "Shelly EM Power Monitor",
+  "template_id": "<shelly_em_template_uuid>",
+  "params": {
+    "topic": "shellies/shellyem-ABC123/emeter/0/status"
+  },
+  "reader_config": {
+    "broker_host": "192.168.1.100",
+    "broker_port": 1883
+  },
+  "reader_name": "Local MQTT Broker",
+  "output": "influxdb,live"
+}
+```
+
+**The old two-step flow** (create reader first, then sensor) still works via
+`POST /api/v1/qubes/{id}/readers` + `POST /api/v1/readers/{id}/sensors` — but the
+smart endpoint is preferred for the onboarding wizard.
 
 ---
 
@@ -1754,6 +1812,39 @@ then reboot back. The device will be **offline for several minutes**.
 
 Path must not contain `..`, `$`, `\`, or `;`.
 
+#### Discovery commands
+
+| Command | Payload | Notes |
+|---------|---------|-------|
+| `mqtt_discover` | `{"broker_host":"192.168.1.100","broker_port":1883,"topic":"#","duration_sec":30}` | Subscribes to wildcard topic for N seconds. Result contains discovered topics + parsed JSON fields. Use to build MQTT device templates. |
+| `snmp_walk` | `{"host":"10.0.1.50","community":"public","version":"2c","oid":".1.3.6.1"}` | Walks OID subtree. Result contains OID→value map. Use to find OIDs for SNMP device templates. |
+
+**MQTT discovery result shape:**
+```json
+{
+  "topics_found": 12,
+  "entries": [
+    {"topic": "shellies/em-ABC/emeter/0/status", "fields": ["power", "voltage", "current", "pf"]},
+    {"topic": "sensors/room1/temp", "fields": ["value", "unit"]}
+  ]
+}
+```
+
+**SNMP walk result shape:**
+```json
+{
+  "oids_found": 48,
+  "entries": [
+    {"oid": ".1.3.6.1.2.1.1.1.0", "type": "OctetString", "value": "APC Smart-UPS 1500"},
+    {"oid": ".1.3.6.1.4.1.318.1.1.1.2.2.1.0", "type": "Integer", "value": "100"}
+  ]
+}
+```
+
+> **Note:** conf-agent must implement `mqtt_discover` and `snmp_walk` handlers in `agent/agent.go`
+> for these commands to produce results. Until then, the command is sent and queued, but the
+> result will be empty or contain a "not implemented" message.
+
 ---
 
 ### UI implementation — send command
@@ -1812,6 +1903,14 @@ const commandPayloadFields = {
   put_file:        [{ key: 'path', type: 'text', label: 'Device path (e.g. /config/file.cfg)' },
                    { key: 'data', type: 'file', label: 'File (base64 encoded on upload)' }],
   get_file:        [{ key: 'path', type: 'text', label: 'Device path' }],
+  mqtt_discover:   [{ key: 'broker_host', type: 'text', label: 'Broker Host' },
+                   { key: 'broker_port', type: 'number', default: 1883, label: 'Broker Port' },
+                   { key: 'topic', type: 'text', default: '#', label: 'Wildcard Topic' },
+                   { key: 'duration_sec', type: 'number', default: 30, label: 'Duration (s)' }],
+  snmp_walk:       [{ key: 'host', type: 'text', label: 'Device IP' },
+                   { key: 'community', type: 'text', default: 'public', label: 'Community' },
+                   { key: 'version', type: 'select', options: ['1','2c','3'], default: '2c', label: 'SNMP Version' },
+                   { key: 'oid', type: 'text', default: '.1.3.6.1', label: 'Root OID' }],
   // no payload needed:
   restart_qube: [], reboot: [], shutdown: [], reload_config: [], update_sqlite: [],
   list_containers: [], reset_ips: [], get_info: [], repair_fs: [], backup_image: [], restore_image: [],
@@ -1911,7 +2010,9 @@ protocol, so the UI knows what to render.
 | host | string (ipv4) | — | Required. Device IP address |
 | port | integer | 502 | Required. 1–65535 |
 | poll_interval_sec | integer | 20 | 1–3600 |
-| timeout_ms | integer | 3000 | Modbus request timeout |
+| timeout_ms | integer | 3000 | Modbus request timeout (ms) |
+| slave_id | integer | 1 | Default Modbus slave ID (can be overridden per sensor via unit_id) |
+| single_read_count | integer | 100 | Max registers per single read request |
 
 **Sensor params form** (rendered from `sensor_params_schema`, one per sensor):
 
@@ -1939,17 +2040,22 @@ protocol, so the UI knows what to render.
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| fetch_interval_sec | integer | 15 | 5–3600 |
-| timeout_sec | integer | 10 | Per-device SNMP timeout |
-| worker_count | integer | 2 | Parallel polling threads, 1–10 |
+| poll_interval_sec | integer | 15 | 5–3600 |
+| timeout_ms | integer | 5000 | Per-device SNMP timeout (ms) |
+| retries | integer | 2 | Retry count per device, 1–10 |
 
-**Sensor params form** (different IP per sensor):
+> **Note:** For multi_target protocols the connection form is optional — if you use
+> `POST /api/v1/qubes/:id/sensors` without a `reader_config`, the shared SNMP reader
+> is auto-created with these defaults. No manual reader creation needed.
+
+**Sensor params form** (different target per sensor):
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| ip_address | string (ipv4) | — | Required. Device IP |
+| host | string (ipv4) | — | Required. Device IP address |
+| port | integer | 161 | SNMP port (161 standard) |
 | community | string | "public" | SNMP community string |
-| snmp_version | string enum | "2c" | Options: "1", "2c", "3" |
+| version | string enum | "2c" | Options: "1", "2c", "3" |
 
 **sensor_config fields:**
 
@@ -1963,23 +2069,36 @@ protocol, so the UI knows what to render.
 
 ### MQTT (`mqtt`) — `endpoint`
 
-**Connection form** (one per broker):
+**Connection form** (one per broker — stored in reader `config_json`):
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| broker_host | string | — | Required. e.g. tcp://192.168.1.10 |
+| broker_host | string | — | Required. Hostname or IP (e.g. 192.168.1.100) |
 | broker_port | integer | 1883 | Required |
 | username | string | — | Optional |
 | password | string (password) | — | Optional |
 | client_id | string | — | Optional. Auto-generated if blank |
+| qos | integer | 1 | QoS level: 0, 1, or 2 |
 
-**Sensor params form** (per device/topic):
+**Sensor params form** (one per physical device/topic):
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| topic | string | — | Required. MQTT topic to subscribe |
-| qos | integer enum | 1 | Options: 0, 1, 2 |
-| payload_format | string enum | "json" | Options: "json", "senml" |
+| topic | string | — | Required. MQTT topic to subscribe (supports wildcards: `shellies/+/emeter/0/status`) |
+
+> **Important:** `topic` is a per-sensor param, NOT a connection-level field. Each sensor
+> subscribes to its own topic. The `json_paths` entries in `sensor_config` define which JSON
+> fields to extract. The reader uses a top-level `topic` fallback from the sensor params if
+> individual json_paths entries don't specify their own topic.
+
+**sensor_config fields:**
+
+| Column | Values |
+|--------|--------|
+| field_key | Measurement name |
+| json_path | JSONPath expression (e.g. $.power) |
+| topic | (optional) overrides the sensor-level topic for this specific field |
+| unit | Physical unit |
 
 **sensor_config fields:**
 
@@ -1999,6 +2118,7 @@ protocol, so the UI knows what to render.
 |-------|------|---------|-------|
 | endpoint | string | — | Required. e.g. opc.tcp://192.168.1.18:4840 |
 | security_mode | string enum | "None" | Options: None, Sign, SignAndEncrypt |
+| security_policy | string | "None" | Security policy URI (e.g. Basic256Sha256) |
 | poll_interval_sec | integer | 10 | 1–3600 |
 
 **Sensor params form:**
@@ -2020,22 +2140,26 @@ protocol, so the UI knows what to render.
 
 ### HTTP/REST (`http`) — `multi_target`
 
-**Connection form** (one per Qube):
+**Connection form** (one per Qube, all HTTP sensors share it):
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
 | poll_interval_sec | integer | 30 | 5–3600 |
-| timeout_sec | integer | 10 | Per-request timeout |
-| worker_count | integer | 2 | Parallel workers, 1–10 |
+| timeout_ms | integer | 10000 | Per-request timeout (ms) |
 
-**Sensor params form** (per endpoint):
+> **Note:** Like SNMP, the HTTP shared reader is auto-created when you use
+> `POST /api/v1/qubes/:id/sensors`. No manual reader creation needed.
+
+**Sensor params form** (per endpoint — each sensor polls its own URL):
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
-| url | string (uri) | — | Required. Full URL |
+| url | string (uri) | — | Required. Full URL to poll |
 | method | string enum | "GET" | Options: GET, POST |
 | auth_type | string enum | "none" | none / basic / bearer / api_key |
-| auth_credentials | string (password) | — | Token, "user:pass", or API key |
+| username | string | — | For basic auth |
+| password | string (password) | — | For basic auth |
+| bearer_token | string (password) | — | For bearer auth |
 | headers_json | string | — | JSON object of custom headers |
 
 **sensor_config fields:**

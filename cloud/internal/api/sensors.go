@@ -318,6 +318,250 @@ func listAllSensorsForQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+// POST /api/v1/qubes/:id/sensors  — smart sensor creation with auto-reader management
+//
+// For multi_target protocols (SNMP, HTTP): finds the single shared reader on this Qube
+// for the given protocol. Creates one if none exists using reader template defaults.
+//
+// For endpoint protocols (Modbus TCP, MQTT, OPC-UA): finds a reader whose connection
+// config matches the submitted reader_config (same host:port / broker / endpoint).
+// Creates a new reader if no match found.
+//
+// In both cases, the sensor is created under the resolved reader.
+func smartCreateSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		orgID, _ := r.Context().Value(ctxOrgID).(string)
+		qubeID := chi.URLParam(r, "id")
+
+		// Verify qube belongs to org
+		var qubeCount int
+		pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM qubes WHERE id=$1 AND org_id=$2`, qubeID, orgID).Scan(&qubeCount)
+		if qubeCount == 0 {
+			writeError(w, http.StatusNotFound, "qube not found")
+			return
+		}
+
+		var req struct {
+			Name         string `json:"name"`
+			TemplateID   string `json:"template_id"`
+			Params       any    `json:"params"`
+			ReaderConfig any    `json:"reader_config"` // for endpoint protocols: connection details
+			ReaderName   string `json:"reader_name"`   // optional label for a new reader
+			Output       string `json:"output"`
+			TableName    string `json:"table_name"`
+			TagsJSON     any    `json:"tags_json"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Name == "" || req.TemplateID == "" {
+			writeError(w, http.StatusBadRequest, "name and template_id are required")
+			return
+		}
+		if req.Output == "" {
+			req.Output = "influxdb"
+		}
+		if req.TableName == "" {
+			req.TableName = "Measurements"
+		}
+
+		ctx := context.Background()
+
+		// ── 1. Get template details ───────────────────────────────────────────
+		var tmplProtocol string
+		var tmplSensorConfig []byte
+		err := pool.QueryRow(ctx,
+			`SELECT protocol, sensor_config FROM device_templates
+			 WHERE id=$1 AND (is_global=TRUE OR org_id=$2)`,
+			req.TemplateID, orgID,
+		).Scan(&tmplProtocol, &tmplSensorConfig)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "device template not found")
+			return
+		}
+
+		// ── 2. Get protocol reader_standard ──────────────────────────────────
+		var readerStandard string
+		pool.QueryRow(ctx, `SELECT reader_standard FROM protocols WHERE id=$1`, tmplProtocol).
+			Scan(&readerStandard)
+
+		// ── 3. Find or create a reader ────────────────────────────────────────
+		readerID, err := findOrCreateReader(ctx, pool, qubeID, orgID, tmplProtocol, readerStandard, req.ReaderConfig, req.ReaderName)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to resolve reader: "+err.Error())
+			return
+		}
+
+		// ── 4. Create sensor ──────────────────────────────────────────────────
+		configJSON := mergeSensorConfig(tmplSensorConfig, req.Params)
+		cfgBytes, _ := json.Marshal(configJSON)
+		tagsBytes, _ := json.Marshal(req.TagsJSON)
+		if tagsBytes == nil {
+			tagsBytes = []byte("{}")
+		}
+
+		var sensorID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO sensors (reader_id, name, template_id, config_json, tags_json, output, table_name)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+			readerID, req.Name, req.TemplateID, cfgBytes, tagsBytes, req.Output, req.TableName,
+		).Scan(&sensorID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create sensor: "+err.Error())
+			return
+		}
+
+		hash, _ := recomputeConfigHash(ctx, pool, qubeID)
+		writeJSON(w, http.StatusCreated, map[string]any{
+			"sensor_id": sensorID,
+			"reader_id": readerID,
+			"new_hash":  hash,
+			"message":   "Sensor created. Config will sync to Qube SQLite.",
+		})
+	}
+}
+
+// findOrCreateReader resolves the correct reader for the given protocol and qube.
+//
+// multi_target (SNMP, HTTP):
+//   - There is exactly one shared reader per protocol per Qube.
+//   - If one exists, return it. Otherwise create with defaults.
+//
+// endpoint (Modbus TCP, MQTT, OPC-UA):
+//   - Match by connection fingerprint (host:port, broker, endpoint URL).
+//   - If a reader with the same fingerprint exists, reuse it.
+//   - Otherwise create a new reader.
+func findOrCreateReader(ctx context.Context, pool *pgxpool.Pool, qubeID, orgID, protocol, readerStandard string, readerConfig any, readerName string) (string, error) {
+	if readerStandard == "multi_target" {
+		// One shared reader per protocol per Qube
+		var existingID string
+		err := pool.QueryRow(ctx,
+			`SELECT id FROM readers WHERE qube_id=$1 AND protocol=$2 AND status='active' ORDER BY created_at LIMIT 1`,
+			qubeID, protocol,
+		).Scan(&existingID)
+		if err == nil {
+			return existingID, nil // reuse existing
+		}
+
+		// None exists — create with reader template defaults
+		return createAutoReader(ctx, pool, qubeID, protocol, readerName, map[string]any{})
+	}
+
+	// endpoint protocol — match by connection fingerprint
+	if rc, ok := readerConfig.(map[string]any); ok && len(rc) > 0 {
+		fingerprint := endpointFingerprint(protocol, rc)
+		if fingerprint != "" {
+			// Search existing readers for matching endpoint
+			rows, err := pool.Query(ctx,
+				`SELECT id, config_json FROM readers WHERE qube_id=$1 AND protocol=$2 AND status='active'`,
+				qubeID, protocol)
+			if err == nil {
+				defer rows.Close()
+				for rows.Next() {
+					var rid string
+					var cfgRaw []byte
+					if err := rows.Scan(&rid, &cfgRaw); err != nil {
+						continue
+					}
+					var existingCfg map[string]any
+					json.Unmarshal(cfgRaw, &existingCfg)
+					if endpointFingerprint(protocol, existingCfg) == fingerprint {
+						return rid, nil // same endpoint — reuse
+					}
+				}
+			}
+		}
+	}
+
+	// No matching reader — create a new one
+	cfg, _ := readerConfig.(map[string]any)
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	return createAutoReader(ctx, pool, qubeID, protocol, readerName, cfg)
+}
+
+// endpointFingerprint returns a canonical string that uniquely identifies a connection endpoint.
+func endpointFingerprint(protocol string, cfg map[string]any) string {
+	getStr := func(key string) string {
+		if v, ok := cfg[key].(string); ok {
+			return v
+		}
+		return ""
+	}
+	getNum := func(key string, def int) int {
+		if v, ok := cfg[key].(float64); ok {
+			return int(v)
+		}
+		return def
+	}
+
+	switch protocol {
+	case "modbus_tcp":
+		host := getStr("host")
+		if host == "" {
+			return ""
+		}
+		return fmt.Sprintf("modbus://%s:%d", host, getNum("port", 502))
+	case "mqtt":
+		host := getStr("broker_host")
+		if host == "" {
+			host = getStr("broker_url")
+		}
+		if host == "" {
+			return ""
+		}
+		return fmt.Sprintf("mqtt://%s:%d", host, getNum("broker_port", 1883))
+	case "opcua":
+		ep := getStr("endpoint")
+		return ep // already a full URL
+	default:
+		return ""
+	}
+}
+
+// createAutoReader creates a new reader with a container.
+func createAutoReader(ctx context.Context, pool *pgxpool.Pool, qubeID, protocol, name string, cfg map[string]any) (string, error) {
+	if name == "" {
+		name = fmt.Sprintf("%s-reader", strings.ToUpper(protocol))
+	}
+
+	cfgBytes, _ := json.Marshal(cfg)
+
+	// Resolve image
+	var imageSuffix string
+	pool.QueryRow(ctx, `SELECT image_suffix FROM reader_templates WHERE protocol=$1 LIMIT 1`, protocol).Scan(&imageSuffix)
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+
+	var readerID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO readers (qube_id, name, protocol, config_json) VALUES ($1,$2,$3,$4) RETURNING id`,
+		qubeID, name, protocol, cfgBytes,
+	).Scan(&readerID); err != nil {
+		return "", fmt.Errorf("create reader: %w", err)
+	}
+
+	serviceName := sanitizeServiceName(name)
+	imageBase := resolveReaderImage(pool, protocol, imageSuffix)
+	envJSON, _ := json.Marshal(map[string]any{
+		"READER_ID":      readerID,
+		"SQLITE_PATH":    "/opt/qube/data/qube.db",
+		"CORESWITCH_URL": "http://core-switch:8585",
+		"LOG_LEVEL":      "info",
+	})
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO containers (qube_id, reader_id, name, image, env_json) VALUES ($1,$2,$3,$4,$5)`,
+		qubeID, readerID, serviceName, imageBase, envJSON,
+	); err != nil {
+		return "", fmt.Errorf("create container: %w", err)
+	}
+
+	return readerID, tx.Commit(ctx)
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 // mergeSensorConfig combines template sensor_config with user-provided params.

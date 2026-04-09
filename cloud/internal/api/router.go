@@ -100,6 +100,8 @@ func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler
 			r.Delete("/api/v1/readers/{reader_id}", deleteReaderHandler(pool))
 
 			// Sensors — CRUD
+			// Smart create: auto-finds/creates reader based on protocol standard
+			r.Post("/api/v1/qubes/{id}/sensors", smartCreateSensorHandler(pool))
 			r.Post("/api/v1/readers/{reader_id}/sensors", createSensorHandler(pool))
 			r.Put("/api/v1/sensors/{sensor_id}", updateSensorHandler(pool))
 			r.Delete("/api/v1/sensors/{sensor_id}", deleteSensorHandler(pool))

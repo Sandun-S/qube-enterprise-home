@@ -81,7 +81,12 @@ func main() {
 
 	// ── Parse poll interval from reader config ───────────────────────────
 	pollIntervalSec := getInt(readerCfg.Config, "poll_interval_sec", 30)
-	timeout := getInt(readerCfg.Config, "timeout_ms", 10000)
+	// Support both timeout_ms and timeout_sec (legacy schema used seconds)
+	timeoutMs := getInt(readerCfg.Config, "timeout_ms", 0)
+	if timeoutMs == 0 {
+		timeoutMs = getInt(readerCfg.Config, "timeout_sec", 10) * 1000
+	}
+	timeout := timeoutMs
 
 	// ── Build HTTP targets from sensors ──────────────────────────────────
 	httpClient := &http.Client{Timeout: time.Duration(timeout) * time.Millisecond}
