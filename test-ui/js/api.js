@@ -217,6 +217,20 @@ const API = {
   // Users
   getUsers() {
     return this.request('GET', '/api/v1/users');
+  },
+
+  // Protocol management (superadmin)
+  getAllProtocolsAdmin() {
+    return this.request('GET', '/api/v1/admin/protocols');
+  },
+  createProtocol(data) {
+    return this.request('POST', '/api/v1/admin/protocols', data);
+  },
+  updateProtocol(id, data) {
+    return this.request('PUT', `/api/v1/admin/protocols/${id}`, data);
+  },
+  deleteProtocol(id) {
+    return this.request('DELETE', `/api/v1/admin/protocols/${id}`);
   }
 };
 

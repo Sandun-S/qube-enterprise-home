@@ -248,9 +248,15 @@ const Templates = {
             `;
             card.onmouseenter = () => { card.style.borderColor = 'var(--primary)'; card.style.background = 'rgba(124,133,255,0.06)'; };
             card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = ''; };
-            card.onclick = () => {
+            card.onclick = async () => {
                 this._editState.protocol = p;
-                // Seed defaults for sensor_params_schema based on protocol
+                // Load reader template to seed per-device params and show connection reference
+                try {
+                    const rts = await API.getReaderTemplates(p.id);
+                    this._editState.readerTemplate = rts[0] || null;
+                } catch (e) {
+                    this._editState.readerTemplate = null;
+                }
                 this._editState.sensorParamsSchema = this._defaultParamsSchema(p.id);
                 this._renderMainForm();
             };
@@ -275,8 +281,11 @@ const Templates = {
             }, required: ['host'] },
 
             // MQTT: one reader per broker (broker details are reader-level, not per-device)
-            // Per-device: nothing required — topics are defined per measurement
-            mqtt: { type: 'object', properties: {}, required: [] },
+            // Per-device: topic is per-device; qos optional override
+            mqtt: { type: 'object', properties: {
+                topic:  { type: 'string',  title: 'MQTT Topic (supports + and # wildcards)' },
+                qos:    { type: 'integer', title: 'QoS Level (0=at most once, 1=at least once, 2=exactly once)', default: 1 },
+            }, required: ['topic'] },
 
             // OPC-UA: one reader per server endpoint; namespace differentiates device nodes
             opcua: { type: 'object', properties: {
@@ -341,6 +350,23 @@ const Templates = {
                     <input type="text" id="tmpl-description" value="${this._esc(s.description)}" placeholder="Short description of what this device measures">
                 </div>
             </div>
+
+            ${s.readerTemplate ? `
+            <!-- ── Reader Connection Reference ── -->
+            <details style="margin-bottom:20px;border:1px solid var(--border);border-radius:10px;padding:12px 16px;">
+                <summary style="cursor:pointer;font-size:12px;font-weight:600;color:var(--text-dim);list-style:none;">
+                    ℹ️ Reader-level config reference — <code>${s.readerTemplate.name}</code> (set when adding a reader to a Qube, not per device)
+                </summary>
+                <div style="margin-top:10px;">
+                    ${Object.entries(s.readerTemplate.connection_schema?.properties || {}).map(([k, v]) => `
+                        <div style="display:flex;gap:12px;padding:4px 0;border-bottom:1px solid rgba(255,255,255,0.04);font-size:11px;">
+                            <code style="color:var(--primary);min-width:140px;">${k}</code>
+                            <span class="page-subtitle">${v.title || k}</span>
+                            <span style="color:var(--text-dim);margin-left:auto;">${v.type}${v.default !== undefined ? ' · default: '+v.default : ''}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </details>` : ''}
 
             <!-- ── Per-Device Params Schema ── -->
             <div class="flex-between" style="margin-bottom:8px;">
@@ -682,11 +708,18 @@ const Templates = {
             const arrayKey = PROTOCOL_ARRAY_KEY[t.protocol] || 'entries';
             const measurements = JSON.parse(JSON.stringify(t.sensor_config?.[arrayKey] || []));
 
+            let readerTemplate = null;
+            try {
+                const rts = await API.getReaderTemplates(t.protocol);
+                readerTemplate = rts[0] || null;
+            } catch (e) { /* ignore */ }
+
             this._editState = {
                 mode: 'edit',
                 id: t.id,
                 is_global: t.is_global,
                 protocol: proto,
+                readerTemplate,
                 name: t.name || '',
                 manufacturer: t.manufacturer || '',
                 model: t.model || '',

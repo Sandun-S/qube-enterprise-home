@@ -159,7 +159,7 @@ const Commands = {
                         <h2 class="card-title">Recent History</h2>
                         <button id="btn-refresh-history" class="btn btn-ghost btn-sm">Refresh</button>
                     </div>
-                    <div id="cmd-history-list" class="flex flex-col gap-10">
+                    <div id="cmd-history-list" style="display:flex;flex-direction:column;gap:6px;">
                         <div class="text-center text-dim py-20">Select a Qube to view history</div>
                     </div>
                 </div>
@@ -251,15 +251,38 @@ const Commands = {
             btn.disabled = true;
             btn.textContent = 'Executing...';
             const res = await API.post(`/api/v1/qubes/${qubeId}/commands`, { command: type, payload });
-            Components.showAlert('Command sent successfully');
-            this.showResult(res);
+            Components.showAlert('Command sent — waiting for response...');
+            this.showResult({ status: 'waiting', message: 'Command dispatched. Polling for result...' });
             this.loadHistory(qubeId);
+            this.pollForResult(res.command_id, qubeId, 0);
         } catch (err) {
             Components.showAlert(err.message, 'error');
         } finally {
             btn.disabled = false;
             btn.textContent = 'Execute Command';
         }
+    },
+
+    pollForResult(cmdId, qubeId, attempts) {
+        if (attempts >= 15) {
+            const output = document.getElementById('cmd-result-output');
+            if (output) output.textContent = 'Timed out waiting for response (30s). Check history for final status.';
+            return;
+        }
+        setTimeout(async () => {
+            try {
+                const cmd = await API.get(`/api/v1/commands/${cmdId}`);
+                if (cmd.status === 'executed' || cmd.status === 'failed') {
+                    // Show the actual result output from the Qube
+                    this.showResult(cmd.result ?? { status: cmd.status, message: '(no output)' });
+                    this.loadHistory(qubeId);
+                } else {
+                    this.pollForResult(cmdId, qubeId, attempts + 1);
+                }
+            } catch {
+                this.pollForResult(cmdId, qubeId, attempts + 1);
+            }
+        }, 2000);
     },
 
     async loadHistory(qubeId) {
@@ -276,18 +299,49 @@ const Commands = {
             }
 
             container.innerHTML = history.map(cmd => `
-                <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:6px;">
+                <div data-cmd-id="${cmd.id}" style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:background 0.15s;"
+                     onmouseover="this.style.background='rgba(255,255,255,0.04)'" onmouseout="this.style.background=''">
                     <div class="flex-between">
                         <div style="display:flex;gap:8px;align-items:center;">
                             <span class="badge ${this.getCmdBadgeClass(cmd.command)}">${cmd.command}</span>
-                            <span style="font-size:11px;color:var(--text-dim);">${new Date(cmd.sent_at).toLocaleTimeString()}</span>
+                            <span style="font-size:11px;color:var(--text-dim);">${new Date(cmd.created_at).toLocaleTimeString()}</span>
                         </div>
                         <span class="badge ${this.getStatusBadgeClass(cmd.status)}">${cmd.status}</span>
                     </div>
                 </div>
             `).join('');
+
+            // Click any history item to load its full result
+            container.querySelectorAll('[data-cmd-id]').forEach(el => {
+                el.addEventListener('click', () => this.loadCommandDetail(el.dataset.cmdId));
+            });
         } catch (err) {
             container.innerHTML = `<div class="text-error text-center py-20">${err.message}</div>`;
+        }
+    },
+
+    async loadCommandDetail(cmdId) {
+        const card = document.getElementById('cmd-result-card');
+        const output = document.getElementById('cmd-result-output');
+        const title = card?.querySelector('.card-title');
+        if (!card || !output) return;
+
+        card.classList.remove('hidden');
+        if (title) title.textContent = 'Execution Result';
+        output.textContent = 'Loading...';
+
+        try {
+            const cmd = await API.get(`/api/v1/commands/${cmdId}`);
+            if (title) title.textContent = `Result — ${cmd.command}`;
+            const display = {
+                command:     cmd.command,
+                status:      cmd.status,
+                executed_at: cmd.executed_at,
+                output:      cmd.result ?? '(no output)',
+            };
+            output.textContent = JSON.stringify(display, null, 2);
+        } catch (err) {
+            output.textContent = `Error loading result: ${err.message}`;
         }
     },
 
@@ -299,17 +353,19 @@ const Commands = {
     },
 
     getStatusBadgeClass(status) {
-        if (status === 'acked' || status === 'delivered') return 'badge-success';
-        if (status === 'pending') return 'badge-warning';
+        if (status === 'executed' || status === 'acked' || status === 'delivered') return 'badge-success';
+        if (status === 'pending' || status === 'sent') return 'badge-warning';
         if (status === 'failed') return 'badge-error';
-        return 'badge-blue';
+        return 'badge-ghost';
     },
 
     showResult(res) {
         const card = document.getElementById('cmd-result-card');
         const output = document.getElementById('cmd-result-output');
+        const title = card?.querySelector('.card-title');
         card?.classList.remove('hidden');
-        if (output) output.textContent = JSON.stringify(res, null, 2);
+        if (title) title.textContent = 'Execution Result';
+        if (output) output.textContent = typeof res === 'string' ? res : JSON.stringify(res, null, 2);
     }
 };
 

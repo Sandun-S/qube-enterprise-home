@@ -5,7 +5,7 @@ const ReaderTemplates = {
     async render() {
         const user = await API.getMe();
         const templates = await API.get('/api/v1/reader-templates');
-        const protocols = await API.get('/api/v1/protocols');
+        const protocols = await API.getProtocols();
 
         return `
             <div class="page-header">

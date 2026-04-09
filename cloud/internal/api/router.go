@@ -138,6 +138,12 @@ func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler
 			r.Post("/api/v1/reader-templates", createReaderTemplateHandler(pool))
 			r.Put("/api/v1/reader-templates/{id}", updateReaderTemplateHandler(pool))
 			r.Delete("/api/v1/reader-templates/{id}", deleteReaderTemplateHandler(pool))
+
+			// Protocols — superadmin CRUD
+			r.Get("/api/v1/admin/protocols", listAllProtocolsHandler(pool))
+			r.Post("/api/v1/admin/protocols", createProtocolHandler(pool))
+			r.Put("/api/v1/admin/protocols/{id}", updateProtocolHandler(pool))
+			r.Delete("/api/v1/admin/protocols/{id}", deleteProtocolHandler(pool))
 		})
 	})
 
