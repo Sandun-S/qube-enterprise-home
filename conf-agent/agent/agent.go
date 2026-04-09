@@ -341,6 +341,11 @@ func (a *Agent) getState() (*tpapi.SyncState, error) {
 	if err != nil {
 		return nil, err
 	}
+	if status == 401 {
+		log.Println("[sync] token rejected (401) — token may have been invalidated by unclaim/reclaim, triggering re-registration")
+		a.reRegister()
+		return nil, fmt.Errorf("sync/state returned 401: token invalid, re-registration triggered")
+	}
 	if status != 200 {
 		return nil, fmt.Errorf("sync/state returned %d: %s", status, data)
 	}
@@ -496,6 +501,28 @@ func saveTokenToEnv(workDir, qubeID, token string) {
 	} else {
 		log.Printf("[register] Token saved to %s", envPath)
 	}
+}
+
+// reRegister wipes the cached token and re-registers with the cloud.
+// Called when the TP-API returns 401 — happens after unclaim/reclaim.
+func (a *Agent) reRegister() {
+	// Wipe cached token so it won't be reused
+	saveTokenToEnv(a.cfg.WorkDir, a.cfg.QubeID, "")
+	a.cfg.QubeToken = ""
+
+	// Re-register — blocks until the device is claimed
+	bootstrapClient := tpapi.NewClient(a.cfg.TPAPIURL, a.cfg.QubeID, "")
+	newToken := SelfRegister(bootstrapClient, a.cfg.QubeID, a.cfg.RegisterKey, a.cfg.WorkDir)
+	if newToken == "" {
+		log.Println("[register] re-registration failed — will retry on next cycle")
+		return
+	}
+
+	// Update the running agent with the new token
+	a.cfg.QubeToken = newToken
+	a.client = tpapi.NewClient(a.cfg.TPAPIURL, a.cfg.QubeID, newToken)
+	os.Setenv("QUBE_TOKEN", newToken)
+	log.Printf("[register] re-registration successful — new token obtained")
 }
 
 // ─── Command Executor ─────────────────────────────────────────────────────────

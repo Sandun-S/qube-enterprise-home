@@ -24,7 +24,7 @@ func Deploy(workDir string) {
 	if isSwarm {
 		log.Println("[docker] swarm mode — running: docker stack deploy")
 		cmd := exec.Command("docker", "stack", "deploy",
-			"-c", composePath, "--with-registry-auth", "qube")
+			"-c", composePath, "--with-registry-auth", "--prune", "qube")
 		cmd.Dir = workDir
 		out, err := cmd.CombinedOutput()
 		if err != nil {
