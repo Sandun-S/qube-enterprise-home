@@ -114,6 +114,7 @@ const Readers = {
                     `<div class="flex">
                         <button class="btn btn-primary btn-sm btn-view-sensors" data-id="${r.id}" data-name="${r.name}" data-conn="${getConnectionSummary(r)}">Sensors</button>
                         <button class="btn btn-ghost btn-sm btn-view-config" data-id="${r.id}" data-name="${r.name}">Config</button>
+                        <button class="btn btn-error btn-sm btn-delete-reader" data-id="${r.id}" data-name="${r.name}">Delete</button>
                     </div>`
                 ]
             );
@@ -124,7 +125,24 @@ const Readers = {
             document.querySelectorAll('.btn-view-config').forEach(btn => {
                 btn.addEventListener('click', () => this.showConfig(btn.dataset.id, btn.dataset.name));
             });
+            document.querySelectorAll('.btn-delete-reader').forEach(btn => {
+                btn.addEventListener('click', () => this.deleteReader(btn.dataset.id, btn.dataset.name));
+            });
 
+        } catch (err) {
+            Components.showAlert(err.message, 'error');
+        }
+    },
+
+    async deleteReader(id, name) {
+        if (!confirm(`Are you sure you want to delete reader "${name}"?\nThis will automatically remove the container and all associated sensors on the Qube.`)) {
+            return;
+        }
+
+        try {
+            await API.deleteReader(id);
+            Components.showAlert(`Reader "${name}" deleted.`, 'success');
+            this.loadReaders();
         } catch (err) {
             Components.showAlert(err.message, 'error');
         }
