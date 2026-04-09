@@ -302,7 +302,7 @@ func (a *Agent) checkAndSync() {
 	log.Printf("[sync] remote=%s local=%s version=%d",
 		safeHash(state.Hash), safeHash(a.localHash), state.ConfigVersion)
 
-	if state.Hash == a.localHash && state.Hash != "" {
+	if state.Hash == a.localHash {
 		log.Println("[sync] hashes match — no action needed")
 		return
 	}
