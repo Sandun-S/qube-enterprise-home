@@ -22,7 +22,7 @@ func listDeviceTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		protocol := r.URL.Query().Get("protocol")
 
 		query := `SELECT id, org_id, protocol, name, manufacturer, model, description,
-		                 sensor_config, sensor_params_schema,
+		                 sensor_config, sensor_params_schema, reader_template_id,
 		                 is_global, version, created_at
 		          FROM device_templates
 		          WHERE (is_global = TRUE OR org_id = $1)`
@@ -49,8 +49,9 @@ func listDeviceTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			var isGlobal bool
 			var version int
 			var createdAt time.Time
+			var readerTemplateIDPtr *string
 			if err := rows.Scan(&id, &orgIDPtr, &protocol, &name, &manufacturer, &model,
-				&description, &sensorCfgRaw, &paramsSchemaRaw,
+				&description, &sensorCfgRaw, &paramsSchemaRaw, &readerTemplateIDPtr,
 				&isGlobal, &version, &createdAt); err != nil {
 				continue
 			}
@@ -60,7 +61,7 @@ func listDeviceTemplatesHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			result = append(result, map[string]any{
 				"id": id, "org_id": orgIDPtr, "protocol": protocol,
 				"name": name, "manufacturer": manufacturer, "model": model,
-				"description": description,
+				"description": description, "reader_template_id": readerTemplateIDPtr,
 				"sensor_config": sensorCfg, "sensor_params_schema": paramsSchema,
 				"is_global": isGlobal, "version": version, "created_at": createdAt,
 			})
@@ -84,12 +85,12 @@ func getDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 
 		err := pool.QueryRow(context.Background(),
 			`SELECT id, org_id, protocol, name, manufacturer, model, description,
-			        sensor_config, sensor_params_schema,
+			        sensor_config, sensor_params_schema, reader_template_id,
 			        is_global, version, created_at
 			 FROM device_templates
 			 WHERE id=$1 AND (is_global=TRUE OR org_id=$2)`, tmplID, orgID,
 		).Scan(&id, &orgIDPtr, &protocol, &name, &manufacturer, &model, &description,
-			&sensorCfgRaw, &paramsSchemaRaw, &isGlobal, &version, &createdAt)
+			&sensorCfgRaw, &paramsSchemaRaw, &readerTemplateID, &isGlobal, &version, &createdAt)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "device template not found")
 			return
@@ -100,7 +101,7 @@ func getDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id": id, "org_id": orgIDPtr, "protocol": protocol,
 			"name": name, "manufacturer": manufacturer, "model": model,
-			"description": description,
+			"description": description, "reader_template_id": readerTemplateID,
 			"sensor_config": sensorCfg, "sensor_params_schema": paramsSchema,
 			"is_global": isGlobal, "version": version, "created_at": createdAt,
 		})
@@ -119,8 +120,9 @@ func createDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			Manufacturer      string `json:"manufacturer"`
 			Model             string `json:"model"`
 			Description       string `json:"description"`
-			SensorConfig      any    `json:"sensor_config"`
-			SensorParamsSchema any   `json:"sensor_params_schema"`
+			SensorConfig       any    `json:"sensor_config"`
+			SensorParamsSchema any    `json:"sensor_params_schema"`
+			ReaderTemplateID   string `json:"reader_template_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil ||
 			req.Name == "" || req.Protocol == "" {
@@ -152,10 +154,10 @@ func createDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		err := pool.QueryRow(context.Background(),
 			`INSERT INTO device_templates
 			 (org_id, protocol, name, manufacturer, model, description,
-			  sensor_config, sensor_params_schema, is_global)
-			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+			  sensor_config, sensor_params_schema, reader_template_id, is_global)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NULLIF($9,'')::UUID,$10) RETURNING id`,
 			orgID, req.Protocol, req.Name, req.Manufacturer, req.Model,
-			req.Description, sensorCfg, paramsSchema, isGlobal,
+			req.Description, sensorCfg, paramsSchema, req.ReaderTemplateID, isGlobal,
 		).Scan(&id)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create device template")
@@ -201,6 +203,7 @@ func updateDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			Description        string `json:"description"`
 			SensorConfig       any    `json:"sensor_config"`
 			SensorParamsSchema any    `json:"sensor_params_schema"`
+			ReaderTemplateID   string `json:"reader_template_id"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid body")
@@ -213,10 +216,11 @@ func updateDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		_, err = pool.Exec(context.Background(),
 			`UPDATE device_templates
 			 SET name=$1, manufacturer=$2, model=$3, description=$4,
-			     sensor_config=$5, sensor_params_schema=$6, version=version+1
-			 WHERE id=$7`,
+			     sensor_config=$5, sensor_params_schema=$6, 
+			     reader_template_id=NULLIF($7,'')::UUID, version=version+1
+			 WHERE id=$8`,
 			req.Name, req.Manufacturer, req.Model, req.Description,
-			sensorCfg, paramsSchema, tmplID)
+			sensorCfg, paramsSchema, req.ReaderTemplateID, tmplID)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "update failed")
 			return

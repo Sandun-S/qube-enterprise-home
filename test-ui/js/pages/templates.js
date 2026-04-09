@@ -180,6 +180,8 @@ const Templates = {
             protocol: null,
             name: '', manufacturer: '', model: '', description: '',
             measurements: [],
+            readerTemplates: [],
+            readerTemplateId: '',
             sensorParamsSchema: { type: 'object', properties: {}, required: [] },
         };
         this._openModal();
@@ -206,11 +208,14 @@ const Templates = {
             card.onmouseleave = () => { card.style.borderColor = 'var(--border)'; card.style.background = ''; };
             card.onclick = async () => {
                 this._editState.protocol = p;
-                // Load reader template to seed per-device params and show connection reference
+                // Load reader templates to link this device to a default reader image
                 try {
                     const rts = await API.getReaderTemplates(p.id);
+                    this._editState.readerTemplates = rts;
+                    this._editState.readerTemplateId = rts[0]?.id || '';
                     this._editState.readerTemplate = rts[0] || null;
                 } catch (e) {
+                    this._editState.readerTemplates = [];
                     this._editState.readerTemplate = null;
                 }
                 this._editState.sensorParamsSchema = p.default_params_schema
@@ -265,6 +270,13 @@ const Templates = {
                 <div class="form-group" style="grid-column:1/-1;">
                     <label>Description</label>
                     <input type="text" id="tmpl-description" value="${this._esc(s.description)}" placeholder="Short description of what this device measures">
+                </div>
+                <div class="form-group" style="grid-column:1/-1;">
+                    <label>Bundled Reader Template <span style="color:var(--text-dim)">(Determines the auto-deployed container image)</span></label>
+                    <select id="tmpl-reader-template">
+                        <option value="">-- No specific reader --</option>
+                        ${(s.readerTemplates || []).map(rt => `<option value="${rt.id}" ${rt.id === s.readerTemplateId ? 'selected' : ''}>${rt.name} (${rt.image_suffix})</option>`).join('')}
+                    </select>
                 </div>
             </div>
 
@@ -590,6 +602,7 @@ const Templates = {
 
         const payload = {
             name, manufacturer, model, description,
+            reader_template_id: document.getElementById('tmpl-reader-template').value,
             sensor_config: { [arrayKey]: s.measurements },
             sensor_params_schema: s.sensorParamsSchema,
         };
@@ -625,10 +638,13 @@ const Templates = {
             const arrayKey = proto.sensor_config_key || 'entries';
             const measurements = JSON.parse(JSON.stringify(t.sensor_config?.[arrayKey] || []));
 
-            let readerTemplate = null;
+            let readerTemplates = [];
+            let readerTemplateId = t.reader_template_id || '';
             try {
-                const rts = await API.getReaderTemplates(t.protocol);
-                readerTemplate = rts[0] || null;
+                readerTemplates = await API.getReaderTemplates(t.protocol);
+                if (!readerTemplateId && readerTemplates.length > 0) {
+                    readerTemplateId = readerTemplates[0].id;
+                }
             } catch (e) { /* ignore */ }
 
             this._editState = {
@@ -636,7 +652,9 @@ const Templates = {
                 id: t.id,
                 is_global: t.is_global,
                 protocol: proto,
-                readerTemplate,
+                readerTemplates,
+                readerTemplateId,
+                readerTemplate: readerTemplates.find(rt => rt.id === readerTemplateId) || readerTemplates[0] || null,
                 name: t.name || '',
                 manufacturer: t.manufacturer || '',
                 model: t.model || '',

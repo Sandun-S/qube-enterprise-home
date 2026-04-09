@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS device_templates (
     description           TEXT NOT NULL DEFAULT '',
     sensor_config         JSONB NOT NULL DEFAULT '{}',  -- registers/oids/nodes/json_paths
     sensor_params_schema  JSONB NOT NULL DEFAULT '{}',  -- JSON Schema for per-sensor params
+    reader_template_id    UUID REFERENCES reader_templates(id),
     is_global             BOOLEAN NOT NULL DEFAULT FALSE,
     version               INT NOT NULL DEFAULT 1,
     created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),

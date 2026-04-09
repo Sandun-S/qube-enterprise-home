@@ -32,7 +32,7 @@ const Onboarding = {
                 <div style="color:var(--border)">→</div>
                 <div class="step-indicator" id="step-2-label">2. Template</div>
                 <div style="color:var(--border)">→</div>
-                <div class="step-indicator" id="step-3-label">3. Reader</div>
+                <div class="step-indicator" id="step-3-label">3. Connection</div>
                 <div style="color:var(--border)">→</div>
                 <div class="step-indicator" id="step-4-label">4. Configure</div>
                 <div style="color:var(--border)">→</div>
@@ -189,7 +189,11 @@ const Onboarding = {
         const protoReaders = readers.filter(r => r.protocol === this.state.protocol.id);
 
         const rTemplates = await API.getReaderTemplates(this.state.protocol.id);
-        this.state.readerTemplate = rTemplates[0] || null;
+        
+        // Prefer the reader template explicitly linked to the device template
+        const linkedRT = rTemplates.find(rt => rt.id === this.state.deviceTemplate.reader_template_id);
+        this.state.readerTemplate = linkedRT || rTemplates[0] || null;
+        
         this.state.existingReaders = protoReaders;
         this.state.selectedReaderId = null;
         this.state.readerConnValues = {};
@@ -199,7 +203,7 @@ const Onboarding = {
             const sharedReader = protoReaders[0] || null;
             container.innerHTML = `
                 <div class="card">
-                    <h3 class="card-title">Step 3: Reader — ${this.state.protocol.label} (Shared)</h3>
+                    <h3 class="card-title">Step 3: Connection — ${this.state.protocol.label} (Shared)</h3>
                     <div style="background:rgba(99,179,237,0.08);border:1px solid rgba(99,179,237,0.25);border-radius:12px;padding:20px;margin-bottom:20px;">
                         <div style="font-size:13px;font-weight:600;margin-bottom:8px;">
                             ${this.state.protocol.label} uses a <strong>shared multi-target reader</strong>
@@ -240,7 +244,7 @@ const Onboarding = {
 
         container.innerHTML = `
             <div class="card">
-                <h3 class="card-title">Step 3: Reader — ${this.state.protocol.label} Connection</h3>
+                <h3 class="card-title">Step 3: Connection — ${this.state.protocol.label} Settings</h3>
                 <p class="page-subtitle" style="margin-bottom:18px;">
                     Each unique endpoint (host:port / broker / server URL) gets its own reader container.
                     Sensors sharing the same endpoint share one container.
@@ -402,7 +406,7 @@ const Onboarding = {
                     <div class="flex-between" style="margin-bottom:10px;"><span>Protocol</span><span class="badge badge-blue">${proto.label}</span></div>
                     <div class="flex-between" style="margin-bottom:10px;"><span>Template</span><b>${tmpl.name}</b></div>
                     <div class="flex-between" style="margin-bottom:10px;"><span>Device</span><b>${[tmpl.manufacturer, tmpl.model].filter(Boolean).join(' ') || '—'}</b></div>
-                    <div class="flex-between" style="margin-bottom:10px;"><span>Reader</span><span>${readerInfo}</span></div>
+                    <div class="flex-between" style="margin-bottom:10px;"><span>Connection</span><span>${readerInfo}</span></div>
                     <div class="flex-between"><span>Reader Mode</span><span class="badge ${proto.reader_standard === 'multi_target' ? 'badge-blue' : 'badge-success'}">${proto.reader_standard}</span></div>
                 </div>
 

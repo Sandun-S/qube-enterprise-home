@@ -258,25 +258,54 @@ func deleteSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		orgID, _ := r.Context().Value(ctxOrgID).(string)
 		sensorID := chi.URLParam(r, "sensor_id")
 
-		var qubeID string
+		var qubeID, readerID string
 		err := pool.QueryRow(context.Background(),
-			`SELECT q.id FROM sensors s
+			`SELECT q.id, s.reader_id FROM sensors s
 			 JOIN readers rd ON rd.id = s.reader_id
 			 JOIN qubes q ON q.id = rd.qube_id
-			 WHERE s.id=$1 AND q.org_id=$2`, sensorID, orgID).Scan(&qubeID)
+			 WHERE s.id=$1 AND q.org_id=$2`, sensorID, orgID).Scan(&qubeID, &readerID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "sensor not found")
 			return
 		}
 
 		ctx := context.Background()
-		if _, err := pool.Exec(ctx, `DELETE FROM sensors WHERE id=$1`, sensorID); err != nil {
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		defer tx.Rollback(ctx)
+
+		if _, err := tx.Exec(ctx, `DELETE FROM sensors WHERE id=$1`, sensorID); err != nil {
 			writeError(w, http.StatusInternalServerError, "delete failed")
 			return
 		}
 
+		// Check if reader has other sensors
+		var remainingCount int
+		tx.QueryRow(ctx, `SELECT COUNT(*) FROM sensors WHERE reader_id=$1`, readerID).Scan(&remainingCount)
+
+		readerDeleted := false
+		if remainingCount == 0 {
+			// Check if it's an auto-managed reader (we usually delete them if they become empty)
+			// For now, we delete if it's the last sensor.
+			tx.Exec(ctx, `DELETE FROM containers WHERE reader_id=$1`, readerID)
+			tx.Exec(ctx, `DELETE FROM readers WHERE id=$1`, readerID)
+			readerDeleted = true
+		}
+
+		if err := tx.Commit(ctx); err != nil {
+			writeError(w, http.StatusInternalServerError, "commit failed")
+			return
+		}
+
 		hash, _ := recomputeConfigHash(ctx, pool, qubeID)
-		writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "new_hash": hash})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"deleted":        true,
+			"reader_deleted": readerDeleted,
+			"new_hash":       hash,
+		})
 	}
 }
 
@@ -368,11 +397,12 @@ func smartCreateSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		// ── 1. Get template details ───────────────────────────────────────────
 		var tmplProtocol string
 		var tmplSensorConfig []byte
+		var readerTemplateID *string
 		err := pool.QueryRow(ctx,
-			`SELECT protocol, sensor_config FROM device_templates
+			`SELECT protocol, sensor_config, reader_template_id FROM device_templates
 			 WHERE id=$1 AND (is_global=TRUE OR org_id=$2)`,
 			req.TemplateID, orgID,
-		).Scan(&tmplProtocol, &tmplSensorConfig)
+		).Scan(&tmplProtocol, &tmplSensorConfig, &readerTemplateID)
 		if err != nil {
 			writeError(w, http.StatusNotFound, "device template not found")
 			return
@@ -384,7 +414,9 @@ func smartCreateSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			Scan(&readerStandard)
 
 		// ── 3. Find or create a reader ────────────────────────────────────────
-		readerID, err := findOrCreateReader(ctx, pool, qubeID, orgID, tmplProtocol, readerStandard, req.ReaderConfig, req.ReaderName)
+		// We use req.Params (which contains connection info like 'host' or 'topic') 
+		// to fingerprint the required reader.
+		readerID, err := findOrCreateReader(ctx, pool, qubeID, orgID, tmplProtocol, readerStandard, readerTemplateID, req.ReaderConfig, req.ReaderName)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to resolve reader: "+err.Error())
 			return
@@ -428,7 +460,7 @@ func smartCreateSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 //   - Match by connection fingerprint (host:port, broker, endpoint URL).
 //   - If a reader with the same fingerprint exists, reuse it.
 //   - Otherwise create a new reader.
-func findOrCreateReader(ctx context.Context, pool *pgxpool.Pool, qubeID, orgID, protocol, readerStandard string, readerConfig any, readerName string) (string, error) {
+func findOrCreateReader(ctx context.Context, pool *pgxpool.Pool, qubeID, orgID, protocol, readerStandard string, readerTemplateID *string, readerConfig any, readerName string) (string, error) {
 	if readerStandard == "multi_target" {
 		// One shared reader per protocol per Qube
 		var existingID string
@@ -441,7 +473,7 @@ func findOrCreateReader(ctx context.Context, pool *pgxpool.Pool, qubeID, orgID, 
 		}
 
 		// None exists — create with reader template defaults
-		return createAutoReader(ctx, pool, qubeID, protocol, readerName, map[string]any{})
+		return createAutoReader(ctx, pool, qubeID, protocol, readerTemplateID, readerName, map[string]any{})
 	}
 
 	// endpoint protocol — match by connection fingerprint
@@ -475,7 +507,7 @@ func findOrCreateReader(ctx context.Context, pool *pgxpool.Pool, qubeID, orgID, 
 	if cfg == nil {
 		cfg = map[string]any{}
 	}
-	return createAutoReader(ctx, pool, qubeID, protocol, readerName, cfg)
+	return createAutoReader(ctx, pool, qubeID, protocol, readerTemplateID, readerName, cfg)
 }
 
 // endpointFingerprint returns a canonical string that uniquely identifies a connection endpoint.
@@ -494,40 +526,64 @@ func endpointFingerprint(protocol string, cfg map[string]any) string {
 	}
 
 	switch protocol {
-	case "modbus_tcp":
+	case "modbus_tcp", "snmp", "dnp3", "bacnet":
 		host := getStr("host")
 		if host == "" {
+			host = getStr("ip_address")
+		}
+		if host == "" {
 			return ""
 		}
-		return fmt.Sprintf("modbus://%s:%d", host, getNum("port", 502))
+		return fmt.Sprintf("%s://%s", protocol, host)
 	case "mqtt":
-		host := getStr("broker_host")
-		if host == "" {
-			host = getStr("broker_url")
+		broker := getStr("broker_host")
+		if broker == "" {
+			broker = getStr("host")
 		}
-		if host == "" {
+		if broker == "" {
+			return "mqtt://default" // Should ideally have a host, but fallback to shared if none
+		}
+		return fmt.Sprintf("mqtt://%s", broker)
+	case "lorawan":
+		ns := getStr("ns_host")
+		if ns == "" {
+			ns = getStr("host")
+		}
+		if ns == "" {
+			return "lorawan://default"
+		}
+		return fmt.Sprintf("lorawan://%s", ns)
+	case "opcua", "http":
+		target := getStr("endpoint")
+		if target == "" {
+			target = getStr("url")
+		}
+		if target == "" {
 			return ""
 		}
-		return fmt.Sprintf("mqtt://%s:%d", host, getNum("broker_port", 1883))
-	case "opcua":
-		ep := getStr("endpoint")
-		return ep // already a full URL
+		return fmt.Sprintf("%s://%s", protocol, target)
 	default:
 		return ""
 	}
 }
 
 // createAutoReader creates a new reader with a container.
-func createAutoReader(ctx context.Context, pool *pgxpool.Pool, qubeID, protocol, name string, cfg map[string]any) (string, error) {
+func createAutoReader(ctx context.Context, pool *pgxpool.Pool, qubeID, protocol string, readerTemplateID *string, name string, cfg map[string]any) (string, error) {
 	if name == "" {
 		name = fmt.Sprintf("%s-reader", strings.ToUpper(protocol))
 	}
 
 	cfgBytes, _ := json.Marshal(cfg)
 
-	// Resolve image
+	// Resolve image and env defaults from reader template
 	var imageSuffix string
-	pool.QueryRow(ctx, `SELECT image_suffix FROM reader_templates WHERE protocol=$1 LIMIT 1`, protocol).Scan(&imageSuffix)
+	var envDefaultsRaw []byte
+	if readerTemplateID != nil {
+		pool.QueryRow(ctx, `SELECT image_suffix, env_defaults FROM reader_templates WHERE id=$1`, *readerTemplateID).Scan(&imageSuffix, &envDefaultsRaw)
+	} else {
+		// Fallback to first available reader template for this protocol
+		pool.QueryRow(ctx, `SELECT image_suffix, env_defaults FROM reader_templates WHERE protocol=$1 LIMIT 1`, protocol).Scan(&imageSuffix, &envDefaultsRaw)
+	}
 
 	tx, err := pool.Begin(ctx)
 	if err != nil {
@@ -545,12 +601,22 @@ func createAutoReader(ctx context.Context, pool *pgxpool.Pool, qubeID, protocol,
 
 	serviceName := sanitizeServiceName(name)
 	imageBase := resolveReaderImage(pool, protocol, imageSuffix)
-	envJSON, _ := json.Marshal(map[string]any{
+
+	// Build environment JSON
+	env := map[string]any{
 		"READER_ID":      readerID,
 		"SQLITE_PATH":    "/opt/qube/data/qube.db",
 		"CORESWITCH_URL": "http://core-switch:8585",
 		"LOG_LEVEL":      "info",
-	})
+	}
+	if envDefaultsRaw != nil {
+		var defaults map[string]any
+		json.Unmarshal(envDefaultsRaw, &defaults)
+		for k, v := range defaults {
+			env[k] = v
+		}
+	}
+	envJSON, _ := json.Marshal(env)
 
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO containers (qube_id, reader_id, name, image, env_json) VALUES ($1,$2,$3,$4,$5)`,

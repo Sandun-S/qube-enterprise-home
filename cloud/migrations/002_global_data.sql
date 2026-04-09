@@ -40,9 +40,7 @@ INSERT INTO protocols (id, label, description, reader_standard,
     '{
         "type": "object",
         "properties": {
-            "host":         {"type": "string",  "title": "Device IP Address", "format": "ipv4"},
-            "community":    {"type": "string",  "title": "Community String",  "default": "public"},
-            "snmp_version": {"type": "string",  "title": "SNMP Version", "enum": ["1","2c","3"], "default": "2c"}
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"}
         },
         "required": ["host"]
     }'
@@ -59,8 +57,7 @@ INSERT INTO protocols (id, label, description, reader_standard,
     '{
         "type": "object",
         "properties": {
-            "topic": {"type": "string",  "title": "MQTT Topic (supports + and # wildcards)"},
-            "qos":   {"type": "integer", "title": "QoS Level (0=at most once, 1=at least once, 2=exactly once)", "default": 1, "minimum": 0, "maximum": 2}
+            "topic": {"type": "string", "title": "MQTT Topic (supports + and # wildcards)"}
         },
         "required": ["topic"]
     }'
@@ -76,9 +73,7 @@ INSERT INTO protocols (id, label, description, reader_standard,
     ]',
     '{
         "type": "object",
-        "properties": {
-            "namespace_index": {"type": "integer", "title": "OPC-UA Namespace Index", "default": 2}
-        },
+        "properties": {},
         "required": []
     }'
 ),
@@ -95,12 +90,7 @@ INSERT INTO protocols (id, label, description, reader_standard,
     '{
         "type": "object",
         "properties": {
-            "url":          {"type": "string",  "title": "Endpoint URL"},
-            "method":       {"type": "string",  "title": "HTTP Method", "default": "GET"},
-            "auth_type":    {"type": "string",  "title": "Auth Type (none / basic / bearer)", "default": "none"},
-            "username":     {"type": "string",  "title": "Username (basic auth)"},
-            "password":     {"type": "string",  "title": "Password (basic auth)", "format": "password"},
-            "bearer_token": {"type": "string",  "title": "Bearer Token"}
+            "url": {"type": "string", "title": "Endpoint URL"}
         },
         "required": ["url"]
     }'
@@ -240,8 +230,8 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
         "properties": {
             "endpoint":          {"type": "string", "title": "OPC-UA Endpoint", "description": "e.g. opc.tcp://192.168.1.18:4840"},
             "security_mode":     {"type": "string", "title": "Security Mode", "enum": ["None","Sign","SignAndEncrypt"], "default": "None"},
-            "security_policy":   {"type": "string", "title": "Security Policy", "enum": ["None","Basic128Rsa15","Basic256","Basic256Sha256"], "default": "None"},
-            "poll_interval_sec": {"type": "integer","title": "Poll Interval (seconds)", "default": 10, "minimum": 1, "maximum": 3600}
+            "namespace_index":   {"type": "integer", "title": "Namespace Index", "default": 2},
+            "poll_interval_sec": {"type": "integer", "title": "Poll Interval (seconds)", "default": 10, "minimum": 1, "maximum": 3600}
         },
         "required": ["endpoint"]
     }',
@@ -321,15 +311,16 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
 );
 
 -- ===================== DEVICE TEMPLATES =====================
+-- Links to reader_templates now required for auto-provisioning connection forms.
 
-INSERT INTO device_templates (protocol, name, manufacturer, model, description, is_global, sensor_config, sensor_params_schema) VALUES
+INSERT INTO device_templates (protocol, name, manufacturer, model, description, is_global, reader_template_id, sensor_config, sensor_params_schema) VALUES
 
 -- ── Modbus TCP ──────────────────────────────────────────────────────────────
 
 (
     'modbus_tcp', 'Schneider PM5100', 'Schneider Electric', 'PM5100',
     '3-phase power meter — active power, voltage L-L, current, energy, PF, frequency',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='modbus_tcp' LIMIT 1),
     '{
         "registers": [
             {"field_key": "active_power_w",  "register_type": "Holding", "address": 3000, "data_type": "float32", "scale": 1.0, "unit": "W"},
@@ -352,7 +343,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'modbus_tcp', 'Schneider PM2100', 'Schneider Electric', 'PM2100',
     'Basic power meter — active power, voltage, energy',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='modbus_tcp' LIMIT 1),
     '{
         "registers": [
             {"field_key": "active_power_w", "register_type": "Holding", "address": 3000, "data_type": "uint16", "scale": 0.1, "unit": "W"},
@@ -372,7 +363,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'modbus_tcp', 'Eastron SDM630', 'Eastron', 'SDM630',
     '3-phase energy meter — per-phase voltage, current, total power and energy',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='modbus_tcp' LIMIT 1),
     '{
         "registers": [
             {"field_key": "voltage_l1_v",   "register_type": "Input", "address": 0,   "data_type": "float32", "scale": 1.0, "unit": "V"},
@@ -397,7 +388,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'modbus_tcp', 'Generic Modbus Register', '', '',
     'Generic Modbus TCP holding register — single value. Customize after adding.',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='modbus_tcp' LIMIT 1),
     '{
         "registers": [
             {"field_key": "value", "register_type": "Holding", "address": 0, "data_type": "uint16", "scale": 1.0, "unit": ""}
@@ -415,7 +406,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'modbus_tcp', 'Production Line Breakdown Counter', '', '',
     'Factory production line major/minor breakdown event counters — 3 lines (Conebakery, Flexline, Versaline). Holding registers, uint16.',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='modbus_tcp' LIMIT 1),
     '{
         "registers": [
             {"field_key": "conebakery_major_breakdown", "register_type": "Holding", "address": 272, "data_type": "uint16", "scale": 1.0, "unit": "count"},
@@ -441,7 +432,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'snmp', 'APC Smart-UPS', 'APC', 'Smart-UPS',
     'APC Smart-UPS — battery capacity, runtime, input/output voltage, load',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='snmp' LIMIT 1),
     '{
         "oids": [
             {"field_key": "battery_capacity_pct", "oid": ".1.3.6.1.4.1.318.1.1.1.2.2.1.0",  "unit": "%"},
@@ -455,9 +446,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "host":         {"type": "string", "title": "Device IP Address", "format": "ipv4"},
-            "community":    {"type": "string", "title": "Community String", "default": "public"},
-            "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1","2c","3"], "default": "2c"}
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"}
         },
         "required": ["host"]
     }'
@@ -465,7 +454,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'snmp', 'Liebert GXT RT UPS', 'Liebert', 'GXT RT',
     'Liebert GXT RT UPS — RFC 1628 MIB — battery status, runtime, input/output voltage, current, power, load',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='snmp' LIMIT 1),
     '{
         "oids": [
             {"field_key": "upsBatteryStatus",             "oid": ".1.3.6.1.2.1.33.1.2.1.0",     "unit": ""},
@@ -493,9 +482,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "host":         {"type": "string", "title": "Device IP Address", "format": "ipv4"},
-            "community":    {"type": "string", "title": "Community String", "default": "public"},
-            "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1","2c","3"], "default": "2c"}
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"}
         },
         "required": ["host"]
     }'
@@ -503,7 +490,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'snmp', 'Vertiv ITA2 UPS', 'Vertiv', 'ITA2',
     'Vertiv ITA2 3-phase UPS — full telemetry: input/output voltages, currents, power, load, bypass, battery',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='snmp' LIMIT 1),
     '{
         "oids": [
             {"field_key": "systemStatus",                      "oid": ".1.3.6.1.4.1.13400.2.54.2.1.1.0",  "unit": ""},
@@ -554,9 +541,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "host":         {"type": "string", "title": "Device IP Address", "format": "ipv4"},
-            "community":    {"type": "string", "title": "Community String", "default": "public"},
-            "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1","2c","3"], "default": "2c"}
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"}
         },
         "required": ["host"]
     }'
@@ -564,7 +549,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'snmp', 'Vertiv APM150 UPS', 'Vertiv', 'APM150',
     'Vertiv APM150 3-phase UPS — full telemetry: input/output voltages, currents, power, load, bypass, battery',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='snmp' LIMIT 1),
     '{
         "oids": [
             {"field_key": "systemStatus",          "oid": ".1.3.6.1.4.1.13400.2.20.2.1.1.0",  "unit": ""},
@@ -612,9 +597,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "host":         {"type": "string", "title": "Device IP Address", "format": "ipv4"},
-            "community":    {"type": "string", "title": "Community String", "default": "public"},
-            "snmp_version": {"type": "string", "title": "SNMP Version", "enum": ["1","2c","3"], "default": "2c"}
+            "host": {"type": "string", "title": "Device IP Address", "format": "ipv4"}
         },
         "required": ["host"]
     }'
@@ -625,7 +608,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'opcua', 'Generic OPC-UA Power Meter', '', '',
     'Generic OPC-UA power meter — update node IDs to match your server namespace',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='opcua' LIMIT 1),
     '{
         "nodes": [
             {"field_key": "active_power_w", "node_id": "ns=2;i=1001", "type": "float", "unit": "W"},
@@ -639,7 +622,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'opcua', 'Generic OPC-UA Temperature', '', '',
     'Generic OPC-UA temperature/humidity sensor',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='opcua' LIMIT 1),
     '{
         "nodes": [
             {"field_key": "temperature_c", "node_id": "ns=2;i=2001", "type": "float", "unit": "C"},
@@ -654,7 +637,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'mqtt', 'Generic MQTT JSON Sensor', '', '',
     'MQTT device publishing JSON payloads — configure topic and json_paths when adding',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='mqtt' LIMIT 1),
     '{
         "json_paths": [
             {"field_key": "value",       "json_path": "$.value",       "unit": ""},
@@ -666,9 +649,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "topic":          {"type": "string",  "title": "MQTT Topic"},
-            "qos":            {"type": "integer", "title": "QoS Level", "enum": [0,1,2], "default": 1},
-            "payload_format": {"type": "string",  "title": "Payload Format", "enum": ["json","senml"], "default": "json"}
+            "topic": {"type": "string", "title": "MQTT Topic"}
         },
         "required": ["topic"]
     }'
@@ -676,7 +657,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'mqtt', 'MQTT Energy Monitor (Shelly EM)', 'Shelly', 'EM',
     'Shelly EM MQTT energy monitor — power and energy consumption',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='mqtt' LIMIT 1),
     '{
         "json_paths": [
             {"field_key": "active_power_w", "json_path": "$.power",   "unit": "W"},
@@ -689,8 +670,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "topic": {"type": "string",  "title": "MQTT Topic"},
-            "qos":   {"type": "integer", "title": "QoS Level", "enum": [0,1,2], "default": 1}
+            "topic": {"type": "string",  "title": "MQTT Topic"}
         },
         "required": ["topic"]
     }'
@@ -700,7 +680,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'mqtt', 'CCS 3-Phase Power Analyzer Panel', 'CCS', 'ICF-3P',
     'CCS ICF power room 3-phase analyzer (PM1/PM4/PM5 type) — V L-L per phase, current, active/apparent power, energy. JSON array payload on ccs_data topic.',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='mqtt' LIMIT 1),
     '{
         "json_paths": [
             {"field_key": "voltage_ll1",    "json_path": "$[0].data.V_LL1",   "unit": "V"},
@@ -719,10 +699,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "topic":       {"type": "string",  "title": "MQTT Topic",   "default": "ccs_data"},
-            "qos":         {"type": "integer", "title": "QoS Level",    "enum": [0,1,2], "default": 0},
-            "panel_index": {"type": "integer", "title": "Panel Array Index (0=PM1, 1=PM4, 2=PM5)", "default": 0, "minimum": 0, "maximum": 4},
-            "panel_id":    {"type": "string",  "title": "Panel Analyser ID", "description": "e.g. CCS_ICF_PowerRoom_A_Panel"}
+            "topic": {"type": "string", "title": "MQTT Topic", "default": "ccs_data"}
         },
         "required": ["topic"]
     }'
@@ -731,7 +708,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'mqtt', 'CCS HT Power Summary Panel', 'CCS', 'ICF-HT',
     'CCS ICF HT power room summary analyzer (PM2/PM3 type) — average voltage, current, active/apparent power, energy. JSON array payload on ccs_data topic.',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='mqtt' LIMIT 1),
     '{
         "json_paths": [
             {"field_key": "voltage_avg",    "json_path": "$[3].data.V_AVG",   "unit": "V"},
@@ -744,10 +721,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "topic":       {"type": "string",  "title": "MQTT Topic",   "default": "ccs_data"},
-            "qos":         {"type": "integer", "title": "QoS Level",    "enum": [0,1,2], "default": 0},
-            "panel_index": {"type": "integer", "title": "Panel Array Index (3=PM2/HT_Indoor, 4=PM3/HT_Outdoor)", "default": 3, "minimum": 0, "maximum": 4},
-            "panel_id":    {"type": "string",  "title": "Panel Analyser ID", "description": "e.g. CCS_ICF_PowerRoom_HT_Indoor"}
+            "topic": {"type": "string", "title": "MQTT Topic", "default": "ccs_data"}
         },
         "required": ["topic"]
     }'
@@ -758,7 +732,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'http', 'Generic HTTP JSON Endpoint', '', '',
     'HTTP REST API sensor — polls a JSON endpoint and extracts values via JSONPath',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='http' LIMIT 1),
     '{
         "json_paths": [
             {"field_key": "value", "json_path": "$.readings.value", "unit": ""}
@@ -767,11 +741,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
     '{
         "type": "object",
         "properties": {
-            "url":              {"type": "string", "title": "Endpoint URL", "format": "uri"},
-            "method":           {"type": "string", "title": "HTTP Method", "enum": ["GET","POST"], "default": "GET"},
-            "auth_type":        {"type": "string", "title": "Auth Type", "enum": ["none","basic","bearer","api_key"], "default": "none"},
-            "auth_credentials": {"type": "string", "title": "Credentials", "format": "password"},
-            "headers_json":     {"type": "string", "title": "Custom Headers (JSON)"}
+            "url": {"type": "string", "title": "Endpoint URL", "format": "uri"}
         },
         "required": ["url"]
     }'
@@ -782,7 +752,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'bacnet', 'Generic BACnet HVAC', 'Generic', 'HVAC-01',
     'Standard BACnet HVAC controller — room temperature, setpoint, fan status',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='bacnet' LIMIT 1),
     '{
         "objects": [
             {"field_key": "room_temp",     "object_type": "analogInput", "object_instance": 1, "unit": "C"},
@@ -805,7 +775,7 @@ INSERT INTO device_templates (protocol, name, manufacturer, model, description, 
 (
     'lorawan', 'Dragino LHT65', 'Dragino', 'LHT65',
     'LoRaWAN Temperature & Humidity Sensor',
-    TRUE,
+    TRUE, (SELECT id FROM reader_templates WHERE protocol='lorawan' LIMIT 1),
     '{
         "readings": [
             {"field_key": "temperature_c", "field": "TempC_SHT", "unit": "C"},
