@@ -518,12 +518,7 @@ func endpointFingerprint(protocol string, cfg map[string]any) string {
 		}
 		return ""
 	}
-	getNum := func(key string, def int) int {
-		if v, ok := cfg[key].(float64); ok {
-			return int(v)
-		}
-		return def
-	}
+
 
 	switch protocol {
 	case "modbus_tcp", "snmp", "dnp3", "bacnet":

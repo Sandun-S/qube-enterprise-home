@@ -82,6 +82,7 @@ func getDeviceTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		var isGlobal bool
 		var version int
 		var createdAt time.Time
+		var readerTemplateID *string
 
 		err := pool.QueryRow(context.Background(),
 			`SELECT id, org_id, protocol, name, manufacturer, model, description,
