@@ -83,10 +83,15 @@ Open `http://20.197.15.165:8888` → **Superadmin** tab:
 ## CI/CD — Automatic deploys
 
 After setup, every push to `main` automatically:
-1. Builds `cloud-api` and `test-ui` images → pushes to GHCR
-2. SSH into the VM → pulls new images → restarts containers
+1. Builds all images → pushes to GHCR
+2. Runs API test suite in CI with a fresh postgres
+3. **Copies all migration files to the VM via SCP**
+4. **Runs all migrations against the live postgres container** (idempotent — safe to re-run every deploy)
+5. Pulls new `cloud-api` and `test-ui` images → restarts containers
 
-No manual steps needed after initial setup.
+**This means: adding a new migration file (`004_xxx.sql`) and pushing to `main` is all you need to do.** The CI will apply it automatically on the next deploy.
+
+No manual `rsync` or `psql` steps needed after initial setup.
 
 Requires GitHub Actions secrets:
 | Secret | Value |

@@ -199,10 +199,8 @@ jobs:
       - name: Run management DB migrations (qubedb)
         run: |
           sudo apt-get install -y postgresql-client -qq
-          for f in cloud/migrations/001_init.sql \
-                   cloud/migrations/002_global_data.sql \
-                   cloud/migrations/003_test_seeds.sql \
-                   cloud/migrations/004_new_protocols.sql; do
+          for f in $(ls cloud/migrations/0*.sql | sort); do
+            echo "Applying $f..."
             PGPASSWORD=qubepass psql -h localhost -U qubeadmin -d qubedb -f "$f"
           done
 
@@ -237,17 +235,36 @@ jobs:
 
   # ── Deploy to cloud VM (opt-in) ─────────────────────────────────────────────
   # Enable by setting Actions variable ENABLE_DEPLOY=true and secrets:
-  #   CLOUD_VM_HOST, CLOUD_VM_USER, CLOUD_VM_SSH_KEY
+  #   CLOUD_VM_HOST, CLOUD_VM_SSH_PORT, CLOUD_VM_USER, CLOUD_VM_SSH_KEY
+  #
+  # What this does on every push to main:
+  #   1. Copies all migration files to the VM
+  #   2. Runs any new migrations against the live postgres container (idempotent — safe to re-run)
+  #   3. Pulls new cloud-api + test-ui images and restarts them
   deploy:
     name: Deploy to cloud VM
     runs-on: ubuntu-latest
     needs: [cloud-api, conf-agent, readers, test, test-ui]
     if: ${{ github.ref == 'refs/heads/main' && vars.ENABLE_DEPLOY == 'true' }}
     steps:
+      - uses: actions/checkout@v4
+
       - name: Lowercase repo name
         run: echo "REPO=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
 
-      - name: Deploy via SSH
+      # Copy migration files to VM so the SSH step can apply them
+      - name: Copy migrations to VM
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host:     ${{ secrets.CLOUD_VM_HOST }}
+          port:     ${{ secrets.CLOUD_VM_SSH_PORT }}
+          username: ${{ secrets.CLOUD_VM_USER }}
+          key:      ${{ secrets.CLOUD_VM_SSH_KEY }}
+          source: "cloud/migrations/*.sql,cloud/migrations-telemetry/*.sql"
+          target: "/opt/qube-enterprise/"
+          strip_components: 0
+
+      - name: Run migrations + restart services
         uses: appleboy/ssh-action@v1
         with:
           host:     ${{ secrets.CLOUD_VM_HOST }}
@@ -255,10 +272,29 @@ jobs:
           username: ${{ secrets.CLOUD_VM_USER }}
           key:      ${{ secrets.CLOUD_VM_SSH_KEY }}
           script: |
+            set -e
+            cd /opt/qube-enterprise
+
+            echo "=== Applying migrations to qubedb ==="
+            for f in cloud/migrations/0*.sql; do
+              echo "  -> $f"
+              docker compose exec -T postgres \
+                psql -U qubeadmin -d qubedb < "$f" 2>&1 | grep -v "^NOTICE" | tail -5
+            done
+
+            echo "=== Applying migrations to qubedata ==="
+            for f in cloud/migrations-telemetry/0*.sql; do
+              echo "  -> $f"
+              docker compose exec -T postgres \
+                psql -U qubeadmin -d qubedata < "$f" 2>&1 | grep -v "^NOTICE" | tail -5
+            done
+
+            echo "=== Pulling new images ==="
             echo "${{ secrets.GITHUB_TOKEN }}" | \
               docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            cd /opt/qube-enterprise
             docker compose pull cloud-api test-ui
+
+            echo "=== Restarting services ==="
             docker compose up -d cloud-api test-ui
             sleep 5
             curl -sf http://localhost:8080/health && echo "Deploy OK"
