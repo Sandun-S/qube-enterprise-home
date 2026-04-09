@@ -156,7 +156,16 @@ INSERT INTO protocols (id, label, description, reader_standard,
         },
         "required": ["outstation_address"]
     }'
-);
+)
+
+ON CONFLICT (id) DO UPDATE SET
+    label                    = EXCLUDED.label,
+    description              = EXCLUDED.description,
+    reader_standard          = EXCLUDED.reader_standard,
+    icon                     = EXCLUDED.icon,
+    sensor_config_key        = EXCLUDED.sensor_config_key,
+    measurement_fields_schema = EXCLUDED.measurement_fields_schema,
+    default_params_schema    = EXCLUDED.default_params_schema;
 
 -- ===================== READER TEMPLATES =====================
 

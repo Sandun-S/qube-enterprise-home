@@ -6,7 +6,7 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 -- ===================== ORGANISATIONS =====================
-CREATE TABLE organisations (
+CREATE TABLE IF NOT EXISTS organisations (
     id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name       TEXT NOT NULL,
     org_secret TEXT NOT NULL DEFAULT encode(gen_random_bytes(32), 'hex'),
@@ -14,7 +14,7 @@ CREATE TABLE organisations (
 );
 
 -- ===================== USERS =====================
-CREATE TABLE users (
+CREATE TABLE IF NOT EXISTS users (
     id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id        UUID NOT NULL REFERENCES organisations(id) ON DELETE CASCADE,
     email         TEXT UNIQUE NOT NULL,
@@ -25,7 +25,7 @@ CREATE TABLE users (
 );
 
 -- ===================== QUBES =====================
-CREATE TABLE qubes (
+CREATE TABLE IF NOT EXISTS qubes (
     id               TEXT PRIMARY KEY,          -- Q-1001, Q-1002, ...
     org_id           UUID REFERENCES organisations(id) ON DELETE SET NULL,
     auth_token_hash  TEXT,                      -- HMAC token (bcrypt hash)
@@ -45,12 +45,12 @@ CREATE TABLE qubes (
     capabilities     JSONB NOT NULL DEFAULT '[]',    -- ["modbus","snmp","opcua","mqtt","http"]
     created_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_qubes_register_key ON qubes(register_key);
-CREATE INDEX idx_qubes_org ON qubes(org_id);
+CREATE INDEX IF NOT EXISTS idx_qubes_register_key ON qubes(register_key);
+CREATE INDEX IF NOT EXISTS idx_qubes_org ON qubes(org_id);
 
 -- ===================== PROTOCOLS =====================
 -- Defines available protocols. UI renders dynamic forms from schemas stored here.
-CREATE TABLE protocols (
+CREATE TABLE IF NOT EXISTS protocols (
     id                       TEXT PRIMARY KEY,    -- "modbus_tcp", "snmp", "mqtt", "opcua", "http"
     label                    TEXT NOT NULL,
     description              TEXT NOT NULL DEFAULT '',
@@ -64,10 +64,15 @@ CREATE TABLE protocols (
     default_params_schema    JSONB NOT NULL DEFAULT '{"type":"object","properties":{},"required":[]}',
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+-- Add UI metadata columns for existing deployments that predate this schema
+ALTER TABLE protocols ADD COLUMN IF NOT EXISTS icon                      TEXT  NOT NULL DEFAULT '🔧';
+ALTER TABLE protocols ADD COLUMN IF NOT EXISTS sensor_config_key         TEXT  NOT NULL DEFAULT 'entries';
+ALTER TABLE protocols ADD COLUMN IF NOT EXISTS measurement_fields_schema JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE protocols ADD COLUMN IF NOT EXISTS default_params_schema     JSONB NOT NULL DEFAULT '{"type":"object","properties":{},"required":[]}';
 
 -- ===================== READER TEMPLATES =====================
 -- One per protocol (usually). Defines the Docker container + connection schema.
-CREATE TABLE reader_templates (
+CREATE TABLE IF NOT EXISTS reader_templates (
     id                  UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     protocol            TEXT NOT NULL REFERENCES protocols(id),
     name                TEXT NOT NULL,
@@ -79,11 +84,11 @@ CREATE TABLE reader_templates (
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT reader_templates_protocol_image_suffix_key UNIQUE (protocol, image_suffix)
 );
-CREATE INDEX idx_reader_templates_protocol ON reader_templates(protocol);
+CREATE INDEX IF NOT EXISTS idx_reader_templates_protocol ON reader_templates(protocol);
 
 -- ===================== DEVICE TEMPLATES =====================
 -- Many per protocol. Defines what data to collect (registers, OIDs, etc.)
-CREATE TABLE device_templates (
+CREATE TABLE IF NOT EXISTS device_templates (
     id                    UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id                UUID REFERENCES organisations(id) ON DELETE CASCADE,  -- NULL = global
     protocol              TEXT NOT NULL REFERENCES protocols(id),
@@ -99,13 +104,13 @@ CREATE TABLE device_templates (
     CONSTRAINT device_templates_global_protocol_name_key
         UNIQUE (protocol, name, is_global) DEFERRABLE INITIALLY DEFERRED
 );
-CREATE INDEX idx_device_templates_protocol ON device_templates(protocol);
-CREATE INDEX idx_device_templates_org ON device_templates(org_id);
-CREATE INDEX idx_device_templates_global ON device_templates(is_global) WHERE is_global = TRUE;
+CREATE INDEX IF NOT EXISTS idx_device_templates_protocol ON device_templates(protocol);
+CREATE INDEX IF NOT EXISTS idx_device_templates_org ON device_templates(org_id);
+CREATE INDEX IF NOT EXISTS idx_device_templates_global ON device_templates(is_global) WHERE is_global = TRUE;
 
 -- ===================== READERS =====================
 -- One Docker container per reader. Created when user adds a reader to a Qube.
-CREATE TABLE readers (
+CREATE TABLE IF NOT EXISTS readers (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id         TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,
@@ -118,12 +123,12 @@ CREATE TABLE readers (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_readers_qube ON readers(qube_id);
-CREATE UNIQUE INDEX idx_readers_qube_protocol_name ON readers(qube_id, protocol, name);
+CREATE INDEX IF NOT EXISTS idx_readers_qube ON readers(qube_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_readers_qube_protocol_name ON readers(qube_id, protocol, name);
 
 -- ===================== SENSORS =====================
 -- Linked to a reader + device template.
-CREATE TABLE sensors (
+CREATE TABLE IF NOT EXISTS sensors (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     reader_id       UUID NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
     name            TEXT NOT NULL,                 -- Equipment name in DataIn
@@ -139,11 +144,11 @@ CREATE TABLE sensors (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_sensors_reader ON sensors(reader_id);
+CREATE INDEX IF NOT EXISTS idx_sensors_reader ON sensors(reader_id);
 
 -- ===================== CONTAINERS =====================
 -- Docker containers managed by conf-agent. One per reader + infra containers.
-CREATE TABLE containers (
+CREATE TABLE IF NOT EXISTS containers (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     reader_id   UUID UNIQUE REFERENCES readers(id) ON DELETE CASCADE,  -- NULL for infra containers
@@ -156,11 +161,11 @@ CREATE TABLE containers (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_containers_qube ON containers(qube_id);
+CREATE INDEX IF NOT EXISTS idx_containers_qube ON containers(qube_id);
 
 -- ===================== CONFIG STATE =====================
 -- Tracks config hash per Qube for sync detection.
-CREATE TABLE config_state (
+CREATE TABLE IF NOT EXISTS config_state (
     qube_id          TEXT PRIMARY KEY REFERENCES qubes(id) ON DELETE CASCADE,
     hash             TEXT NOT NULL DEFAULT '',
     config_version   INT NOT NULL DEFAULT 0,
@@ -170,18 +175,18 @@ CREATE TABLE config_state (
 
 -- ===================== SWARM HISTORY =====================
 -- Audit trail of docker-compose deployments.
-CREATE TABLE swarm_history (
+CREATE TABLE IF NOT EXISTS swarm_history (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     compose_yml TEXT NOT NULL,
     config_hash TEXT NOT NULL,
     deployed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_swarm_history_qube ON swarm_history(qube_id);
+CREATE INDEX IF NOT EXISTS idx_swarm_history_qube ON swarm_history(qube_id);
 
 -- ===================== QUBE COMMANDS =====================
 -- Remote commands dispatched via WebSocket or polled via TP-API.
-CREATE TABLE qube_commands (
+CREATE TABLE IF NOT EXISTS qube_commands (
     id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     command     TEXT NOT NULL,
@@ -193,12 +198,12 @@ CREATE TABLE qube_commands (
     sent_at     TIMESTAMPTZ,
     executed_at TIMESTAMPTZ
 );
-CREATE INDEX idx_qube_commands_pending ON qube_commands(qube_id, status)
+CREATE INDEX IF NOT EXISTS idx_qube_commands_pending ON qube_commands(qube_id, status)
     WHERE status IN ('pending', 'sent');
 
 -- ===================== DISCOVERY SESSIONS =====================
 -- Auto-discovery of unknown devices on a Qube's network.
-CREATE TABLE discovery_sessions (
+CREATE TABLE IF NOT EXISTS discovery_sessions (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id      TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     protocol     TEXT NOT NULL REFERENCES protocols(id),
@@ -209,11 +214,11 @@ CREATE TABLE discovery_sessions (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
-CREATE INDEX idx_discovery_qube ON discovery_sessions(qube_id);
+CREATE INDEX IF NOT EXISTS idx_discovery_qube ON discovery_sessions(qube_id);
 
 -- ===================== CORESWITCH SETTINGS =====================
 -- Per-Qube core-switch configuration.
-CREATE TABLE coreswitch_settings (
+CREATE TABLE IF NOT EXISTS coreswitch_settings (
     qube_id    TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     key        TEXT NOT NULL,
     value_json TEXT NOT NULL,
@@ -223,7 +228,7 @@ CREATE TABLE coreswitch_settings (
 
 -- ===================== TELEMETRY SETTINGS =====================
 -- Per-Qube influx-to-sql upload configuration.
-CREATE TABLE telemetry_settings (
+CREATE TABLE IF NOT EXISTS telemetry_settings (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id      TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     device       TEXT NOT NULL,
@@ -235,10 +240,10 @@ CREATE TABLE telemetry_settings (
     tag_names    TEXT,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
-CREATE INDEX idx_telemetry_settings_qube ON telemetry_settings(qube_id);
+CREATE INDEX IF NOT EXISTS idx_telemetry_settings_qube ON telemetry_settings(qube_id);
 
 -- ===================== WEBSOCKET DELIVERY LOG =====================
-CREATE TABLE ws_delivery_log (
+CREATE TABLE IF NOT EXISTS ws_delivery_log (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id      TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
     message_type TEXT NOT NULL,
@@ -247,12 +252,12 @@ CREATE TABLE ws_delivery_log (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     delivered_at TIMESTAMPTZ
 );
-CREATE INDEX idx_ws_delivery_pending ON ws_delivery_log(qube_id, delivered)
+CREATE INDEX IF NOT EXISTS idx_ws_delivery_pending ON ws_delivery_log(qube_id, delivered)
     WHERE delivered = FALSE;
 
 -- ===================== REGISTRY CONFIG =====================
 -- Docker image registry settings.
-CREATE TABLE registry_config (
+CREATE TABLE IF NOT EXISTS registry_config (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',

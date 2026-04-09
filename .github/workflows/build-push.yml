@@ -279,14 +279,18 @@ jobs:
             for f in cloud/migrations/0*.sql; do
               echo "  -> $f"
               docker compose exec -T postgres \
-                psql -U qubeadmin -d qubedb < "$f" 2>&1 | grep -v "^NOTICE" | tail -5
+                psql -U qubeadmin -d qubedb < "$f" 2>&1 | grep -v "^NOTICE" | tail -5 || true
             done
+
+            echo "=== Ensuring qubedata DB exists ==="
+            docker compose exec -T postgres \
+              psql -U qubeadmin -d postgres -c "CREATE DATABASE qubedata;" 2>&1 | grep -v "^NOTICE" || true
 
             echo "=== Applying migrations to qubedata ==="
             for f in cloud/migrations-telemetry/0*.sql; do
               echo "  -> $f"
               docker compose exec -T postgres \
-                psql -U qubeadmin -d qubedata < "$f" 2>&1 | grep -v "^NOTICE" | tail -5
+                psql -U qubeadmin -d qubedata < "$f" 2>&1 | grep -v "^NOTICE" | tail -5 || true
             done
 
             echo "=== Pulling new images ==="

@@ -62,10 +62,10 @@ services:
       POSTGRES_PASSWORD: $DB_PASS
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - $WORK_DIR/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
-      - $WORK_DIR/migrations/002_global_data.sql:/docker-entrypoint-initdb.d/002_global_data.sql:ro
-      - $WORK_DIR/migrations/003_test_seeds.sql:/docker-entrypoint-initdb.d/003_test_seeds.sql:ro
-      - $WORK_DIR/migrations-telemetry/001_timescale_init.sql:/docker-entrypoint-initdb.d/010_timescale_init.sql:ro
+      - $WORK_DIR/cloud/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
+      - $WORK_DIR/cloud/migrations/002_global_data.sql:/docker-entrypoint-initdb.d/002_global_data.sql:ro
+      - $WORK_DIR/cloud/migrations/003_test_seeds.sql:/docker-entrypoint-initdb.d/003_test_seeds.sql:ro
+      - $WORK_DIR/cloud/migrations-telemetry/001_timescale_init.sql:/docker-entrypoint-initdb.d/010_timescale_init.sql:ro
     ports:
       - "5432:5432"
     healthcheck:
