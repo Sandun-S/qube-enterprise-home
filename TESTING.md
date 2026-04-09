@@ -160,9 +160,42 @@ curl -s $TPBASE/v1/sync/state \
 ## 5. Protocols
 
 ```bash
+# List active protocols (all users)
 curl -s $BASE/api/v1/protocols \
-  -H "Authorization: Bearer $TOKEN" | jq '[.[].id]'
-# ["modbus_tcp","snmp","mqtt","opcua","http"]
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,label,icon,sensor_config_key,reader_standard}]'
+# All 8 protocols: modbus_tcp, snmp, mqtt, opcua, http, bacnet, lorawan, dnp3
+
+# List ALL protocols including inactive (superadmin)
+curl -s $BASE/api/v1/admin/protocols \
+  -H "Authorization: Bearer $SA_TOKEN" | jq '[.[] | {id,label,is_active}]'
+
+# Superadmin: create a new protocol (all UI metadata via API — no code changes needed)
+curl -s -X POST $BASE/api/v1/admin/protocols \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "custom_proto",
+    "label": "My Custom Protocol",
+    "description": "Custom integration protocol",
+    "reader_standard": "endpoint"
+  }' | jq .
+# Returns: full protocol row. Update icon/sensor_config_key/measurement_fields_schema/default_params_schema via PUT.
+
+# Superadmin: update protocol metadata (including UI fields)
+curl -s -X PUT $BASE/api/v1/admin/protocols/custom_proto \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "label": "My Custom Protocol",
+    "description": "Updated description",
+    "reader_standard": "endpoint",
+    "is_active": true
+  }' | jq .
+
+# Superadmin: delete protocol (fails if readers use it)
+curl -s -X DELETE $BASE/api/v1/admin/protocols/custom_proto \
+  -H "Authorization: Bearer $SA_TOKEN" | jq .
+# {"message":"protocol deleted"}
 ```
 
 ---

@@ -123,60 +123,20 @@ const API = {
   },
 
   // Protocols & Templates
-  async getProtocols() {
-    const protocols = await this.request('GET', '/api/v1/protocols');
-    
-    // Fallback for new protocols (BACnet, LoRaWAN, DNP3) if not yet in DB
-    const newProtocols = [
-      { id: 'bacnet', label: 'BACnet/IP', description: 'Building automation (HVAC, chiller, lighting)', reader_standard: 'multi_target', is_active: true },
-      { id: 'lorawan', label: 'LoRaWAN', description: 'Long-range low-power IoT (Chirpstack, TTN)', reader_standard: 'endpoint', is_active: true },
-      { id: 'dnp3', label: 'DNP3', description: 'Utility SCADA (substations, RTUs, water treatment)', reader_standard: 'endpoint', is_active: true }
-    ];
-
-    newProtocols.forEach(p => {
-      if (!protocols.find(db_p => db_p.id === p.id)) protocols.push(p);
-    });
-
-    return protocols;
+  getProtocols() {
+    return this.request('GET', '/api/v1/protocols');
   },
 
-  async getReaderTemplates(protocol) {
+  getReaderTemplates(protocol) {
     let path = '/api/v1/reader-templates';
     if (protocol) path += `?protocol=${protocol}`;
-    const templates = await this.request('GET', path);
-
-    // Fallback reader templates for new protocols
-    const fallbacks = {
-      'bacnet': { id: 'fallback-rt-bacnet', protocol: 'bacnet', name: 'BACnet/IP Reader', image_suffix: 'bacnet-reader', connection_schema: { type: 'object', properties: { local_port: { type: 'integer', title: 'Local UDP Port', default: 47808 }, poll_interval_sec: { type: 'integer', title: 'Poll Interval', default: 30 }, broadcast_addr: { type: 'string', title: 'Broadcast Address' } } } },
-      'lorawan': { id: 'fallback-rt-lorawan', protocol: 'lorawan', name: 'LoRaWAN NS Reader', image_suffix: 'lorawan-reader', connection_schema: { type: 'object', properties: { ns_host: { type: 'string', title: 'NS Host' }, ns_port: { type: 'integer', title: 'Port', default: 1700 }, app_id: { type: 'string', title: 'App ID' }, api_key: { type: 'string', title: 'API Key', format: 'password' } } } },
-      'dnp3': { id: 'fallback-rt-dnp3', protocol: 'dnp3', name: 'DNP3 Reader', image_suffix: 'dnp3-reader', connection_schema: { type: 'object', properties: { host: { type: 'string', title: 'Outstation IP' }, port: { type: 'integer', title: 'Port', default: 20000 }, outstation_address: { type: 'integer', title: 'Outstation DNP3 Address', default: 10 } } } }
-    };
-
-    if (protocol && fallbacks[protocol] && !templates.find(t => t.protocol === protocol)) {
-      templates.push(fallbacks[protocol]);
-    }
-
-    return templates;
+    return this.request('GET', path);
   },
 
-  async getDeviceTemplates(protocol) {
+  getDeviceTemplates(protocol) {
     let path = '/api/v1/device-templates';
     if (protocol) path += `?protocol=${protocol}`;
-    const templates = await this.request('GET', path);
-
-    // Fallback device templates for testing
-    const fallbacks = [
-      { id: 'dt-bacnet-hvac', protocol: 'bacnet', name: 'BACnet HVAC Controller', manufacturer: 'Generic', model: 'HVAC-01', description: 'Zone temp, setpoint, fan status', is_global: true, sensor_config: { objects: [{ field_key: 'zone_temp_c', object_type: 'analogInput', object_instance: 1, unit: 'C' }] }, sensor_params_schema: { type: 'object', properties: { ip_address: { type: 'string', title: 'Device IP' }, device_instance: { type: 'integer', title: 'BACnet Instance' } } } },
-      { id: 'dt-lorawan-dragino', protocol: 'lorawan', name: 'Dragino LHT65', manufacturer: 'Dragino', model: 'LHT65', description: 'Temp/Humidity sensor', is_global: true, sensor_config: { readings: [{ field_key: 'temperature_c', field: 'TempC_SHT', unit: 'C' }] }, sensor_params_schema: { type: 'object', properties: { dev_eui: { type: 'string', title: 'Device EUI' } } } }
-    ];
-
-    fallbacks.forEach(t => {
-      if ((!protocol || t.protocol === protocol) && !templates.find(db_t => db_t.id === t.id)) {
-        templates.push(t);
-      }
-    });
-
-    return templates;
+    return this.request('GET', path);
   },
   getDeviceTemplate(id) {
     return this.request('GET', `/api/v1/device-templates/${id}`);

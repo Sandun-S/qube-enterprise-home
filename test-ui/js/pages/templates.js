@@ -1,56 +1,10 @@
 import API from '../api.js';
 import Components from '../components.js';
 
-// Protocol → sensor_config array key
-const PROTOCOL_ARRAY_KEY = {
-    modbus_tcp: 'registers',
-    snmp:       'oids',
-    mqtt:       'json_paths',
-    opcua:      'nodes',
-    http:       'json_paths',
-};
-
-// Protocol → measurement column definitions
-const MEASUREMENT_FIELDS = {
-    modbus_tcp: [
-        { key: 'field_key',      label: 'Field Key',     type: 'text',   required: true,  placeholder: 'e.g. active_power_w' },
-        { key: 'register_type',  label: 'Register Type', type: 'select', options: ['Holding', 'Input', 'Coil', 'Discrete'], default: 'Holding' },
-        { key: 'address',        label: 'Address',       type: 'number', required: true,  placeholder: '0', default: 0 },
-        { key: 'data_type',      label: 'Data Type',     type: 'select', options: ['float32', 'uint16', 'int16', 'uint32', 'int32'], default: 'float32' },
-        { key: 'scale',          label: 'Scale',         type: 'number', placeholder: '1.0', default: 1.0 },
-        { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. W, V, A, kWh' },
-    ],
-    snmp: [
-        { key: 'field_key',      label: 'Field Key',     type: 'text',   required: true,  placeholder: 'e.g. battery_capacity_pct' },
-        { key: 'oid',            label: 'OID',           type: 'text',   required: true,  placeholder: '.1.3.6.1.2.1.33.1.2.1.0' },
-        { key: 'scale',          label: 'Scale',         type: 'number', placeholder: '1.0', default: 1.0 },
-        { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. %, V, min' },
-    ],
-    mqtt: [
-        { key: 'field_key',      label: 'Field Key',     type: 'text',   required: true,  placeholder: 'e.g. temperature' },
-        { key: 'topic',          label: 'MQTT Topic',    type: 'text',   required: true,  placeholder: 'sensors/device1/data (supports + and # wildcards)' },
-        { key: 'json_path',      label: 'JSON Path',     type: 'text',   placeholder: '$.temperature (leave blank for full payload)' },
-        { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. C, %, hPa' },
-    ],
-    opcua: [
-        { key: 'field_key',      label: 'Field Key',     type: 'text',   required: true,  placeholder: 'e.g. active_power_w' },
-        { key: 'node_id',        label: 'Node ID',       type: 'text',   required: true,  placeholder: 'ns=2;i=1001' },
-        { key: 'type',           label: 'Data Type',     type: 'select', options: ['float', 'int', 'bool', 'string'], default: 'float' },
-        { key: 'unit',           label: 'Unit',          type: 'text',   placeholder: 'e.g. W, V' },
-    ],
-    http: [
-        { key: 'field_key',  label: 'Field Key',  type: 'text',   required: true,  placeholder: 'e.g. temperature' },
-        { key: 'json_path',  label: 'JSON Path',  type: 'text',   required: true,  placeholder: '$.data.temperature' },
-        { key: 'scale',      label: 'Scale',      type: 'number', placeholder: '1.0', default: 1.0 },
-        { key: 'unit',       label: 'Unit',       type: 'text',   placeholder: 'e.g. C, %, kWh' },
-    ],
-};
-
-const PROTO_ICONS = { modbus_tcp: '⚡', snmp: '🌐', mqtt: '📡', opcua: '🏭', http: '🔗', bacnet: '🏢', lorawan: '📶', dnp3: '🔌' };
-
 const Templates = {
     _editState: null,
     _protocols: [],
+    _protocolMap: {},   // id → protocol object (includes icon, sensor_config_key, measurement_fields_schema, default_params_schema)
 
     async render() {
         return `
@@ -97,6 +51,8 @@ const Templates = {
 
     async init() {
         this._protocols = await API.getProtocols();
+        this._protocolMap = {};
+        this._protocols.forEach(p => { this._protocolMap[p.id] = p; });
 
         const filter = document.getElementById('template-proto-filter');
         this._protocols.forEach(p => {
@@ -157,7 +113,7 @@ const Templates = {
             }
 
             templates.forEach(t => {
-                const arrayKey = PROTOCOL_ARRAY_KEY[t.protocol] || 'entries';
+                const arrayKey = this._protocolMap[t.protocol]?.sensor_config_key || 'entries';
                 const entries = t.sensor_config?.[arrayKey] || [];
                 const card = document.createElement('div');
                 card.className = 'card';
@@ -166,7 +122,7 @@ const Templates = {
                     <div style="position:absolute;top:14px;right:16px;">
                         <span class="badge badge-${t.is_global ? 'blue' : 'success'}" style="font-size:9px;">${t.is_global ? 'GLOBAL' : 'ORG'}</span>
                     </div>
-                    <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">${PROTO_ICONS[t.protocol] || '🔧'} ${t.protocol}</div>
+                    <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px;">${this._protocolMap[t.protocol]?.icon || '🔧'} ${t.protocol}</div>
                     <div style="font-weight:700;margin-bottom:2px;padding-right:56px;">${[t.manufacturer, t.model].filter(Boolean).join(' ') || '—'}</div>
                     <div style="font-size:13px;font-weight:600;color:var(--primary);margin-bottom:8px;">${t.name}</div>
                     <p class="page-subtitle" style="font-size:11px;margin-bottom:10px;height:3.2em;overflow:hidden;line-height:1.6;">${t.description || ''}</p>
@@ -242,7 +198,7 @@ const Templates = {
             const card = document.createElement('div');
             card.style.cssText = 'padding:20px;border:1px solid var(--border);border-radius:12px;cursor:pointer;text-align:center;transition:var(--transition);';
             card.innerHTML = `
-                <div style="font-size:30px;margin-bottom:8px;">${PROTO_ICONS[p.id] || '🔧'}</div>
+                <div style="font-size:30px;margin-bottom:8px;">${p.icon || '🔧'}</div>
                 <div style="font-weight:700;font-size:14px;">${p.label}</div>
                 <div style="font-size:11px;color:var(--text-dim);margin-top:6px;">${p.description || ''}</div>
             `;
@@ -257,52 +213,13 @@ const Templates = {
                 } catch (e) {
                     this._editState.readerTemplate = null;
                 }
-                this._editState.sensorParamsSchema = this._defaultParamsSchema(p.id);
+                this._editState.sensorParamsSchema = p.default_params_schema
+                    ? JSON.parse(JSON.stringify(p.default_params_schema))
+                    : { type: 'object', properties: {}, required: [] };
                 this._renderMainForm();
             };
             grid.appendChild(card);
         });
-    },
-
-    _defaultParamsSchema(protoId) {
-        const defaults = {
-            // Modbus TCP: one reader per device endpoint; unit_id differentiates devices on a shared gateway
-            modbus_tcp: { type: 'object', properties: {
-                unit_id:         { type: 'integer', title: 'Modbus Unit ID (1–247)', default: 1 },
-                register_offset: { type: 'integer', title: 'Register Address Offset', default: 0 },
-            }, required: ['unit_id'] },
-
-            // SNMP: multi-target reader (one reader per Qube); each sensor = one physical device
-            snmp: { type: 'object', properties: {
-                host:         { type: 'string',  title: 'Device IP Address' },
-                port:         { type: 'integer', title: 'SNMP Port', default: 161 },
-                community:    { type: 'string',  title: 'Community String', default: 'public' },
-                snmp_version: { type: 'string',  title: 'SNMP Version', default: '2c' },
-            }, required: ['host'] },
-
-            // MQTT: one reader per broker (broker details are reader-level, not per-device)
-            // Per-device: topic is per-device; qos optional override
-            mqtt: { type: 'object', properties: {
-                topic:  { type: 'string',  title: 'MQTT Topic (supports + and # wildcards)' },
-                qos:    { type: 'integer', title: 'QoS Level (0=at most once, 1=at least once, 2=exactly once)', default: 1 },
-            }, required: ['topic'] },
-
-            // OPC-UA: one reader per server endpoint; namespace differentiates device nodes
-            opcua: { type: 'object', properties: {
-                namespace_index: { type: 'integer', title: 'OPC-UA Namespace Index', default: 2 },
-            }, required: [] },
-
-            // HTTP: multi-target reader; each sensor polls its own URL + auth
-            http: { type: 'object', properties: {
-                url:          { type: 'string',  title: 'Endpoint URL (required)' },
-                method:       { type: 'string',  title: 'HTTP Method', default: 'GET' },
-                auth_type:    { type: 'string',  title: 'Auth Type (none / basic / bearer)', default: 'none' },
-                username:     { type: 'string',  title: 'Username (for basic auth)' },
-                password:     { type: 'string',  title: 'Password (for basic auth)' },
-                bearer_token: { type: 'string',  title: 'Bearer Token' },
-            }, required: ['url'] },
-        };
-        return defaults[protoId] || { type: 'object', properties: {}, required: [] };
     },
 
     // ── Main Form (Create & Edit) ───────────────────────────────────────────────
@@ -311,8 +228,8 @@ const Templates = {
         const s = this._editState;
         const isEdit = s.mode === 'edit';
         const proto = s.protocol;
-        const fields = MEASUREMENT_FIELDS[proto.id] || MEASUREMENT_FIELDS.http;
-        const arrayKey = PROTOCOL_ARRAY_KEY[proto.id] || 'entries';
+        const fields = proto.measurement_fields_schema || [];
+        const arrayKey = proto.sensor_config_key || 'entries';
 
         document.getElementById('modal-body').innerHTML = `
             <div style="display:flex;align-items:center;gap:14px;margin-bottom:24px;">
@@ -704,8 +621,8 @@ const Templates = {
     async _showEditModal(id) {
         try {
             const t = await API.getDeviceTemplate(id);
-            const proto = this._protocols.find(p => p.id === t.protocol) || { id: t.protocol, label: t.protocol };
-            const arrayKey = PROTOCOL_ARRAY_KEY[t.protocol] || 'entries';
+            const proto = this._protocols.find(p => p.id === t.protocol) || { id: t.protocol, label: t.protocol, sensor_config_key: 'entries', measurement_fields_schema: [], icon: '🔧' };
+            const arrayKey = proto.sensor_config_key || 'entries';
             const measurements = JSON.parse(JSON.stringify(t.sensor_config?.[arrayKey] || []));
 
             let readerTemplate = null;

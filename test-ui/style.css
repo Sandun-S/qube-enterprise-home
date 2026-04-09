@@ -143,6 +143,22 @@ main {
   overflow-y: auto;
 }
 
+.nav-section-label {
+  padding: 10px 24px;
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 0.1em;
+  margin-top: 10px;
+}
+
+.nav-section-label.nav-admin-section {
+  color: var(--warning);
+  border-top: 1px solid rgba(246, 173, 85, 0.15);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
 .nav-item {
   padding: 12px 24px;
   display: flex;

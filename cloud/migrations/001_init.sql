@@ -1,6 +1,6 @@
 -- 001_init.sql — Qube Enterprise v2 Management Database (qubedb)
--- Run order: 001 → 002 → 003
--- This file creates the core schema. No seed data here.
+-- Creates the full schema. No seed data here.
+-- Run order: 001_init.sql → 002_global_data.sql → 003_test_seeds.sql
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
@@ -49,7 +49,7 @@ CREATE INDEX idx_qubes_register_key ON qubes(register_key);
 CREATE INDEX idx_qubes_org ON qubes(org_id);
 
 -- ===================== PROTOCOLS =====================
--- Defines available protocols. UI renders dynamic forms from schemas.
+-- Defines available protocols. UI renders dynamic forms from schemas stored here.
 CREATE TABLE protocols (
     id                       TEXT PRIMARY KEY,    -- "modbus_tcp", "snmp", "mqtt", "opcua", "http"
     label                    TEXT NOT NULL,
@@ -57,6 +57,11 @@ CREATE TABLE protocols (
     reader_standard          TEXT NOT NULL DEFAULT 'endpoint'
                              CHECK (reader_standard IN ('endpoint', 'multi_target')),
     is_active                BOOLEAN NOT NULL DEFAULT TRUE,
+    -- UI rendering metadata (used by test-ui to build dynamic forms)
+    icon                     TEXT NOT NULL DEFAULT '🔧',
+    sensor_config_key        TEXT NOT NULL DEFAULT 'entries',      -- array key in sensor_config JSON
+    measurement_fields_schema JSONB NOT NULL DEFAULT '[]',         -- column defs for measurement editor
+    default_params_schema    JSONB NOT NULL DEFAULT '{"type":"object","properties":{},"required":[]}',
     created_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -71,7 +76,8 @@ CREATE TABLE reader_templates (
     connection_schema   JSONB NOT NULL DEFAULT '{}',  -- JSON Schema for connection params
     env_defaults        JSONB NOT NULL DEFAULT '{}',  -- Default env vars for the container
     version             INT NOT NULL DEFAULT 1,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT reader_templates_protocol_image_suffix_key UNIQUE (protocol, image_suffix)
 );
 CREATE INDEX idx_reader_templates_protocol ON reader_templates(protocol);
 
@@ -89,13 +95,15 @@ CREATE TABLE device_templates (
     sensor_params_schema  JSONB NOT NULL DEFAULT '{}',  -- JSON Schema for per-sensor params
     is_global             BOOLEAN NOT NULL DEFAULT FALSE,
     version               INT NOT NULL DEFAULT 1,
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT device_templates_global_protocol_name_key
+        UNIQUE (protocol, name, is_global) DEFERRABLE INITIALLY DEFERRED
 );
 CREATE INDEX idx_device_templates_protocol ON device_templates(protocol);
 CREATE INDEX idx_device_templates_org ON device_templates(org_id);
 CREATE INDEX idx_device_templates_global ON device_templates(is_global) WHERE is_global = TRUE;
 
--- ===================== READERS (was gateways) =====================
+-- ===================== READERS =====================
 -- One Docker container per reader. Created when user adds a reader to a Qube.
 CREATE TABLE readers (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -114,7 +122,7 @@ CREATE INDEX idx_readers_qube ON readers(qube_id);
 CREATE UNIQUE INDEX idx_readers_qube_protocol_name ON readers(qube_id, protocol, name);
 
 -- ===================== SENSORS =====================
--- Linked to a reader + device template. Simplified from v1.
+-- Linked to a reader + device template.
 CREATE TABLE sensors (
     id              UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     reader_id       UUID NOT NULL REFERENCES readers(id) ON DELETE CASCADE,
@@ -191,14 +199,14 @@ CREATE INDEX idx_qube_commands_pending ON qube_commands(qube_id, status)
 -- ===================== DISCOVERY SESSIONS =====================
 -- Auto-discovery of unknown devices on a Qube's network.
 CREATE TABLE discovery_sessions (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
-    protocol    TEXT NOT NULL REFERENCES protocols(id),
-    status      TEXT NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending', 'running', 'completed', 'failed')),
-    params_json JSONB NOT NULL DEFAULT '{}',    -- Scan parameters (IP range, etc.)
-    results     JSONB NOT NULL DEFAULT '[]',    -- Discovered devices
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id      TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    protocol     TEXT NOT NULL REFERENCES protocols(id),
+    status       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (status IN ('pending', 'running', 'completed', 'failed')),
+    params_json  JSONB NOT NULL DEFAULT '{}',    -- Scan parameters (IP range, etc.)
+    results      JSONB NOT NULL DEFAULT '[]',    -- Discovered devices
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     completed_at TIMESTAMPTZ
 );
 CREATE INDEX idx_discovery_qube ON discovery_sessions(qube_id);
@@ -214,30 +222,29 @@ CREATE TABLE coreswitch_settings (
 );
 
 -- ===================== TELEMETRY SETTINGS =====================
--- Per-Qube influx-to-sql upload configuration (replaces uploads.csv).
+-- Per-Qube influx-to-sql upload configuration.
 CREATE TABLE telemetry_settings (
     id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     qube_id      TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
-    device       TEXT NOT NULL,            -- Equipment name in InfluxDB
+    device       TEXT NOT NULL,
     reading      TEXT NOT NULL DEFAULT '*',
     agg_time_min INT NOT NULL DEFAULT 1,
     agg_func     TEXT NOT NULL DEFAULT 'AVG'
                  CHECK (agg_func IN ('SUM', 'AVG', 'MAX', 'MIN', 'LAST')),
     sensor_id    UUID REFERENCES sensors(id) ON DELETE SET NULL,
-    tag_names    TEXT,                     -- Pipe-separated tag dimensions
+    tag_names    TEXT,
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX idx_telemetry_settings_qube ON telemetry_settings(qube_id);
 
 -- ===================== WEBSOCKET DELIVERY LOG =====================
--- Tracks WebSocket message delivery for reliability.
 CREATE TABLE ws_delivery_log (
-    id          UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    qube_id     TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
-    message_type TEXT NOT NULL,            -- "config_push", "command", "ack"
-    payload     JSONB NOT NULL DEFAULT '{}',
-    delivered   BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    id           UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    qube_id      TEXT NOT NULL REFERENCES qubes(id) ON DELETE CASCADE,
+    message_type TEXT NOT NULL,
+    payload      JSONB NOT NULL DEFAULT '{}',
+    delivered    BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     delivered_at TIMESTAMPTZ
 );
 CREATE INDEX idx_ws_delivery_pending ON ws_delivery_log(qube_id, delivered)

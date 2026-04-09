@@ -1,16 +1,8 @@
 import API from '../api.js';
 import Components from '../components.js';
 
-// Protocol → array key for measurements display
-const PROTO_ARRAY_KEY = {
-    modbus_tcp: 'registers',
-    snmp:       'oids',
-    mqtt:       'json_paths',
-    opcua:      'nodes',
-    http:       'json_paths',
-};
-
 const Onboarding = {
+    _protocolMap: {},   // id → protocol object (populated in init)
     state: {
         step: 1,
         qubeId: '',
@@ -67,6 +59,10 @@ const Onboarding = {
     async init() {
         this._qubes = await API.getQubes();
         if (this._qubes.length > 0) this.state.qubeId = this._qubes[0].id;
+        // Build protocol map so we can look up sensor_config_key and icon by id
+        const protocols = await API.getProtocols();
+        this._protocolMap = {};
+        protocols.forEach(p => { this._protocolMap[p.id] = p; });
         await this.goToStep(1);
     },
 
@@ -109,7 +105,7 @@ const Onboarding = {
                 <div class="grid grid-3">
                     ${protocols.map(p => `
                         <div class="proto-card" data-id="${p.id}" data-standard="${p.reader_standard}">
-                            <div style="font-size:28px;margin-bottom:10px;">${this._protoIcon(p.id)}</div>
+                            <div style="font-size:28px;margin-bottom:10px;">${p.icon || '🔧'}</div>
                             <div class="reader-badge">${p.reader_standard === 'multi_target' ? 'Shared Reader' : 'Per-Endpoint'}</div>
                             <div style="font-weight:700;font-size:15px;">${p.label}</div>
                             <div class="page-subtitle" style="font-size:11px;margin-top:6px;">${p.description}</div>
@@ -153,10 +149,10 @@ const Onboarding = {
                     : `<div class="grid grid-3">
                         ${templates.map(t => `
                             <div class="proto-card" data-id="${t.id}">
-                                <div style="font-size:26px;margin-bottom:8px;">${this._protoIcon(t.protocol)}</div>
+                                <div style="font-size:26px;margin-bottom:8px;">${this._protocolMap[t.protocol]?.icon || '🔧'}</div>
                                 <div style="font-weight:700;font-size:14px;">${[t.manufacturer, t.model].filter(Boolean).join(' ') || t.name}</div>
                                 <div class="page-subtitle" style="font-size:11px;margin-top:4px;">${t.name}</div>
-                                <div style="font-size:10px;color:var(--text-dim);margin-top:6px;">${(t.sensor_config?.[PROTO_ARRAY_KEY[t.protocol]] || []).length} measurements</div>
+                                <div style="font-size:10px;color:var(--text-dim);margin-top:6px;">${(t.sensor_config?.[this._protocolMap[t.protocol]?.sensor_config_key || 'entries'] || []).length} measurements</div>
                             </div>
                         `).join('')}
                        </div>`}
@@ -311,8 +307,7 @@ const Onboarding = {
     // ── Step 4: Device Configuration ─────────────────────────────────────────
 
     async renderStep4(container) {
-        const proto = this.state.protocol.id;
-        const arrayKey = PROTO_ARRAY_KEY[proto] || 'entries';
+        const arrayKey = this.state.protocol.sensor_config_key || 'entries';
         const measurements = this.state.deviceTemplate.sensor_config?.[arrayKey] || [];
 
         container.innerHTML = `
@@ -470,11 +465,6 @@ const Onboarding = {
     },
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    _protoIcon(id) {
-        const icons = { modbus_tcp: '⚡', snmp: '🌐', mqtt: '📡', opcua: '🏭', http: '🔗', bacnet: '🏢', lorawan: '📶', dnp3: '🔌' };
-        return icons[id] || '🔧';
-    },
 };
 
 export default Onboarding;

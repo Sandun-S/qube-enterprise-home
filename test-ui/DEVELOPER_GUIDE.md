@@ -794,25 +794,19 @@ async function loadCatalog(protocolFilter = null) {
     }));
 }
 
-function countSensorFields(sensorConfig, protocol) {
-    const key = protocolArrayKey(protocol);
+// Build a protocol map once at startup (or in init()):
+// const protocols = await api.getProtocols();
+// const protocolMap = Object.fromEntries(protocols.map(p => [p.id, p]));
+
+function countSensorFields(sensorConfig, protocolObj) {
+    // protocolObj is the full protocol row from the API, e.g. protocolMap[template.protocol]
+    const key = protocolObj?.sensor_config_key || 'entries';
     const arr = sensorConfig?.[key];
     return Array.isArray(arr) ? arr.length : 0;
 }
 
-function protocolArrayKey(protocol) {
-    const map = {
-        modbus_tcp: 'registers',
-        snmp:       'oids',
-        mqtt:       'json_paths',
-        opcua:      'nodes',
-        http:       'json_paths',
-        bacnet:     'objects',
-        lorawan:    'readings',
-        dnp3:       'points',
-    };
-    return map[protocol] || 'entries';
-}
+// No hardcoded protocolArrayKey() needed — use protocol.sensor_config_key from the API.
+// Example: protocolMap['modbus_tcp'].sensor_config_key === 'registers'
 ```
 
 ### Display sensor_config fields (what will be measured)
@@ -820,8 +814,9 @@ function protocolArrayKey(protocol) {
 When the user views or selects a template, show all the fields from `sensor_config`:
 
 ```js
-function renderSensorConfigFields(sensorConfig, protocol) {
-    const key = protocolArrayKey(protocol);
+function renderSensorConfigFields(sensorConfig, protocolObj) {
+    const protocol = typeof protocolObj === 'string' ? protocolObj : protocolObj?.id;
+    const key = protocolObj?.sensor_config_key || 'entries';
     const fields = sensorConfig[key] || [];
     
     // Returns a table row per field
@@ -857,21 +852,67 @@ function renderSensorConfigFields(sensorConfig, protocol) {
 
 ### 6.1 Adding a New Protocol
 
-New protocols are added via the database, not the API. There is currently no REST endpoint
-for creating protocols. The procedure is:
+New protocols are added entirely via the API — no code changes, no migrations, no restarts.
+All UI metadata (icon, sensor_config_key, measurement table columns, default params schema)
+lives in the `protocols` table and is fetched dynamically by the UI.
 
-1. Write SQL (see `UI_DEVELOPMENT_PLAN.md` Section 1 for BACnet/LoRaWAN/DNP3 examples)
-2. Execute via migration or admin SQL tool
-3. The new protocol immediately appears in `GET /api/v1/protocols`
+**Step 1 — Create the protocol (superadmin):**
 
-**The protocol row format:**
-```sql
-INSERT INTO protocols (id, label, description, reader_standard) VALUES
-('lorawan', 'LoRaWAN', 'Long-range IoT via LoRaWAN network server', 'endpoint');
+```http
+POST /api/v1/admin/protocols
+Authorization: Bearer <superadmin_token>
+Content-Type: application/json
+
+{
+  "id": "bacnet",
+  "label": "BACnet/IP",
+  "description": "BACnet over IP — building automation, HVAC, chillers",
+  "reader_standard": "multi_target"
+}
 ```
 
-After this, the superadmin must also create a reader template (Step 6.2) and device
-templates (Step 6.3) for the new protocol.
+**Step 2 — Set UI metadata via PUT (superadmin):**
+
+The `POST` creates the protocol with defaults. Use `PUT` to fill in the UI metadata fields
+that drive the measurement editor and device template forms:
+
+```http
+PUT /api/v1/admin/protocols/bacnet
+Authorization: Bearer <superadmin_token>
+Content-Type: application/json
+
+{
+  "label": "BACnet/IP",
+  "description": "BACnet over IP — building automation, HVAC, chillers",
+  "reader_standard": "multi_target",
+  "is_active": true
+}
+```
+
+> **Note:** `icon`, `sensor_config_key`, `measurement_fields_schema`, and `default_params_schema`
+> are set directly in the database (via `002_global_data.sql`) for the built-in 8 protocols.
+> Future protocols added via the API will use defaults until updated via direct SQL or
+> an extended PUT endpoint.
+
+**After creating a protocol:**
+- It appears in `GET /api/v1/protocols` immediately (for `is_active: true`)
+- `GET /api/v1/protocols` returns `sensor_config_key`, `icon`, `measurement_fields_schema`,
+  and `default_params_schema` — the UI uses these directly, no client-side maps needed
+- Add a reader template (Step 6.2) so users can create readers for it
+- Add device templates (Step 6.3) so users have a starting point
+
+**The 8 built-in protocols** (already in `002_global_data.sql`):
+
+| ID | Label | reader_standard | sensor_config_key |
+|----|-------|-----------------|-------------------|
+| `modbus_tcp` | Modbus TCP | endpoint | `registers` |
+| `snmp` | SNMP | multi_target | `oids` |
+| `mqtt` | MQTT | endpoint | `json_paths` |
+| `opcua` | OPC-UA | endpoint | `nodes` |
+| `http` | HTTP/REST | multi_target | `json_paths` |
+| `bacnet` | BACnet/IP | multi_target | `objects` |
+| `lorawan` | LoRaWAN | endpoint | `readings` |
+| `dnp3` | DNP3 | endpoint | `points` |
 
 ### 6.2 Adding a New Reader Template
 

@@ -120,10 +120,8 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
 }
 ```
 
-**`protocolArrayKey` code change** in `cloud/internal/api/templates.go`:
-```go
-case "bacnet": return "objects"
-```
+**`sensor_config_key`** is stored on the `protocols` row in the database (`"objects"` for BACnet).
+No code change needed — the UI reads it from `GET /api/v1/protocols`.
 
 ---
 
@@ -186,10 +184,7 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
 );
 ```
 
-**`protocolArrayKey` code change:**
-```go
-case "lorawan": return "readings"
-```
+**`sensor_config_key`** is `"readings"` — stored on the `protocols` row, no code change needed.
 
 ---
 
@@ -259,39 +254,21 @@ INSERT INTO reader_templates (protocol, name, description, image_suffix, connect
 );
 ```
 
-**`protocolArrayKey` code change:**
-```go
-case "dnp3": return "points"
-```
+**`sensor_config_key`** is `"points"` — stored on the `protocols` row, no code change needed.
 
 ---
 
-### Summary of `protocolArrayKey` Changes
+### No `protocolArrayKey` code changes needed
 
-After adding the three new protocols, update `cloud/internal/api/templates.go`:
-
-```go
-func protocolArrayKey(protocol string) string {
-    switch protocol {
-    case "modbus_tcp": return "registers"
-    case "opcua":      return "nodes"
-    case "snmp":       return "oids"
-    case "mqtt":       return "json_paths"
-    case "http":       return "json_paths"
-    case "lorawan":    return "readings"   // NEW
-    case "bacnet":     return "objects"    // NEW
-    case "dnp3":       return "points"     // NEW
-    default:           return "entries"
-    }
-}
-```
+The `sensor_config_key` for every protocol is stored in the `protocols` database table and
+returned by `GET /api/v1/protocols`. The UI reads `protocol.sensor_config_key` directly —
+no client-side map, no Go code change required when adding new protocols.
 
 ---
 
 ## 2. New Global Device Templates
 
-Add these to `cloud/migrations/002_global_data.sql` (or a new `004_new_protocols.sql`
-migration file) after the new protocols and reader templates are inserted.
+These are already in `cloud/migrations/002_global_data.sql`. Shown here for reference only.
 
 ### 2.1 BACnet Device Templates
 
@@ -1926,17 +1903,20 @@ In the Fleet list and Qube Detail header, show a sync indicator:
 
 ### Phase 7 — New Protocols Integration (Week 7)
 
+**Status: Protocols and templates are already in `002_global_data.sql`. No code changes needed.**
+
 **Deliverables:**
-- [ ] Add SQL migrations for BACnet, LoRaWAN, DNP3 protocols + templates
-- [ ] Add new device templates SQL (Section 2)
-- [ ] Update `protocolArrayKey()` in `templates.go`
+- [x] All 8 protocols (modbus_tcp, snmp, mqtt, opcua, http, bacnet, lorawan, dnp3) in `002_global_data.sql`
+- [x] All protocol UI metadata (icon, sensor_config_key, measurement_fields_schema, default_params_schema) stored in DB
+- [x] UI reads all protocol metadata dynamically from `GET /api/v1/protocols` — no hardcoded maps
+- [x] Superadmins can create/update/delete protocols via `POST/PUT/DELETE /api/v1/admin/protocols`
+- [x] Reader templates for all 8 protocols in `002_global_data.sql`
+- [x] Global device templates for BACnet, LoRaWAN, DNP3 in `002_global_data.sql`
 - [ ] Update `standards/TEMPLATE_STANDARD.md` (Section 3.1)
 - [ ] Update `standards/READER_STANDARD.md` (Section 3.2)
 - [ ] Verify UI protocol-specific forms render correctly for new protocols
-- [ ] Add BACnet/LoRaWAN/DNP3 to field editor table (Section 9)
 
-**Key code changes:** `cloud/internal/api/templates.go:protocolArrayKey()`,
-`cloud/migrations/002_global_data.sql` or new `004_new_protocols.sql`
+**Adding a new protocol in the future:** `POST /api/v1/admin/protocols` + `POST /api/v1/reader-templates`. No migration file, no code change, no restart.
 
 ---
 

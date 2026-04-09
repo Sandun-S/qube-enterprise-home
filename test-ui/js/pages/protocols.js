@@ -1,8 +1,6 @@
 import API from '../api.js';
 import Components from '../components.js';
 
-const PROTO_ICONS = { modbus_tcp: '⚡', snmp: '🌐', mqtt: '📡', opcua: '🏭', http: '🔗', bacnet: '🏢', lorawan: '📶', dnp3: '🔌' };
-
 const Protocols = {
     _user: null,
 
@@ -115,7 +113,7 @@ const Protocols = {
             tbody.innerHTML = protocols.map(p => `
                 <tr>
                     <td>
-                        <span style="font-size:18px;margin-right:8px;">${PROTO_ICONS[p.id] || '🔧'}</span>
+                        <span style="font-size:18px;margin-right:8px;">${p.icon || '🔧'}</span>
                         <strong>${p.label}</strong>
                     </td>
                     <td><code class="badge badge-blue" style="font-size:11px;">${p.id}</code></td>

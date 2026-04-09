@@ -84,11 +84,19 @@ const App = {
         const role = (user.role || 'viewer').toLowerCase();
         roleBadge.textContent = role.toUpperCase();
         roleBadge.className = `badge badge-${role === 'superadmin' ? 'warning' : role === 'admin' ? 'success' : 'blue'}`;
-        
-        // Role-based visibility (superadmin-only pages)
-        document.querySelectorAll('[data-page="registry"], [data-page="reader-templates"], [data-page="admin-qubes"]').forEach(el => {
-            el.classList.toggle('hidden', user.role !== 'superadmin');
+
+        // Show/hide admin-only nav items
+        const isSuperadmin = user.role === 'superadmin';
+        document.querySelectorAll('.nav-admin-only').forEach(el => {
+            el.style.display = isSuperadmin ? '' : 'none';
         });
+
+        // Give the Admin section label a distinct style
+        if (isSuperadmin) {
+            document.querySelectorAll('.nav-section-label.nav-admin-only').forEach(el => {
+                el.classList.add('nav-admin-section');
+            });
+        }
     },
 
     showAuth() {

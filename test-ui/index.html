@@ -20,13 +20,15 @@
             </div>
             
             <nav class="sidebar-nav">
+                <!-- All users -->
                 <a href="#dashboard" class="nav-item active" data-page="dashboard">
                     <span>🏠</span> Dashboard
                 </a>
                 <a href="#fleet" class="nav-item" data-page="fleet">
                     <span>📦</span> Fleet (Qubes)
                 </a>
-                <div style="padding: 10px 24px; font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.1em; margin-top: 10px;">Monitoring</div>
+
+                <div class="nav-section-label">Monitoring</div>
                 <a href="#readers" class="nav-item" data-page="readers">
                     <span>📡</span> Readers
                 </a>
@@ -36,29 +38,39 @@
                 <a href="#telemetry" class="nav-item" data-page="telemetry">
                     <span>📊</span> Telemetry
                 </a>
-                
-                <div style="padding: 10px 24px; font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.1em; margin-top: 10px;">Management</div>
+
+                <div class="nav-section-label">Operations</div>
                 <a href="#onboarding" class="nav-item" data-page="onboarding">
-                    <span>🪄</span> Onboarding Wizard
+                    <span>🪄</span> Add Device
                 </a>
                 <a href="#templates" class="nav-item" data-page="templates">
-                    <span>📋</span> Templates
-                </a>
-                <div style="padding: 10px 24px; font-size: 11px; text-transform: uppercase; color: var(--text-dim); letter-spacing: 0.1em; margin-top: 10px;">Development</div>
-                <a href="#admin-qubes" class="nav-item hidden" data-page="admin-qubes">
-                    <span>🖥️</span> Qube Management
-                </a>
-                <a href="#reader-templates" class="nav-item" data-page="reader-templates">
-                    <span>📑</span> Reader Templates
-                </a>
-                <a href="#registry" class="nav-item" data-page="registry">
-                    <span>🐳</span> Registry Settings
+                    <span>📋</span> Device Templates
                 </a>
                 <a href="#commands" class="nav-item" data-page="commands">
                     <span>⌨️</span> Remote Commands
                 </a>
+
+                <div class="nav-section-label">Account</div>
+                <a href="#users" class="nav-item" data-page="users">
+                    <span>👥</span> Users & Team
+                </a>
                 <a href="#profile" class="nav-item" data-page="profile">
                     <span>👤</span> My Profile
+                </a>
+
+                <!-- Superadmin only -->
+                <div class="nav-section-label nav-admin-only" style="display:none;">Admin</div>
+                <a href="#protocols" class="nav-item nav-admin-only" data-page="protocols" style="display:none;">
+                    <span>🔌</span> Protocols
+                </a>
+                <a href="#reader-templates" class="nav-item nav-admin-only" data-page="reader-templates" style="display:none;">
+                    <span>📑</span> Reader Templates
+                </a>
+                <a href="#registry" class="nav-item nav-admin-only" data-page="registry" style="display:none;">
+                    <span>🐳</span> Registry Settings
+                </a>
+                <a href="#admin-qubes" class="nav-item nav-admin-only" data-page="admin-qubes" style="display:none;">
+                    <span>🖥️</span> All Qubes
                 </a>
             </nav>
             
