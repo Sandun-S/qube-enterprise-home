@@ -31,6 +31,7 @@ const App = {
         try {
             const user = await API.getMe();
             this.state.user = user;
+            API.setUserRole(user.role || '');
             this.updateUserUI(user);
             this.showApp();
             this.initWS(); // Start WebSocket Hub

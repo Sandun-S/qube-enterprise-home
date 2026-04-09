@@ -250,6 +250,56 @@ func updateQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+// --- UNCLAIM QUBE ---
+
+func unclaimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		qubeID := chi.URLParam(r, "id")
+		ctx := context.Background()
+
+		// Verify the qube exists and is currently claimed
+		var orgID *string
+		err := pool.QueryRow(ctx,
+			`SELECT org_id FROM qubes WHERE id=$1`, qubeID,
+		).Scan(&orgID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "qube not found")
+			return
+		}
+		if orgID == nil {
+			writeError(w, http.StatusConflict, "qube is not claimed by any organisation")
+			return
+		}
+
+		// Cascade delete config data (sensors → readers → containers → commands)
+		pool.Exec(ctx,
+			`DELETE FROM sensors WHERE reader_id IN (SELECT id FROM readers WHERE qube_id=$1)`, qubeID)
+		pool.Exec(ctx, `DELETE FROM readers WHERE qube_id=$1`, qubeID)
+		pool.Exec(ctx, `DELETE FROM containers WHERE qube_id=$1`, qubeID)
+		pool.Exec(ctx, `DELETE FROM qube_commands WHERE qube_id=$1`, qubeID)
+
+		// Reset config state
+		pool.Exec(ctx,
+			`UPDATE config_state SET hash='', config_version=0, generated_at=NOW() WHERE qube_id=$1`, qubeID)
+
+		// Unclaim the qube — returns it to the unclaimed pool
+		_, err = pool.Exec(ctx,
+			`UPDATE qubes
+			 SET org_id=NULL, auth_token_hash=NULL, status='unclaimed',
+			     claimed_at=NULL, ws_connected=FALSE, config_version=0
+			 WHERE id=$1`, qubeID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "unclaim failed")
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]any{
+			"qube_id": qubeID,
+			"message": fmt.Sprintf("Device %s has been unclaimed and is available for re-claiming.", qubeID),
+		})
+	}
+}
+
 // --- HELPERS ---
 
 func liveStatus(stored string, lastSeen *time.Time) string {

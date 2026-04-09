@@ -69,12 +69,17 @@ const Fleet = {
                 document.getElementById('fleet-raw-json').classList.toggle('hidden');
             };
 
+            const isSuperAdmin = API.userRole === 'superadmin';
+
             Components.renderTable(
                 ['Qube ID', 'Location', 'Status', 'Sync', 'Last Seen', 'Actions'],
                 qubes,
                 'fleet-table',
                 (q) => {
                     const isSynced = q.config_hash === q.desired_config_hash;
+                    const unclaimBtn = isSuperAdmin
+                        ? `<button class="btn btn-ghost btn-sm" style="color:var(--error);border-color:var(--error);" onclick="Fleet.handleUnclaim('${q.id}')">Unclaim</button>`
+                        : '';
                     return [
                         `<span style="font-weight: 600;">${q.id}</span>`,
                         q.location_label || '<span style="color:var(--text-dim)">Not set</span>',
@@ -86,6 +91,7 @@ const Fleet = {
                         `<div class="flex">
                             <button class="btn btn-ghost btn-sm" onclick="window.location.hash='#telemetry?qube_id=${q.id}'">Sensors</button>
                             <button class="btn btn-ghost btn-sm" onclick="alert('Config Hash: ' + '${q.config_hash}' + '\\nDesired Hash: ' + '${q.desired_config_hash}')">Hash</button>
+                            ${unclaimBtn}
                         </div>`
                     ];
                 }
@@ -105,7 +111,21 @@ const Fleet = {
         } catch (err) {
             Components.showAlert(err.message, 'error');
         }
+    },
+
+    async handleUnclaim(qubeId) {
+        if (!confirm(`Unclaim ${qubeId}?\n\nThis will remove all readers, sensors and containers for this device and return it to the unclaimed pool.`)) return;
+        try {
+            const res = await API.unclaimQube(qubeId);
+            Components.showAlert(res.message, 'success');
+            this.loadFleet();
+        } catch (err) {
+            Components.showAlert(err.message, 'error');
+        }
     }
 };
+
+// Expose globally so inline onclick handlers can call Fleet.handleUnclaim
+window.Fleet = Fleet;
 
 export default Fleet;

@@ -129,6 +129,9 @@ func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler
 			r.Get("/api/v1/admin/registry", getRegistryHandler(pool))
 			r.Put("/api/v1/admin/registry", updateRegistryHandler(pool))
 
+			// Qube unclaim — returns device to unclaimed pool
+			r.Post("/api/v1/qubes/{id}/unclaim", unclaimQubeHandler(pool))
+
 			// Reader Templates — managed by IoT team
 			r.Post("/api/v1/reader-templates", createReaderTemplateHandler(pool))
 			r.Put("/api/v1/reader-templates/{id}", updateReaderTemplateHandler(pool))

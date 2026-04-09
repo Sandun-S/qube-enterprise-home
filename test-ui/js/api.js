@@ -4,6 +4,13 @@
  */
 
 const API = {
+  userRole: localStorage.getItem('qube_user_role') || '',
+
+  setUserRole(role) {
+    this.userRole = role;
+    localStorage.setItem('qube_user_role', role);
+  },
+
   baseUrl: (() => {
     const stored = localStorage.getItem('qube_api_url');
     const fallback = `${window.location.protocol}//${window.location.hostname}:8080`;
@@ -31,7 +38,9 @@ const API = {
 
   logout() {
     this.token = '';
+    this.userRole = '';
     localStorage.removeItem('qube_token');
+    localStorage.removeItem('qube_user_role');
     window.location.hash = '#login';
   },
 
@@ -102,6 +111,9 @@ const API = {
   },
   claimQube(register_key) {
     return this.request('POST', '/api/v1/qubes/claim', { register_key });
+  },
+  unclaimQube(id) {
+    return this.request('POST', `/api/v1/qubes/${id}/unclaim`);
   },
   getQubeReaders(id) {
     return this.request('GET', `/api/v1/qubes/${id}/readers`);

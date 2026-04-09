@@ -89,6 +89,33 @@ curl -s $BASE/api/v1/qubes/$QUBE_ID/containers \
   -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,name,image,status}]'
 ```
 
+### Unclaim a device (superadmin only)
+
+Removes all readers, sensors, containers and commands for the device and returns it to the
+unclaimed pool so it can be claimed by a different organisation.
+
+```bash
+# Requires SA_TOKEN (iotteam superadmin)
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/unclaim \
+  -H "Authorization: Bearer $SA_TOKEN" | jq .
+# Returns: {"qube_id":"Q-1001","message":"Device Q-1001 has been unclaimed and is available for re-claiming."}
+
+# Verify the device is no longer in the org's fleet
+curl -s $BASE/api/v1/qubes \
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | .id]'
+# Q-1001 should no longer appear
+
+# Non-superadmin attempt returns 403
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/unclaim \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# {"error":"insufficient role — need one of: superadmin"}
+
+# Unclaiming an already-unclaimed device returns 409
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/unclaim \
+  -H "Authorization: Bearer $SA_TOKEN" | jq .
+# {"error":"qube is not claimed by any organisation"}
+```
+
 ---
 
 ## 3. TP-API — device self-registration
