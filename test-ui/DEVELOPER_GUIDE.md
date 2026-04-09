@@ -1196,6 +1196,60 @@ Content-Type: application/json
 - Mode `gitlab`: use `images["img_<image_suffix>"]` if set, else `<gitlab_base>/<image_suffix>:arm64.latest`
 - The `image_suffix` comes from the reader template (e.g. `"modbus-reader"`)
 
+### 6.6 Qube Management — List & Unclaim All Devices
+
+As superadmin you can view every claimed Qube across **all organisations** and unclaim any of
+them (returns the device to the unclaimed pool).
+
+**List all claimed Qubes (cross-org):**
+```http
+GET /api/v1/admin/qubes
+Authorization: Bearer <superadmin_token>
+```
+
+**Response:**
+```json
+[
+  {
+    "id": "Q-1001",
+    "status": "online",
+    "location_label": "Server Room A",
+    "ws_connected": true,
+    "claimed_at": "2026-04-07T09:00:00Z",
+    "last_seen": "2026-04-09T08:31:00Z",
+    "org_id": "uuid-of-org",
+    "org_name": "Acme Corp"
+  }
+]
+```
+
+**Unclaim a Qube:**
+```http
+POST /api/v1/qubes/{id}/unclaim
+Authorization: Bearer <superadmin_token>
+```
+
+**Response `200 OK`:**
+```json
+{
+  "qube_id": "Q-1001",
+  "message": "Device Q-1001 has been unclaimed and is available for re-claiming."
+}
+```
+
+**What unclaim does:**
+1. Deletes all sensors, readers, containers, and queued commands for the Qube
+2. Resets `config_state` hash to empty
+3. Clears `org_id`, `auth_token_hash`, `claimed_at`, `status` → `"unclaimed"`
+
+**Error cases:**
+- `404` — Qube ID does not exist
+- `409` — Qube is not currently claimed
+- `403` — Caller is not superadmin
+
+**UI:** Available in the **Qube Management** page (sidebar, superadmin only). Each row shows
+org name alongside the device and has an **Unclaim** button.
+
 ---
 
 ## 7. Fleet Management API Guide
@@ -1367,6 +1421,18 @@ Content-Type: application/json
   "updated": true
 }
 ```
+
+### 7.4 Unclaim a Qube (Superadmin)
+
+See **Section 6.6** for full details. Short reference:
+
+```http
+POST /api/v1/qubes/{id}/unclaim
+Authorization: Bearer <superadmin_token>
+```
+
+Cascades: deletes sensors → readers → containers → commands, resets config_state, returns
+device to unclaimed pool.
 
 ---
 
@@ -2459,6 +2525,8 @@ All endpoints — method, path, minimum required role, brief description.
 ### Admin (Superadmin only)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
+| GET | `/api/v1/admin/qubes` | Superadmin | List all claimed Qubes across all orgs |
+| POST | `/api/v1/qubes/{id}/unclaim` | Superadmin | Unclaim a Qube (clears org, readers, sensors, containers) |
 | GET | `/api/v1/admin/registry` | Superadmin | View registry settings |
 | PUT | `/api/v1/admin/registry` | Superadmin | Update registry settings |
 

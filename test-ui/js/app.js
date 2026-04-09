@@ -85,8 +85,8 @@ const App = {
         roleBadge.textContent = role.toUpperCase();
         roleBadge.className = `badge badge-${role === 'superadmin' ? 'warning' : role === 'admin' ? 'success' : 'blue'}`;
         
-        // Role-based visibility
-        document.querySelectorAll('[data-page="registry"], [data-page="reader-templates"]').forEach(el => {
+        // Role-based visibility (superadmin-only pages)
+        document.querySelectorAll('[data-page="registry"], [data-page="reader-templates"], [data-page="admin-qubes"]').forEach(el => {
             el.classList.toggle('hidden', user.role !== 'superadmin');
         });
     },

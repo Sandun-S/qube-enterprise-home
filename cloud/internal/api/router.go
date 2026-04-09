@@ -129,6 +129,8 @@ func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler
 			r.Get("/api/v1/admin/registry", getRegistryHandler(pool))
 			r.Put("/api/v1/admin/registry", updateRegistryHandler(pool))
 
+			// Qube management — list all claimed qubes across all orgs
+			r.Get("/api/v1/admin/qubes", listAllQubesAdminHandler(pool))
 			// Qube unclaim — returns device to unclaimed pool
 			r.Post("/api/v1/qubes/{id}/unclaim", unclaimQubeHandler(pool))
 

@@ -28,7 +28,8 @@
    - 6.11 Protocols
    - 6.12 Users & Team Management
    - 6.13 Registry Settings (Superadmin)
-   - 6.14 My Profile
+   - 6.14 Qube Management (Superadmin)
+   - 6.15 My Profile
 7. [API-to-UI Full Mapping](#7-api-to-ui-full-mapping)
 8. [Sensor Add Flow (Template-Driven)](#8-sensor-add-flow-template-driven)
 9. [Protocol-Specific UI Forms](#9-protocol-specific-ui-forms)
@@ -930,6 +931,7 @@ const state = {
 
 **Actions:**
 - "Claim New Qube" button (Admin+) → inline modal: enter `register_key` → `POST /api/v1/qubes/claim`
+- **Unclaim** button (Superadmin only) → confirmation dialog → `POST /api/v1/qubes/{id}/unclaim`; clears all readers/sensors/containers, returns device to unclaimed pool
 - Click row → Qube Detail page
 
 **Qube Detail Page — Route:** `/fleet/:qubeId`
@@ -1483,7 +1485,40 @@ Preview: shows resolved full image path for each container type.
 
 ---
 
-### 6.14 My Profile
+### 6.14 Qube Management (Superadmin Only)
+
+**Route:** `#admin-qubes`  
+**Page file:** `test-ui/js/pages/admin-qubes.js`  
+**Sidebar:** Shown only when `userRole === 'superadmin'` (under Development section)  
+**API:**
+- `GET /api/v1/admin/qubes` — all claimed Qubes across all orgs
+- `POST /api/v1/qubes/{id}/unclaim` — unclaim action
+
+**Layout:** Full-width table
+
+| Column | Source |
+|--------|--------|
+| Qube ID | qube.id |
+| Organisation | qube.org_name + qube.org_id (sub-line) |
+| Location | qube.location_label |
+| Status | status badge |
+| WS | ws_connected badge |
+| Claimed At | timestamp |
+| Last Seen | timestamp |
+| Actions | **Unclaim** button (red, with confirmation dialog) |
+
+**Unclaim flow:**
+1. Click Unclaim → `confirm()` dialog showing qube ID and org name
+2. `POST /api/v1/qubes/{id}/unclaim`
+3. On success: show alert, reload table
+4. On error: show error alert
+
+**Note:** This page does NOT appear in the normal fleet view. It is a cross-org admin tool
+exclusively for the IoT team superadmin to manage the physical device pool.
+
+---
+
+### 6.15 My Profile
 
 **Route:** `/profile`
 **API:** `GET /api/v1/users/me`

@@ -847,7 +847,25 @@ curl -s $BASE/api/v1/users/me \
 
 ---
 
-## 14. Registry settings (superadmin)
+## 14. Qube Management (superadmin)
+
+### List all claimed Qubes across all organisations
+
+```bash
+# SA_TOKEN required — returns qubes from every org
+curl -s $BASE/api/v1/admin/qubes \
+  -H "Authorization: Bearer $SA_TOKEN" | jq .
+# Returns: [{qube_id, org_id, org_name, status, ws_connected, location_label, claimed_at, last_seen}, ...]
+
+# Verify non-superadmin is rejected
+curl -s $BASE/api/v1/admin/qubes \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# {"error":"insufficient role — need one of: superadmin"}
+```
+
+---
+
+## 15. Registry settings (superadmin)
 
 ```bash
 # View
@@ -878,7 +896,7 @@ curl -s -X PUT $BASE/api/v1/admin/registry \
 
 ---
 
-## 15. Simulate full data pipeline (dev)
+## 16. Simulate full data pipeline (dev)
 
 ```bash
 # 1. Seed InfluxDB with fake gateway data

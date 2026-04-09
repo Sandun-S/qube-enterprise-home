@@ -115,6 +115,9 @@ const API = {
   unclaimQube(id) {
     return this.request('POST', `/api/v1/qubes/${id}/unclaim`);
   },
+  getAllQubesAdmin() {
+    return this.request('GET', '/api/v1/admin/qubes');
+  },
   getQubeReaders(id) {
     return this.request('GET', `/api/v1/qubes/${id}/readers`);
   },

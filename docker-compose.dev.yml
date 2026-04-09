@@ -46,6 +46,9 @@ services:
       - ./cloud/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
       - ./cloud/migrations/002_global_data.sql:/docker-entrypoint-initdb.d/002_global_data.sql:ro
       - ./cloud/migrations/003_test_seeds.sql:/docker-entrypoint-initdb.d/003_test_seeds.sql:ro
+      - ./cloud/migrations/004_new_protocols.sql:/docker-entrypoint-initdb.d/004_new_protocols.sql:ro
+      - ./cloud/migrations/004_template_updates.sql:/docker-entrypoint-initdb.d/004b_template_updates.sql:ro
+      - ./cloud/migrations/005_deduplicate_reader_templates.sql:/docker-entrypoint-initdb.d/005_deduplicate_reader_templates.sql:ro
       # Telemetry DB setup (creates qubedata database + TimescaleDB hypertable)
       - ./cloud/migrations-telemetry/001_timescale_init.sql:/docker-entrypoint-initdb.d/010_timescale_init.sql:ro
     healthcheck:

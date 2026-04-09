@@ -133,6 +133,51 @@ func getQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+// --- LIST ALL QUBES (superadmin) ---
+
+func listAllQubesAdminHandler(pool *pgxpool.Pool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		rows, err := pool.Query(context.Background(),
+			`SELECT q.id, q.last_seen, q.status, q.location_label,
+			        q.claimed_at, q.ws_connected,
+			        o.id AS org_id, o.name AS org_name
+			 FROM qubes q
+			 LEFT JOIN organisations o ON o.id = q.org_id
+			 WHERE q.org_id IS NOT NULL
+			 ORDER BY q.claimed_at DESC`)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "db error")
+			return
+		}
+		defer rows.Close()
+
+		result := make([]map[string]any, 0)
+		for rows.Next() {
+			var (
+				id, status, location string
+				orgID, orgName       string
+				lastSeen, claimedAt  *time.Time
+				wsConnected          bool
+			)
+			if err := rows.Scan(&id, &lastSeen, &status, &location,
+				&claimedAt, &wsConnected, &orgID, &orgName); err != nil {
+				continue
+			}
+			result = append(result, map[string]any{
+				"id":             id,
+				"status":         liveStatus(status, lastSeen),
+				"location_label": location,
+				"last_seen":      lastSeen,
+				"claimed_at":     claimedAt,
+				"ws_connected":   wsConnected,
+				"org_id":         orgID,
+				"org_name":       orgName,
+			})
+		}
+		writeJSON(w, http.StatusOK, result)
+	}
+}
+
 // --- CLAIM QUBE ---
 
 func claimQubeHandler(pool *pgxpool.Pool) http.HandlerFunc {
