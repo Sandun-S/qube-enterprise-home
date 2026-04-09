@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -487,6 +488,10 @@ func createReaderTemplateHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			req.Protocol, req.Name, req.Description, req.ImageSuffix, connSchema, envDefaults,
 		).Scan(&id)
 		if err != nil {
+			if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
+				writeError(w, http.StatusConflict, "a reader template with this protocol and image_suffix already exists")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to create reader template")
 			return
 		}

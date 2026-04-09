@@ -438,7 +438,7 @@ R=$(api POST /api/v1/reader-templates \
     \"protocol\": \"modbus_tcp\",
     \"name\": \"Custom Modbus Reader $RUN_ID\",
     \"description\": \"Test reader template\",
-    \"image_suffix\": \"modbus-reader\",
+    \"image_suffix\": \"test-reader-$RUN_ID\",
     \"connection_schema\": {\"type\":\"object\",\"properties\":{\"host\":{\"type\":\"string\"}}},
     \"env_defaults\": {\"LOG_LEVEL\":\"debug\"}
   }" "$SA_TOKEN")
