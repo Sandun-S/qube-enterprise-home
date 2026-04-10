@@ -405,6 +405,12 @@ INFLUX_DB=edgex
 - Fixed (2026-04-10): `getMeHandler` now returns **401** (not 500) when user UUID from JWT no longer exists
 - Browser `api.js` handles 401 by calling `logout()` → clears token → redirects to login automatically
 
+**enterprise-influx-to-sql logs "sensor_map empty or missing — skipping":**
+- Root cause: `telemetry_settings` table has no rows for this Qube — sensor_map is empty.
+- Fix: create mappings via `POST /api/v1/qubes/:id/telemetry-settings`.
+- After a mapping is created, `recomputeConfigHash()` fires, conf-agent re-syncs, and SQLite gets the rows.
+- Find InfluxDB device tag: `curl 'http://localhost:8086/query?q=SHOW+TAG+VALUES+FROM+Measurements+WITH+KEY+%3D+device&db=edgex'`
+
 **Azure docker-compose.yml: postgres fails to initialize (010_timescale_init.sql "Is a directory"):**
 - Cause: typo in volume mount path — `clou/dmigrations-telemetry` instead of `cloud/migrations-telemetry`
 - When source path doesn't exist, Docker creates a directory; psql errors on exec

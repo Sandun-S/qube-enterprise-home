@@ -817,7 +817,54 @@ curl ... -d '{
 
 ---
 
-## 12. Telemetry ingest and query
+## 12. Telemetry Settings (InfluxDB → sensor mappings)
+
+These mappings tell `enterprise-influx-to-sql` which InfluxDB device+reading to forward
+to which cloud sensor. They are synced to Qube SQLite and read on every transfer cycle.
+
+```bash
+# List all mappings for Q-1001 (empty until you create one)
+curl -s $BASE/api/v1/qubes/$QUBE_ID/telemetry-settings \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# []
+
+# Create a mapping: InfluxDB device "172.20.166.194 Reader", all readings → $SENSOR_ID
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/telemetry-settings \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"device\":\"172.20.166.194 Reader\",\"reading\":\"*\",\"sensor_id\":\"$SENSOR_ID\",\"agg_func\":\"LAST\",\"agg_time_min\":1}" | jq .
+# {"id":"<ts-uuid>","new_hash":"<new config hash>","message":"Telemetry mapping created..."}
+TS_ID=<paste id>
+
+# List again — should show the mapping with sensor_name
+curl -s $BASE/api/v1/qubes/$QUBE_ID/telemetry-settings \
+  -H "Authorization: Bearer $TOKEN" | jq .
+
+# Create a specific field mapping (one reading only)
+curl -s -X POST $BASE/api/v1/qubes/$QUBE_ID/telemetry-settings \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"device\":\"PM3000_Phase_A\",\"reading\":\"active_power_w\",\"sensor_id\":\"$SENSOR_ID\",\"agg_func\":\"AVG\",\"agg_time_min\":5}" | jq .
+
+# Update a mapping (change agg_func)
+curl -s -X PUT $BASE/api/v1/qubes/$QUBE_ID/telemetry-settings/$TS_ID \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agg_func":"AVG","agg_time_min":5}' | jq .
+
+# Delete a mapping
+curl -s -X DELETE $BASE/api/v1/qubes/$QUBE_ID/telemetry-settings/$TS_ID \
+  -H "Authorization: Bearer $TOKEN" | jq .
+# {"deleted":true,"new_hash":"..."}
+```
+
+> After creating/updating/deleting a mapping the config hash changes immediately.
+> conf-agent picks this up on the next WebSocket push or poll and updates SQLite.
+> `enterprise-influx-to-sql` reloads the sensor_map on every 60s transfer cycle — no restart needed.
+
+---
+
+## 13. Telemetry ingest and query
 
 ```bash
 NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -1031,6 +1078,12 @@ conf-agent falls back to HTTP polling automatically after 30s.
 2. Sensor's `json_paths` entries have no `topic` field AND no top-level `topic` in the sensor
    config — reader skips all entries. Fix: ensure `topic` is either in each json_paths entry
    OR set as a top-level key via `params: {topic: "..."}` when adding the sensor.
+
+**enterprise-influx-to-sql logs "sensor_map empty or missing — skipping":**
+No `telemetry_settings` rows exist for this Qube (or SQLITE_PATH is not set in the container).
+Fix: create at least one mapping via `POST /api/v1/qubes/:id/telemetry-settings`, then
+force conf-agent to re-sync (`sudo rm -f /opt/qube/.config_hash && sudo systemctl restart enterprise-conf-agent`).
+Verify SQLite has rows: `sqlite3 /opt/qube/data/qube.db 'SELECT * FROM telemetry_settings;'`
 
 **SNMP devices not polled:** Reader skips sensors where `host` is empty. Common if old sensors
 used `ip_address` instead of `host`. Fix: update sensors via PUT with correct `host` field.

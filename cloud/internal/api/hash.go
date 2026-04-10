@@ -68,9 +68,29 @@ func recomputeConfigHash(ctx context.Context, pool *pgxpool.Pool, qubeID string)
 		readers = append(readers, rd)
 	}
 
+	// Include telemetry_settings in the hash so mapping changes trigger conf-agent re-sync
+	type tsRow struct {
+		Device  string `json:"device"`
+		Reading string `json:"reading"`
+		SensorID *string `json:"sensor_id"`
+	}
+	tsRows, _ := pool.Query(ctx,
+		`SELECT device, reading, sensor_id FROM telemetry_settings
+		 WHERE qube_id=$1 ORDER BY device ASC, reading ASC`, qubeID)
+	var telemetrySettings []tsRow
+	if tsRows != nil {
+		for tsRows.Next() {
+			var ts tsRow
+			tsRows.Scan(&ts.Device, &ts.Reading, &ts.SensorID)
+			telemetrySettings = append(telemetrySettings, ts)
+		}
+		tsRows.Close()
+	}
+
 	canonical, err := json.Marshal(map[string]any{
-		"qube_id": qubeID,
-		"readers": readers,
+		"qube_id":             qubeID,
+		"readers":             readers,
+		"telemetry_settings":  telemetrySettings,
 	})
 	if err != nil {
 		return "", fmt.Errorf("marshal: %w", err)

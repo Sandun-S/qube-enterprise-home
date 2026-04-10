@@ -290,6 +290,40 @@ The `readers` + `sensors` arrays are written to SQLite by conf-agent.
 
 ---
 
+### Telemetry Mappings tab
+
+Maps InfluxDB device+reading fields to cloud sensor UUIDs.
+These rows are synced to Qube SQLite and read by `enterprise-influx-to-sql` on every transfer cycle.
+
+```
+GET /api/v1/qubes/:id/telemetry-settings
+→ [{"id":"<uuid>","device":"PM3000_A","reading":"*","agg_func":"LAST","agg_time_min":1,
+    "sensor_id":"<uuid>","sensor_name":"Phase A Meter","tag_names":"[]","updated_at":"..."}]
+
+POST /api/v1/qubes/:id/telemetry-settings
+{
+  "device":      "172.20.166.194 Reader",   // InfluxDB equipment tag value
+  "reading":     "*",                        // field key, or "*" to match all
+  "sensor_id":   "<uuid>",                  // must belong to this Qube
+  "agg_func":    "LAST",                    // LAST | AVG | MAX | MIN | SUM
+  "agg_time_min": 1                         // aggregation window in minutes
+}
+→ {"id":"<ts-uuid>","new_hash":"<hash>","message":"Telemetry mapping created..."}
+
+PUT /api/v1/qubes/:id/telemetry-settings/:ts_id
+{ "agg_func": "AVG", "agg_time_min": 5 }   // all fields optional — PATCH semantics
+→ {"message":"telemetry setting updated","new_hash":"<hash>"}
+
+DELETE /api/v1/qubes/:id/telemetry-settings/:ts_id
+→ {"deleted":true,"new_hash":"<hash>"}
+```
+
+> Every create/update/delete triggers `recomputeConfigHash()` — the Qube detects the
+> new hash and pulls fresh config, writing the updated `telemetry_settings` to SQLite.
+> `enterprise-influx-to-sql` reloads the sensor_map on each 60 s transfer tick (no restart).
+
+---
+
 ### Telemetry tab
 
 **Ingest (simulates enterprise-influx-to-sql):**

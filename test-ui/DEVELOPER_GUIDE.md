@@ -32,12 +32,13 @@
    - 7.3 Update Qube Settings
 8. [Reader Management API Guide](#8-reader-management-api-guide)
 9. [Sensor Management API Guide](#9-sensor-management-api-guide)
-10. [Telemetry API Guide](#10-telemetry-api-guide)
-11. [Commands API Guide](#11-commands-api-guide)
-12. [User Management API Guide](#12-user-management-api-guide)
-13. [Protocol-Specific Form Reference](#13-protocol-specific-form-reference)
+10. [Telemetry Settings API Guide](#10-telemetry-settings-api-guide)
+11. [Telemetry Query API Guide](#11-telemetry-query-api-guide-sensor_readings-in-timescaledb)
+12. [Commands API Guide](#12-commands-api-guide)
+13. [User Management API Guide](#13-user-management-api-guide)
+14. [Protocol-Specific Form Reference](#14-protocol-specific-form-reference)
     - All 8 protocols — connection_schema + sensor_params_schema + sensor_config fields
-14. [Config Sync — How Changes Flow to the Qube](#14-config-sync--how-changes-flow-to-the-qube)
+15. [Config Sync — How Changes Flow to the Qube](#15-config-sync--how-changes-flow-to-the-qube)
 15. [Status Monitoring](#15-status-monitoring)
 16. [Complete API Quick Reference](#16-complete-api-quick-reference)
 
@@ -1665,7 +1666,136 @@ Authorization: Bearer <editor_token>
 
 ---
 
-## 10. Telemetry API Guide
+## 10. Telemetry Settings API Guide
+
+Telemetry settings are the bridge between InfluxDB (edge data buffer on each Qube) and
+TimescaleDB (cloud sensor_readings). Each row maps an InfluxDB **device tag** + **field key**
+to a cloud **sensor_id**. `enterprise-influx-to-sql` reads these from Qube SQLite and uses
+them as a sensor_map on every 60 s transfer cycle.
+
+### Data Flow
+
+```
+MQTT/SNMP reader → core-switch → InfluxDB (device tag, field key, value)
+                                         ↓
+             telemetry_settings (device + reading → sensor_id)
+                                         ↓
+       enterprise-influx-to-sql reads SQLite → POST /v1/telemetry/ingest
+                                         ↓
+                        TimescaleDB sensor_readings (qubedata)
+                                         ↓
+              Cloud API GET /api/v1/data/sensors/:id/latest
+```
+
+The InfluxDB `device` tag value is whatever the reader writes. For MQTT it is the reader
+name as shown in `docker logs` (e.g. `"172.20.166.194 Reader"`). For SNMP/Modbus it is
+the device hostname/IP. Check InfluxDB to confirm:
+
+```bash
+curl 'http://localhost:8086/query?q=SELECT+*+FROM+Measurements+LIMIT+3&db=edgex' | python3 -m json.tool
+# Look for "device" tag and field names in the result
+```
+
+### List mappings
+
+```http
+GET /api/v1/qubes/{qube_id}/telemetry-settings
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+[
+  {
+    "id":           "ts-uuid",
+    "device":       "172.20.166.194 Reader",
+    "reading":      "*",
+    "agg_func":     "LAST",
+    "agg_time_min": 1,
+    "sensor_id":    "sensor-uuid",
+    "sensor_name":  "MQTT Temp Sensor",
+    "tag_names":    "[]",
+    "updated_at":   "2026-04-10T12:00:00Z"
+  }
+]
+```
+
+### Create a mapping
+
+```http
+POST /api/v1/qubes/{qube_id}/telemetry-settings
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+```json
+{
+  "device":       "172.20.166.194 Reader",
+  "reading":      "*",
+  "sensor_id":    "<sensor-uuid>",
+  "agg_func":     "LAST",
+  "agg_time_min": 1
+}
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `device` | Yes | InfluxDB `device` tag value — must match exactly |
+| `sensor_id` | Yes | UUID from `sensors` table — must belong to this Qube |
+| `reading` | No | Field key name, default `"*"` matches all fields |
+| `agg_func` | No | `LAST` (default), `AVG`, `MAX`, `MIN`, `SUM` |
+| `agg_time_min` | No | Aggregation window in minutes, default `1` |
+
+**Response (`201`):**
+```json
+{
+  "id":       "ts-uuid",
+  "new_hash": "<new config hash>",
+  "message":  "Telemetry mapping created. Will sync to Qube on next config pull."
+}
+```
+
+The `new_hash` change is pushed to the Qube via WebSocket immediately, triggering a
+config pull that writes the new `telemetry_settings` row to SQLite.
+
+### Update a mapping
+
+```http
+PUT /api/v1/qubes/{qube_id}/telemetry-settings/{ts_id}
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+All fields are optional (PATCH semantics applied via SQL COALESCE):
+
+```json
+{ "agg_func": "AVG", "agg_time_min": 5 }
+```
+
+### Delete a mapping
+
+```http
+DELETE /api/v1/qubes/{qube_id}/telemetry-settings/{ts_id}
+Authorization: Bearer <token>
+```
+
+**Response:**
+```json
+{ "deleted": true, "new_hash": "<new hash>" }
+```
+
+### Finding the correct `device` value
+
+1. SSH into the Qube VM and query InfluxDB:
+   ```bash
+   curl -s 'http://localhost:8086/query?q=SHOW+TAG+VALUES+FROM+Measurements+WITH+KEY+%3D+device&db=edgex' | python3 -m json.tool
+   ```
+2. The `values` array lists every device tag written by your readers.
+3. Use one of these verbatim as the `device` field in your mapping.
+
+---
+
+## 11. Telemetry Query API Guide (sensor_readings in TimescaleDB)
 
 ### Get latest readings for a sensor
 
@@ -1780,7 +1910,7 @@ ws.onerror = (e) => console.error('WS error:', e);
 
 ---
 
-## 11. Commands API Guide
+## 12. Commands API Guide
 
 Commands let you remotely control Qubes, their containers, network, filesystem, and device settings.
 The enterprise conf-agent handles all command types — enterprise container commands and the full
@@ -2026,7 +2156,7 @@ const commandPayloadFields = {
 
 ---
 
-## 12. User Management API Guide
+## 13. User Management API Guide
 
 ### List users in org
 
@@ -2134,7 +2264,7 @@ Authorization: Bearer <admin_token>
 
 ---
 
-## 13. Protocol-Specific Form Reference
+## 14. Protocol-Specific Form Reference
 
 This section documents the exact `connection_schema` and `sensor_params_schema` for each
 protocol, so the UI knows what to render.
@@ -2401,7 +2531,7 @@ protocol, so the UI knows what to render.
 
 ---
 
-## 14. Config Sync — How Changes Flow to the Qube
+## 15. Config Sync — How Changes Flow to the Qube
 
 Understanding this prevents confusion about why changes don't appear immediately.
 

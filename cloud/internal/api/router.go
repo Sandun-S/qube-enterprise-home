@@ -106,6 +106,13 @@ func NewRouter(pool, telemetryPool *pgxpool.Pool, jwtSecret string) http.Handler
 			r.Put("/api/v1/sensors/{sensor_id}", updateSensorHandler(pool))
 			r.Delete("/api/v1/sensors/{sensor_id}", deleteSensorHandler(pool))
 
+			// Telemetry Settings — InfluxDB device+reading → sensor_id mappings
+			// Synced to Qube SQLite by conf-agent; read by enterprise-influx-to-sql
+			r.Get("/api/v1/qubes/{id}/telemetry-settings", listTelemetrySettingsHandler(pool))
+			r.Post("/api/v1/qubes/{id}/telemetry-settings", createTelemetrySettingHandler(pool))
+			r.Put("/api/v1/qubes/{id}/telemetry-settings/{ts_id}", updateTelemetrySettingHandler(pool))
+			r.Delete("/api/v1/qubes/{id}/telemetry-settings/{ts_id}", deleteTelemetrySettingHandler(pool))
+
 			// Device Templates — CRUD
 			r.Post("/api/v1/device-templates", createDeviceTemplateHandler(pool))
 			r.Put("/api/v1/device-templates/{id}", updateDeviceTemplateHandler(pool))

@@ -188,6 +188,20 @@ const API = {
     return this.request('DELETE', `/api/v1/users/${userId}`);
   },
 
+  // Telemetry Settings (InfluxDB → sensor_id mappings)
+  getTelemetrySettings(qubeId) {
+    return this.request('GET', `/api/v1/qubes/${qubeId}/telemetry-settings`);
+  },
+  createTelemetrySetting(qubeId, data) {
+    return this.request('POST', `/api/v1/qubes/${qubeId}/telemetry-settings`, data);
+  },
+  updateTelemetrySetting(qubeId, tsId, data) {
+    return this.request('PUT', `/api/v1/qubes/${qubeId}/telemetry-settings/${tsId}`, data);
+  },
+  deleteTelemetrySetting(qubeId, tsId) {
+    return this.request('DELETE', `/api/v1/qubes/${qubeId}/telemetry-settings/${tsId}`);
+  },
+
   // Protocol management (superadmin)
   getAllProtocolsAdmin() {
     return this.request('GET', '/api/v1/admin/protocols');
