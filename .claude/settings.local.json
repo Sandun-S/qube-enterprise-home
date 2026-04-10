@@ -41,7 +41,9 @@
       "Bash(cp /mnt/d/work/mit/qube_enterprice/influxdb-relay/go.sum /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/influxdb-relay/)",
       "Bash(cp /mnt/d/work/mit/qube_enterprice/influxdb-relay/relay/config.go /mnt/d/work/mit/qube_enterprice/qube-enterprise-selfregister/qube-enterprise-final/influxdb-relay/relay/)",
       "Bash(grep -E \"\\\\.go$\")",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Read(//root/go/**)",
+      "Read(//mnt/**)"
     ]
   }
 }

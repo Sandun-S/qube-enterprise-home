@@ -82,7 +82,12 @@ func inviteUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 		}
 
 		// Default role to viewer if not specified or invalid
+		// Superadmin callers may also create superadmin users
+		callerRole, _ := r.Context().Value(ctxRole).(string)
 		validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
+		if callerRole == "superadmin" {
+			validRoles["superadmin"] = true
+		}
 		if !validRoles[req.Role] {
 			req.Role = "viewer"
 		}
@@ -141,7 +146,11 @@ func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		callerRole, _ := r.Context().Value(ctxRole).(string)
 		validRoles := map[string]bool{"viewer": true, "editor": true, "admin": true}
+		if callerRole == "superadmin" {
+			validRoles["superadmin"] = true
+		}
 		if !validRoles[req.Role] {
 			writeError(w, http.StatusBadRequest, "role must be viewer, editor, or admin")
 			return

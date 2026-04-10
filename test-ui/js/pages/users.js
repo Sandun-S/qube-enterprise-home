@@ -56,6 +56,9 @@ const Users = {
                                 <option value="admin">Admin</option>
                             </select>
                         </div>
+                        <div id="invite-superadmin-note" class="hidden" style="font-size:11px;color:var(--text-dim);margin-top:-8px;padding:8px;background:rgba(183,148,244,0.08);border-radius:6px;">
+                            Superadmin users are added to the global admin org and have access to all tenant management tools.
+                        </div>
                     </div>
                     <div class="modal-footer">
                         <button id="btn-invite-cancel" class="btn btn-ghost">Cancel</button>
@@ -93,10 +96,29 @@ const Users = {
     async init() {
         this.loadUsers();
 
+        // Add superadmin option to role dropdown if current user is superadmin
+        if (API.userRole === 'superadmin') {
+            const roleSelect = document.getElementById('invite-role');
+            const saOption = document.createElement('option');
+            saOption.value = 'superadmin';
+            saOption.textContent = 'Superadmin';
+            roleSelect.appendChild(saOption);
+
+            roleSelect.addEventListener('change', () => {
+                const note = document.getElementById('invite-superadmin-note');
+                if (roleSelect.value === 'superadmin') {
+                    note.classList.remove('hidden');
+                } else {
+                    note.classList.add('hidden');
+                }
+            });
+        }
+
         document.getElementById('btn-invite-user')?.addEventListener('click', () => {
             document.getElementById('invite-email').value = '';
             document.getElementById('invite-password').value = '';
             document.getElementById('invite-role').value = 'viewer';
+            document.getElementById('invite-superadmin-note').classList.add('hidden');
             document.getElementById('invite-modal').classList.remove('hidden');
         });
         document.getElementById('btn-invite-cancel')?.addEventListener('click', () => {
@@ -160,9 +182,18 @@ const Users = {
 
     _openEditRole(userId, email, currentRole) {
         document.getElementById('edit-role-user-email').textContent = email;
-        document.getElementById('edit-role-select').value = currentRole;
-        document.getElementById('edit-role-modal').classList.remove('hidden');
 
+        // Rebuild options so superadmin can also set superadmin role
+        const sel = document.getElementById('edit-role-select');
+        sel.innerHTML = `
+            <option value="viewer">Viewer</option>
+            <option value="editor">Editor</option>
+            <option value="admin">Admin</option>
+            ${API.userRole === 'superadmin' ? '<option value="superadmin">Superadmin</option>' : ''}
+        `;
+        sel.value = currentRole;
+
+        document.getElementById('edit-role-modal').classList.remove('hidden');
         document.getElementById('btn-edit-role-submit').onclick = () => this._submitEditRole(userId);
     },
 
