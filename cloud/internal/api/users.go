@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/go-chi/chi/v5"
+	pgx "github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -213,6 +214,10 @@ func getMeHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			 WHERE u.id::text = $1`,
 			userID).Scan(&email, &role, &orgName)
 		if err != nil {
+			if err == pgx.ErrNoRows {
+				writeError(w, http.StatusUnauthorized, "user not found")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
 		}

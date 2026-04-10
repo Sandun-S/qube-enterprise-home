@@ -400,6 +400,16 @@ INFLUX_DB=edgex
 - Check containers table: `SELECT * FROM containers WHERE qube_id='Q-1001'`
 - Image resolved from registry_settings + reader_template.image_suffix
 
+**Test-UI shows "db error" on load / `GET /api/v1/users/me` returns 500:**
+- Stale JWT in `localStorage` — happens after `docker compose down -v` wipes the DB (user UUIDs change)
+- Fixed (2026-04-10): `getMeHandler` now returns **401** (not 500) when user UUID from JWT no longer exists
+- Browser `api.js` handles 401 by calling `logout()` → clears token → redirects to login automatically
+
+**Azure docker-compose.yml: postgres fails to initialize (010_timescale_init.sql "Is a directory"):**
+- Cause: typo in volume mount path — `clou/dmigrations-telemetry` instead of `cloud/migrations-telemetry`
+- When source path doesn't exist, Docker creates a directory; psql errors on exec
+- Fix: correct the path in `docker-compose.yml` on the Azure VM, then `docker compose down -v && docker compose up -d`
+
 ## Important Implementation Notes
 
 1. **SQLite = only writer is conf-agent.** Reader containers open read-only. No live polling — config reload = Docker stop → Swarm recreate.
@@ -440,3 +450,5 @@ INFLUX_DB=edgex
 ---
 
 **For future Claude Code instances:** This is a v2 Go-based IoT management system. Cloud API runs on :8080 (JWT) and :8081 (HMAC). Qubes sync config via WebSocket and store it in SQLite. Reader containers are auto-deployed by conf-agent. Key patterns: `writeJSON()`, `writeError()`, `pool.Query/QueryRow`, middleware context values. Readers = gateways v2. SQLite replaces CSV files. No CSV generation code exists in v2.
+
+**Test-UI (`test-ui/`)** is a full API exerciser — not a production UI. All pages make real API calls via `api.js`. No hardcoded data. User management page (`users.js`) supports: list, invite (`POST /api/v1/users`), edit role (`PATCH /api/v1/users/:id`), remove (`DELETE /api/v1/users/:id`). Functions exposed via `window.Users` for inline table onclick handlers.

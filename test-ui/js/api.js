@@ -178,6 +178,15 @@ const API = {
   getUsers() {
     return this.request('GET', '/api/v1/users');
   },
+  inviteUser(data) {
+    return this.request('POST', '/api/v1/users', data);
+  },
+  updateUserRole(userId, role) {
+    return this.request('PATCH', `/api/v1/users/${userId}`, { role });
+  },
+  removeUser(userId) {
+    return this.request('DELETE', `/api/v1/users/${userId}`);
+  },
 
   // Protocol management (superadmin)
   getAllProtocolsAdmin() {

@@ -32,37 +32,165 @@ const Users = {
                     </div>
                 </div>
             </div>
+
+            <!-- Invite User Modal -->
+            <div id="invite-modal" class="modal-backdrop hidden">
+                <div class="modal">
+                    <div class="modal-header">
+                        <h2 style="font-size: 18px;">Invite Team Member</h2>
+                    </div>
+                    <div class="modal-body">
+                        <div class="form-group">
+                            <label>Email <span style="color:var(--error)">*</span></label>
+                            <input type="email" id="invite-email" placeholder="user@example.com">
+                        </div>
+                        <div class="form-group">
+                            <label>Password <span style="color:var(--text-dim); font-size:11px;">(leave blank to use default: Qube@2024)</span></label>
+                            <input type="password" id="invite-password" placeholder="optional">
+                        </div>
+                        <div class="form-group">
+                            <label>Role</label>
+                            <select id="invite-role">
+                                <option value="viewer">Viewer</option>
+                                <option value="editor">Editor</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button id="btn-invite-cancel" class="btn btn-ghost">Cancel</button>
+                        <button id="btn-invite-submit" class="btn btn-primary">Invite</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Edit Role Modal -->
+            <div id="edit-role-modal" class="modal-backdrop hidden">
+                <div class="modal">
+                    <div class="modal-header">
+                        <h2 style="font-size: 18px;">Change Role</h2>
+                    </div>
+                    <div class="modal-body">
+                        <p class="page-subtitle" id="edit-role-user-email" style="margin-bottom:16px;"></p>
+                        <div class="form-group">
+                            <label>New Role</label>
+                            <select id="edit-role-select">
+                                <option value="viewer">Viewer</option>
+                                <option value="editor">Editor</option>
+                                <option value="admin">Admin</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button id="btn-edit-role-cancel" class="btn btn-ghost">Cancel</button>
+                        <button id="btn-edit-role-submit" class="btn btn-primary">Save</button>
+                    </div>
+                </div>
+            </div>
         `;
     },
 
     async init() {
         this.loadUsers();
+
+        document.getElementById('btn-invite-user')?.addEventListener('click', () => {
+            document.getElementById('invite-email').value = '';
+            document.getElementById('invite-password').value = '';
+            document.getElementById('invite-role').value = 'viewer';
+            document.getElementById('invite-modal').classList.remove('hidden');
+        });
+        document.getElementById('btn-invite-cancel')?.addEventListener('click', () => {
+            document.getElementById('invite-modal').classList.add('hidden');
+        });
+        document.getElementById('btn-invite-submit')?.addEventListener('click', () => this.handleInvite());
+
+        document.getElementById('btn-edit-role-cancel')?.addEventListener('click', () => {
+            document.getElementById('edit-role-modal').classList.add('hidden');
+        });
     },
 
     async loadUsers() {
         try {
             const users = await API.getUsers();
             Components.renderTable(
-                ['User Email', 'Role', 'Joined Date', 'Status', 'Actions'],
+                ['User Email', 'Role', 'Joined Date', 'Actions'],
                 users,
                 'users-table-container',
                 (u) => [
                     `<div class="flex">
-                        <div style="width: 32px; height: 32px; background: var(--border); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 12px; color: var(--text-dim);">
+                        <div style="width:32px;height:32px;background:var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;color:var(--text-dim);">
                             ${u.email.charAt(0).toUpperCase()}
                         </div>
                         <b>${u.email}</b>
                     </div>`,
-                    `<span class="badge badge-${u.role === 'admin' ? 'success' : u.role === 'superadmin' ? 'warning' : 'blue'}">${u.role.toUpperCase()}</span>`,
+                    `<span class="badge badge-${u.role === 'superadmin' ? 'warning' : u.role === 'admin' ? 'success' : 'blue'}">${u.role.toUpperCase()}</span>`,
                     new Date(u.created_at).toLocaleDateString(),
-                    `<span class="badge badge-success">ACTIVE</span>`,
-                    `<button class="btn btn-ghost btn-sm">Edit Role</button>`
+                    u.role === 'superadmin' ? '' : `
+                        <button class="btn btn-ghost btn-sm" onclick="Users._openEditRole('${u.id}','${u.email}','${u.role}')">Edit Role</button>
+                        <button class="btn btn-ghost btn-sm" style="color:var(--error)" onclick="Users._removeUser('${u.id}','${u.email}')">Remove</button>
+                    `
                 ]
             );
         } catch (err) {
             Components.showAlert(err.message, 'error');
         }
+    },
+
+    async handleInvite() {
+        const email = document.getElementById('invite-email').value.trim();
+        const password = document.getElementById('invite-password').value;
+        const role = document.getElementById('invite-role').value;
+
+        if (!email) {
+            Components.showAlert('Email is required', 'error');
+            return;
+        }
+
+        try {
+            const result = await API.inviteUser({ email, password: password || undefined, role });
+            document.getElementById('invite-modal').classList.add('hidden');
+            let msg = `${result.email} invited as ${result.role}`;
+            if (result.is_temp_password) msg += ` (temp password: ${result.temp_password})`;
+            Components.showAlert(msg, 'success');
+            this.loadUsers();
+        } catch (err) {
+            Components.showAlert(err.message, 'error');
+        }
+    },
+
+    _openEditRole(userId, email, currentRole) {
+        document.getElementById('edit-role-user-email').textContent = email;
+        document.getElementById('edit-role-select').value = currentRole;
+        document.getElementById('edit-role-modal').classList.remove('hidden');
+
+        document.getElementById('btn-edit-role-submit').onclick = () => this._submitEditRole(userId);
+    },
+
+    async _submitEditRole(userId) {
+        const role = document.getElementById('edit-role-select').value;
+        try {
+            await API.updateUserRole(userId, role);
+            document.getElementById('edit-role-modal').classList.add('hidden');
+            Components.showAlert('Role updated', 'success');
+            this.loadUsers();
+        } catch (err) {
+            Components.showAlert(err.message, 'error');
+        }
+    },
+
+    async _removeUser(userId, email) {
+        if (!confirm(`Remove ${email} from the organization?`)) return;
+        try {
+            await API.removeUser(userId);
+            Components.showAlert(`${email} removed`, 'success');
+            this.loadUsers();
+        } catch (err) {
+            Components.showAlert(err.message, 'error');
+        }
     }
 };
+
+// Expose for inline onclick handlers in table rows
+window.Users = Users;
 
 export default Users;
