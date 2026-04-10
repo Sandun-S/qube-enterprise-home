@@ -2062,23 +2062,36 @@ Content-Type: application/json
 
 {
   "email": "carol@acme.com",
+  "password": "InitialPass!",
   "role": "editor"
 }
 ```
 
-**Response:**
+`password` is optional. If omitted, defaults to `Qube@2024` (or the `DEFAULT_USER_PASSWORD` env var).
+
+**Response `201 Created`:**
 ```json
 {
-  "id": "usr-003",
-  "message": "User created"
+  "user_id": "usr-003",
+  "email": "carol@acme.com",
+  "role": "editor",
+  "org_id": "org-uuid",
+  "is_temp_password": false
 }
 ```
 
-**Note:** There is no email invite system. The password must be shared out-of-band.
-The user logs in with the email and an initial password set by the admin.
+When `password` was omitted, `is_temp_password: true` and `temp_password` are also returned — display this to the admin so they can share the credential out-of-band.
 
-**Valid roles:** `viewer`, `editor`, `admin`
-(Superadmin role cannot be assigned via this endpoint)
+**Valid roles by caller:**
+
+| Caller role | Allowed `role` values |
+|-------------|----------------------|
+| `admin` | `viewer`, `editor`, `admin` |
+| `superadmin` | `viewer`, `editor`, `admin`, `superadmin` |
+
+If an admin submits `role: "superadmin"`, the value is silently downgraded to `"viewer"`.
+
+**Superadmin note:** Users created by a superadmin are placed in the superadmin org (global IoT admin org), not in any tenant org.
 
 ### Update a user's role
 
@@ -2092,11 +2105,31 @@ Content-Type: application/json
 }
 ```
 
+**Valid roles:** same rule as invite — superadmin callers may also set `"superadmin"`.
+
+**Constraints:**
+- Cannot change your own role (returns `400`)
+- Cannot change a superadmin user's role (backend WHERE clause: `role != 'superadmin'`)
+
+**Response `200 OK`:**
+```json
+{ "user_id": "usr-002", "role": "editor" }
+```
+
 ### Remove a user
 
 ```http
 DELETE /api/v1/users/usr-002
 Authorization: Bearer <admin_token>
+```
+
+**Constraints:**
+- Cannot remove yourself (returns `400`)
+- Cannot remove a superadmin (backend WHERE clause: `role != 'superadmin'`)
+
+**Response `200 OK`:**
+```json
+{ "deleted": "usr-002" }
 ```
 
 ---
@@ -2501,9 +2534,9 @@ All endpoints — method, path, minimum required role, brief description.
 |--------|------|------|-------------|
 | GET | `/api/v1/users/me` | Any | Current user profile |
 | GET | `/api/v1/users` | Admin+ | List org users |
-| POST | `/api/v1/users` | Admin+ | Create/invite user |
-| PATCH | `/api/v1/users/{id}` | Admin+ | Update user role |
-| DELETE | `/api/v1/users/{id}` | Admin+ | Remove user |
+| POST | `/api/v1/users` | Admin+ | Create/invite user (superadmin may set role=superadmin) |
+| PATCH | `/api/v1/users/{id}` | Admin+ | Update user role (superadmin may set role=superadmin) |
+| DELETE | `/api/v1/users/{id}` | Admin+ | Remove user (cannot remove superadmins) |
 
 ### Qubes
 | Method | Path | Auth | Description |

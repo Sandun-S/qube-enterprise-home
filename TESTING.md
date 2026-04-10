@@ -851,31 +851,72 @@ curl -s "$BASE/api/v1/data/readings?sensor_id=$SENSOR_ID&field=active_power_w" \
 
 ## 13. User management
 
+### Admin: invite/manage org users
+
 ```bash
-# Invite user to your org
+# Invite user to your org (admin or superadmin)
+# Roles: viewer | editor | admin
+# If password is omitted, defaults to Qube@2024 and is returned as temp_password
 curl -s -X POST $BASE/api/v1/users \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"email":"operator@acme.com","password":"pass123","role":"editor"}' | jq .
+# {"user_id":"<uuid>","email":"operator@acme.com","role":"editor","org_id":"<uuid>","is_temp_password":false}
+
+# Invite with auto-generated temp password (omit password field)
+curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"viewer@acme.com","role":"viewer"}' | jq .
+# {"user_id":"...","email":"viewer@acme.com","role":"viewer","is_temp_password":true,"temp_password":"Qube@2024"}
+
 USER_ID=<paste user_id>
 
-# List users
+# List users in org
 curl -s $BASE/api/v1/users \
-  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {user_id,email,role}]'
+  -H "Authorization: Bearer $TOKEN" | jq '[.[] | {id,email,role}]'
 
-# Update role
+# Update role (viewer | editor | admin)
 curl -s -X PATCH $BASE/api/v1/users/$USER_ID \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"role":"viewer"}' | jq .
+# {"user_id":"<uuid>","role":"viewer"}
 
-# Remove user
+# Remove user from org (cannot remove yourself or a superadmin)
 curl -s -X DELETE $BASE/api/v1/users/$USER_ID \
   -H "Authorization: Bearer $TOKEN" | jq .
+# {"deleted":"<uuid>"}
 
 # My profile
 curl -s $BASE/api/v1/users/me \
   -H "Authorization: Bearer $TOKEN" | jq .
+# {"user_id":"...","org_id":"...","email":"admin@acme.com","role":"admin","org_name":"Acme Corp"}
+```
+
+### Superadmin: create another superadmin
+
+```bash
+# Superadmin callers may invite users with role "superadmin"
+# The new user is added to the superadmin's org (the global IoT admin org)
+curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"newadmin@iot-team.local","password":"SecurePass!","role":"superadmin"}' | jq .
+# {"user_id":"<uuid>","email":"newadmin@iot-team.local","role":"superadmin","is_temp_password":false}
+
+# Superadmin can also promote an existing user to superadmin
+curl -s -X PATCH $BASE/api/v1/users/$USER_ID \
+  -H "Authorization: Bearer $SA_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"role":"superadmin"}' | jq .
+
+# Non-superadmin attempting to set role=superadmin — request is silently downgraded to "viewer"
+curl -s -X POST $BASE/api/v1/users \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"attempt@acme.com","role":"superadmin"}' | jq .
+# {"user_id":"...","role":"viewer",...}  ← downgraded to viewer
 ```
 
 ---

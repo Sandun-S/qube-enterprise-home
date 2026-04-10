@@ -94,31 +94,33 @@ const Users = {
     },
 
     async init() {
+        // Move modals to document.body so position:fixed works regardless of
+        // any CSS stacking context on ancestor elements (#content, main, etc.)
+        this._liftModals();
+
         this.loadUsers();
 
         // Add superadmin option to role dropdown if current user is superadmin
         if (API.userRole === 'superadmin') {
             const roleSelect = document.getElementById('invite-role');
-            const saOption = document.createElement('option');
-            saOption.value = 'superadmin';
-            saOption.textContent = 'Superadmin';
-            roleSelect.appendChild(saOption);
+            if (roleSelect) {
+                const saOption = document.createElement('option');
+                saOption.value = 'superadmin';
+                saOption.textContent = 'Superadmin';
+                roleSelect.appendChild(saOption);
 
-            roleSelect.addEventListener('change', () => {
-                const note = document.getElementById('invite-superadmin-note');
-                if (roleSelect.value === 'superadmin') {
-                    note.classList.remove('hidden');
-                } else {
-                    note.classList.add('hidden');
-                }
-            });
+                roleSelect.addEventListener('change', () => {
+                    const note = document.getElementById('invite-superadmin-note');
+                    if (note) note.classList.toggle('hidden', roleSelect.value !== 'superadmin');
+                });
+            }
         }
 
         document.getElementById('btn-invite-user')?.addEventListener('click', () => {
             document.getElementById('invite-email').value = '';
             document.getElementById('invite-password').value = '';
             document.getElementById('invite-role').value = 'viewer';
-            document.getElementById('invite-superadmin-note').classList.add('hidden');
+            document.getElementById('invite-superadmin-note')?.classList.add('hidden');
             document.getElementById('invite-modal').classList.remove('hidden');
         });
         document.getElementById('btn-invite-cancel')?.addEventListener('click', () => {
@@ -129,6 +131,16 @@ const Users = {
         document.getElementById('btn-edit-role-cancel')?.addEventListener('click', () => {
             document.getElementById('edit-role-modal').classList.add('hidden');
         });
+    },
+
+    _liftModals() {
+        // Remove any previously body-lifted modals (left over from prior page render)
+        document.querySelectorAll('body > #invite-modal, body > #edit-role-modal').forEach(el => el.remove());
+        // Move freshly-rendered modals from #content up to body
+        const inviteModal  = document.querySelector('#content #invite-modal');
+        const editModal    = document.querySelector('#content #edit-role-modal');
+        if (inviteModal)  document.body.appendChild(inviteModal);
+        if (editModal)    document.body.appendChild(editModal);
     },
 
     async loadUsers() {

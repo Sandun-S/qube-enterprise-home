@@ -1398,10 +1398,10 @@ See ADDING-PROTOCOLS.md for the exact procedure."
 **Route:** `/users`
 **Roles:** Admin+ can view and manage. Viewer sees read-only.
 **API:**
-- `GET /api/v1/users` — list org users
-- `POST /api/v1/users` — invite user
-- `PATCH /api/v1/users/{id}` — change role
-- `DELETE /api/v1/users/{id}` — remove user
+- `GET /api/v1/users` — list org users (admin+)
+- `POST /api/v1/users` — invite/create user (admin+; superadmin can set role=superadmin)
+- `PATCH /api/v1/users/{id}` — change role (admin+; superadmin can set role=superadmin)
+- `DELETE /api/v1/users/{id}` — remove user (admin+; cannot remove superadmins)
 
 **Layout:**
 
@@ -1411,18 +1411,22 @@ Users table:
 | Email | user.email |
 | Role | colored badge (viewer / editor / admin / superadmin) |
 | Joined | created_at |
-| Actions | Edit Role / Remove (Admin+) |
+| Actions | Edit Role / Remove (Admin+; hidden for superadmin rows) |
 
 **Invite User form:**
 - Email input
-- Role dropdown (viewer / editor / admin)
-- Note: invited user receives credentials manually (no email system in v2)
-- `POST /api/v1/users`
+- Password input (optional — leave blank to use default `Qube@2024`; temp password shown in success message)
+- Role dropdown:
+  - All callers: `viewer`, `editor`, `admin`
+  - Superadmin callers only: `superadmin` option also shown (with info note)
+- `POST /api/v1/users` body: `{email, password?, role}`
+- Response includes `is_temp_password: true` + `temp_password` when password was auto-generated
 
 **Edit Role:**
-- Inline dropdown change → `PATCH /api/v1/users/{id}` with `{role}`
-- Can't demote yourself below your own role
-- Superadmin role cannot be assigned via UI (superadmin-only)
+- Inline dropdown → `PATCH /api/v1/users/{id}` with `{role}`
+- Role options: viewer / editor / admin (+ superadmin when caller is superadmin)
+- Cannot change your own role (`callerID == targetID` → 400)
+- Cannot change a superadmin's role (backend enforces `role != 'superadmin'` in WHERE clause)
 
 **Role Descriptions shown in UI:**
 
@@ -1431,7 +1435,9 @@ Users table:
 | viewer | Read-only: view qubes, sensors, telemetry |
 | editor | Create/edit readers, sensors, templates |
 | admin | Everything + user management, Qube claim |
-| superadmin | Everything + global templates, registry, reader templates |
+| superadmin | Everything + global templates, registry, reader templates, create new superadmins |
+
+**Superadmin note:** Users invited by a superadmin are added to the superadmin org (global IoT admin org), not to any tenant org. To add a user to a tenant org, that org's admin must invite them.
 
 ---
 
