@@ -43,7 +43,8 @@
       "Bash(grep -E \"\\\\.go$\")",
       "Bash(wc:*)",
       "Read(//root/go/**)",
-      "Read(//mnt/**)"
+      "Read(//mnt/**)",
+      "Bash(grep:*)"
     ]
   }
 }

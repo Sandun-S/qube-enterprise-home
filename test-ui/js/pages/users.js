@@ -1,6 +1,65 @@
 import API from '../api.js';
 import Components from '../components.js';
 
+// Modal HTML strings — created once and appended to body in init()
+const INVITE_MODAL_HTML = `
+    <div id="invite-modal" class="modal-backdrop hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 style="font-size: 18px;">Invite Team Member</h2>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label>Email <span style="color:var(--error)">*</span></label>
+                    <input type="email" id="invite-email" placeholder="user@example.com">
+                </div>
+                <div class="form-group">
+                    <label>Password <span style="color:var(--text-dim); font-size:11px;">(leave blank to use default: Qube@2024)</span></label>
+                    <input type="password" id="invite-password" placeholder="optional">
+                </div>
+                <div class="form-group">
+                    <label>Role</label>
+                    <select id="invite-role">
+                        <option value="viewer">Viewer</option>
+                        <option value="editor">Editor</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div id="invite-superadmin-note" class="hidden" style="font-size:11px;color:var(--text-dim);margin-top:-8px;padding:8px;background:rgba(183,148,244,0.08);border-radius:6px;">
+                    Superadmin users are added to the global admin org and have access to all tenant management tools.
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-invite-cancel" class="btn btn-ghost">Cancel</button>
+                <button id="btn-invite-submit" class="btn btn-primary">Invite</button>
+            </div>
+        </div>
+    </div>`;
+
+const EDIT_ROLE_MODAL_HTML = `
+    <div id="edit-role-modal" class="modal-backdrop hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 style="font-size: 18px;">Change Role</h2>
+            </div>
+            <div class="modal-body">
+                <p class="page-subtitle" id="edit-role-user-email" style="margin-bottom:16px;"></p>
+                <div class="form-group">
+                    <label>New Role</label>
+                    <select id="edit-role-select">
+                        <option value="viewer">Viewer</option>
+                        <option value="editor">Editor</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="btn-edit-role-cancel" class="btn btn-ghost">Cancel</button>
+                <button id="btn-edit-role-submit" class="btn btn-primary">Save</button>
+            </div>
+        </div>
+    </div>`;
+
 const Users = {
     async render() {
         return `
@@ -32,71 +91,13 @@ const Users = {
                     </div>
                 </div>
             </div>
-
-            <!-- Invite User Modal -->
-            <div id="invite-modal" class="modal-backdrop hidden">
-                <div class="modal">
-                    <div class="modal-header">
-                        <h2 style="font-size: 18px;">Invite Team Member</h2>
-                    </div>
-                    <div class="modal-body">
-                        <div class="form-group">
-                            <label>Email <span style="color:var(--error)">*</span></label>
-                            <input type="email" id="invite-email" placeholder="user@example.com">
-                        </div>
-                        <div class="form-group">
-                            <label>Password <span style="color:var(--text-dim); font-size:11px;">(leave blank to use default: Qube@2024)</span></label>
-                            <input type="password" id="invite-password" placeholder="optional">
-                        </div>
-                        <div class="form-group">
-                            <label>Role</label>
-                            <select id="invite-role">
-                                <option value="viewer">Viewer</option>
-                                <option value="editor">Editor</option>
-                                <option value="admin">Admin</option>
-                            </select>
-                        </div>
-                        <div id="invite-superadmin-note" class="hidden" style="font-size:11px;color:var(--text-dim);margin-top:-8px;padding:8px;background:rgba(183,148,244,0.08);border-radius:6px;">
-                            Superadmin users are added to the global admin org and have access to all tenant management tools.
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button id="btn-invite-cancel" class="btn btn-ghost">Cancel</button>
-                        <button id="btn-invite-submit" class="btn btn-primary">Invite</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Edit Role Modal -->
-            <div id="edit-role-modal" class="modal-backdrop hidden">
-                <div class="modal">
-                    <div class="modal-header">
-                        <h2 style="font-size: 18px;">Change Role</h2>
-                    </div>
-                    <div class="modal-body">
-                        <p class="page-subtitle" id="edit-role-user-email" style="margin-bottom:16px;"></p>
-                        <div class="form-group">
-                            <label>New Role</label>
-                            <select id="edit-role-select">
-                                <option value="viewer">Viewer</option>
-                                <option value="editor">Editor</option>
-                                <option value="admin">Admin</option>
-                            </select>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button id="btn-edit-role-cancel" class="btn btn-ghost">Cancel</button>
-                        <button id="btn-edit-role-submit" class="btn btn-primary">Save</button>
-                    </div>
-                </div>
-            </div>
         `;
     },
 
     async init() {
-        // Move modals to document.body so position:fixed works regardless of
-        // any CSS stacking context on ancestor elements (#content, main, etc.)
-        this._liftModals();
+        // Always (re)create modals directly in body so they are never inside a CSS
+        // stacking context and position:fixed always works relative to the viewport.
+        this._ensureModals();
 
         this.loadUsers();
 
@@ -116,31 +117,35 @@ const Users = {
             }
         }
 
-        document.getElementById('btn-invite-user')?.addEventListener('click', () => {
+        document.getElementById('btn-invite-user').addEventListener('click', () => {
             document.getElementById('invite-email').value = '';
             document.getElementById('invite-password').value = '';
             document.getElementById('invite-role').value = 'viewer';
             document.getElementById('invite-superadmin-note')?.classList.add('hidden');
             document.getElementById('invite-modal').classList.remove('hidden');
         });
-        document.getElementById('btn-invite-cancel')?.addEventListener('click', () => {
+
+        document.getElementById('btn-invite-cancel').addEventListener('click', () => {
             document.getElementById('invite-modal').classList.add('hidden');
         });
-        document.getElementById('btn-invite-submit')?.addEventListener('click', () => this.handleInvite());
+        document.getElementById('btn-invite-submit').addEventListener('click', () => this.handleInvite());
 
-        document.getElementById('btn-edit-role-cancel')?.addEventListener('click', () => {
+        document.getElementById('btn-edit-role-cancel').addEventListener('click', () => {
             document.getElementById('edit-role-modal').classList.add('hidden');
         });
     },
 
-    _liftModals() {
-        // Remove any previously body-lifted modals (left over from prior page render)
-        document.querySelectorAll('body > #invite-modal, body > #edit-role-modal').forEach(el => el.remove());
-        // Move freshly-rendered modals from #content up to body
-        const inviteModal  = document.querySelector('#content #invite-modal');
-        const editModal    = document.querySelector('#content #edit-role-modal');
-        if (inviteModal)  document.body.appendChild(inviteModal);
-        if (editModal)    document.body.appendChild(editModal);
+    _ensureModals() {
+        // Remove any stale modals from a previous page visit
+        document.getElementById('invite-modal')?.remove();
+        document.getElementById('edit-role-modal')?.remove();
+
+        // Inject fresh modals directly into body (never inside #content)
+        const tmp = document.createElement('div');
+        tmp.innerHTML = INVITE_MODAL_HTML + EDIT_ROLE_MODAL_HTML;
+        while (tmp.firstElementChild) {
+            document.body.appendChild(tmp.firstElementChild);
+        }
     },
 
     async loadUsers() {
