@@ -260,7 +260,7 @@ jobs:
           port:     ${{ secrets.CLOUD_VM_SSH_PORT }}
           username: ${{ secrets.CLOUD_VM_USER }}
           key:      ${{ secrets.CLOUD_VM_SSH_KEY }}
-          source: "cloud/migrations/*.sql,cloud/migrations-telemetry/*.sql"
+          source: "cloud/migrations/*.sql,cloud/migrations-telemetry/*.sql,cloud/migrations-telemetry/*.sh"
           target: "/opt/qube-enterprise/"
           strip_components: 0
 

@@ -65,7 +65,7 @@ services:
       - $WORK_DIR/cloud/migrations/001_init.sql:/docker-entrypoint-initdb.d/001_init.sql:ro
       - $WORK_DIR/cloud/migrations/002_global_data.sql:/docker-entrypoint-initdb.d/002_global_data.sql:ro
       - $WORK_DIR/cloud/migrations/003_test_seeds.sql:/docker-entrypoint-initdb.d/003_test_seeds.sql:ro
-      - $WORK_DIR/cloud/migrations-telemetry/001_timescale_init.sql:/docker-entrypoint-initdb.d/010_timescale_init.sql:ro
+      - $WORK_DIR/cloud/migrations-telemetry/001_timescale_init.sh:/docker-entrypoint-initdb.d/010_timescale_init.sh:ro
     ports:
       - "5432:5432"
     healthcheck:

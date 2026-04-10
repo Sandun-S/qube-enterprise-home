@@ -51,7 +51,8 @@ services:
       - ./cloud/migrations/005_deduplicate_reader_templates.sql:/docker-entrypoint-initdb.d/005_deduplicate_reader_templates.sql:ro
       - ./cloud/migrations/006_deduplicate_device_templates.sql:/docker-entrypoint-initdb.d/006_deduplicate_device_templates.sql:ro
       # Telemetry DB setup (creates qubedata database + TimescaleDB hypertable)
-      - ./cloud/migrations-telemetry/001_timescale_init.sql:/docker-entrypoint-initdb.d/010_timescale_init.sql:ro
+      # Shell script used (not .sql) so psql reliably connects to qubedata database
+      - ./cloud/migrations-telemetry/001_timescale_init.sh:/docker-entrypoint-initdb.d/010_timescale_init.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U qubeadmin -d qubedb"]
       interval: 5s
