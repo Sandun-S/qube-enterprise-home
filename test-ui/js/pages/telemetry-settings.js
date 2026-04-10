@@ -28,8 +28,8 @@ const TelemetrySettings = {
                 <div>
                     <h2 class="page-title">Telemetry Mappings</h2>
                     <p class="page-subtitle">
-                        Map InfluxDB device+reading fields to cloud sensor IDs so
-                        <code>enterprise-influx-to-sql</code> can forward edge data to TimescaleDB.
+                        Auto-created when sensors are added. Use this page to inspect mappings
+                        or override aggregation settings for advanced use cases.
                     </p>
                 </div>
                 <button id="btn-new-mapping" class="btn btn-primary" disabled>+ Add Mapping</button>
@@ -49,13 +49,12 @@ const TelemetrySettings = {
             <!-- How it works callout -->
             <div id="ts-howto" class="card" style="margin-bottom:16px;border-left:3px solid var(--primary);display:none;">
                 <div style="font-size:12px;color:var(--text-dim);line-height:1.7;">
-                    <strong style="color:var(--text);">How it works:</strong>
-                    Each mapping tells <code>enterprise-influx-to-sql</code> that the InfluxDB
-                    measurement matching <strong>Device</strong> (equipment tag) +
-                    <strong>Reading</strong> (field key) should be stored under
-                    <strong>Sensor ID</strong> in TimescaleDB.<br>
-                    Use <code>*</code> for Reading to match <em>all</em> fields from that device.
-                    Changes sync to Qube SQLite on the next config pull (config hash changes immediately).
+                    <strong style="color:var(--text);">Auto-created:</strong>
+                    A mapping is automatically added every time you add a sensor —
+                    <code>device = reader name</code>, <code>reading = *</code> (all fields), <code>agg = LAST</code>.
+                    You only need to manually add mappings here if you want to split by specific field keys
+                    or change aggregation settings.
+                    Changes sync to Qube SQLite immediately (config hash changes trigger a conf-agent pull).
                 </div>
             </div>
 
@@ -186,9 +185,9 @@ const TelemetrySettings = {
             if (mappings.length === 0) {
                 container.innerHTML = `
                     <div class="text-center page-subtitle" style="padding:32px 0;">
-                        No mappings yet for this Qube.<br>
-                        <strong>enterprise-influx-to-sql will skip all data</strong> until at least one mapping exists.<br>
-                        Click <em>+ Add Mapping</em> to create one.
+                        No mappings for this Qube yet.<br>
+                        Mappings are <strong>auto-created when you add sensors</strong>.<br>
+                        If you have sensors but no mappings here, re-add the sensor or click <em>+ Add Mapping</em> to create one manually.
                     </div>`;
                 return;
             }

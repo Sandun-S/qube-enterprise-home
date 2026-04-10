@@ -156,6 +156,9 @@ func createSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		// Auto-create telemetry mapping: device=reader.name, reading=*, sensor_id=sensorID
+		autoCreateTelemetryMapping(ctx, pool, qubeID, readerID, sensorID)
+
 		hash, _ := recomputeConfigHash(ctx, pool, qubeID)
 		writeJSON(w, http.StatusCreated, map[string]any{
 			"sensor_id": sensorID,
@@ -281,6 +284,9 @@ func deleteSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "delete failed")
 			return
 		}
+
+		// Remove auto-created telemetry mappings for this sensor
+		tx.Exec(ctx, `DELETE FROM telemetry_settings WHERE sensor_id=$1`, sensorID)
 
 		// Check if reader has other sensors
 		var remainingCount int
@@ -439,6 +445,9 @@ func smartCreateSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, "failed to create sensor: "+err.Error())
 			return
 		}
+
+		// Auto-create telemetry mapping: device=reader.name, reading=*, sensor_id=sensorID
+		autoCreateTelemetryMapping(ctx, pool, qubeID, readerID, sensorID)
 
 		hash, _ := recomputeConfigHash(ctx, pool, qubeID)
 		writeJSON(w, http.StatusCreated, map[string]any{

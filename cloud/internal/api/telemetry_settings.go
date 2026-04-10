@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -254,6 +255,39 @@ func deleteTelemetrySettingHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			"deleted":  true,
 			"new_hash": hash,
 		})
+	}
+}
+
+// autoCreateTelemetryMapping inserts a default telemetry_settings row when a sensor is created.
+// Uses the reader name as the InfluxDB device tag (readers write device=<reader.name>),
+// reading="*" to match all fields from that device, and LAST aggregation.
+//
+// If a mapping for this reader+sensor already exists it is skipped (no error).
+// This is called automatically from createSensorHandler and smartCreateSensorHandler
+// so users never have to touch the telemetry-settings API for the normal flow.
+func autoCreateTelemetryMapping(ctx context.Context, pool *pgxpool.Pool, qubeID, readerID, sensorID string) {
+	var readerName string
+	if err := pool.QueryRow(ctx, `SELECT name FROM readers WHERE id=$1`, readerID).Scan(&readerName); err != nil {
+		log.Printf("[telemetry_settings] could not fetch reader name for auto-mapping: %v", err)
+		return
+	}
+
+	// Skip if an identical mapping already exists (e.g. sensor re-added to same reader)
+	var existing int
+	pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM telemetry_settings
+		 WHERE qube_id=$1 AND device=$2 AND reading='*' AND sensor_id=$3`,
+		qubeID, readerName, sensorID).Scan(&existing)
+	if existing > 0 {
+		return
+	}
+
+	_, err := pool.Exec(ctx,
+		`INSERT INTO telemetry_settings (qube_id, device, reading, agg_time_min, agg_func, sensor_id, tag_names)
+		 VALUES ($1, $2, '*', 1, 'LAST', $3, '[]')`,
+		qubeID, readerName, sensorID)
+	if err != nil {
+		log.Printf("[telemetry_settings] auto-mapping insert failed: %v", err)
 	}
 }
 

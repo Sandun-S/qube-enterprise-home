@@ -820,7 +820,9 @@ curl ... -d '{
 ## 12. Telemetry Settings (InfluxDB → sensor mappings)
 
 These mappings tell `enterprise-influx-to-sql` which InfluxDB device+reading to forward
-to which cloud sensor. They are synced to Qube SQLite and read on every transfer cycle.
+to which cloud sensor. **A default mapping is auto-created when you add a sensor**
+(`device=reader.name`, `reading=*`, `agg_func=LAST`). The API below is for inspection/overrides.
+
 
 ```bash
 # List all mappings for Q-1001 (empty until you create one)
