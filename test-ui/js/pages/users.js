@@ -164,7 +164,7 @@ const Users = {
                     </div>`,
                     `<span class="badge badge-${u.role === 'superadmin' ? 'warning' : u.role === 'admin' ? 'success' : 'blue'}">${u.role.toUpperCase()}</span>`,
                     new Date(u.created_at).toLocaleDateString(),
-                    u.role === 'superadmin' ? '' : `
+                    (u.role === 'superadmin' && API.userRole !== 'superadmin') ? '' : `
                         <button class="btn btn-ghost btn-sm" onclick="Users._openEditRole('${u.id}','${u.email}','${u.role}')">Edit Role</button>
                         <button class="btn btn-ghost btn-sm" style="color:var(--error)" onclick="Users._removeUser('${u.id}','${u.email}')">Remove</button>
                     `

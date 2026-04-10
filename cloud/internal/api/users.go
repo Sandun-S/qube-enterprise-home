@@ -160,8 +160,8 @@ func updateUserRoleHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			`UPDATE users SET role = $1
 			 WHERE id::text = $2
 			   AND org_id = (SELECT org_id FROM users WHERE id = $3::uuid)
-			   AND role != 'superadmin'`,
-			req.Role, targetID, callerID)
+			   AND (role != 'superadmin' OR $4 = 'superadmin')`,
+			req.Role, targetID, callerID, callerRole)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
@@ -190,12 +190,13 @@ func removeUserHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		callerRole, _ := r.Context().Value(ctxRole).(string)
 		result, err := pool.Exec(ctx,
 			`DELETE FROM users
 			 WHERE id::text = $1
 			   AND org_id = (SELECT org_id FROM users WHERE id = $2::uuid)
-			   AND role != 'superadmin'`,
-			targetID, callerID)
+			   AND (role != 'superadmin' OR $3 = 'superadmin')`,
+			targetID, callerID, callerRole)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "db error")
 			return
