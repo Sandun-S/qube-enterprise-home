@@ -165,8 +165,13 @@ func main() {
 		opts.SetPassword(password)
 	}
 
+	// Connect — log every failed attempt so the operator can see what's happening.
+	// SetConnectRetry(true) makes token.Wait() block forever on network errors,
+	// suppressing the error path. Use manual retry instead for visible diagnostics.
+	opts.SetConnectRetry(false)
 	client := mqtt.NewClient(opts)
 	for {
+		log.Infof("Connecting to MQTT broker %s …", brokerURL)
 		token := client.Connect()
 		token.Wait()
 		if token.Error() == nil {

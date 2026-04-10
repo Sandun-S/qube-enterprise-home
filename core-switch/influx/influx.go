@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 
 	"github.com/sirupsen/logrus"
@@ -43,10 +44,13 @@ func BatchWrite(readings []*schema.DataIn) error {
 	var data string
 
 	for _, m := range readings {
+		measurement := escapeLP(m.Table, false)
+		device := escapeLP(m.Equipment, true)
+		reading := escapeLP(m.Reading, true)
 		if m.Tags == "" {
-			data += fmt.Sprintf("%s,device=%s,reading=%s value=%s %d\n", m.Table, m.Equipment, m.Reading, m.Value, m.Time)
+			data += fmt.Sprintf("%s,device=%s,reading=%s value=%s %d\n", measurement, device, reading, m.Value, m.Time)
 		} else {
-			data += fmt.Sprintf("%s,device=%s,reading=%s,%s value=%s %d\n", m.Table, m.Equipment, m.Reading, m.Tags, m.Value, m.Time)
+			data += fmt.Sprintf("%s,device=%s,reading=%s,%s value=%s %d\n", measurement, device, reading, m.Tags, m.Value, m.Time)
 		}
 	}
 
@@ -67,12 +71,28 @@ func BatchWrite(readings []*schema.DataIn) error {
 	}
 	defer response.Body.Close()
 
-	res, err := io.ReadAll(response.Body)
+	res, _ := io.ReadAll(response.Body)
 
-	if len(res) > 0 {
-		log.Debugf("%#v", string(res[:]))
-		log.Debugf("data:%s", data)
+	if response.StatusCode/100 != 2 {
+		log.Errorf("influxdb write failed: status=%d body=%s data=%s", response.StatusCode, string(res), data)
+		return fmt.Errorf("influxdb write status %d", response.StatusCode)
 	}
 
-	return err
+	if len(res) > 0 {
+		log.Debugf("influxdb response: %s", string(res))
+	}
+
+	return nil
+}
+
+// escapeLP escapes special characters for InfluxDB line protocol.
+// In measurement names: escape comma and space.
+// In tag keys/values: also escape equals sign.
+func escapeLP(s string, isTag bool) string {
+	s = strings.ReplaceAll(s, `,`, `\,`)
+	s = strings.ReplaceAll(s, ` `, `\ `)
+	if isTag {
+		s = strings.ReplaceAll(s, `=`, `\=`)
+	}
+	return s
 }
