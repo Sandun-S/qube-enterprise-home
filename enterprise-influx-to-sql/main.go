@@ -8,9 +8,9 @@
 // It keeps the same InfluxDB v1 query pattern but sends to Postgres via TP-API
 // instead of writing directly to a SQL database.
 //
-// Sensor map priority:
-//  1. SQLite telemetry_settings table (when SQLITE_PATH is set)
-//  2. sensor_map.json file (SensorMapPath / SENSOR_MAP_PATH env)
+// Sensor map source:
+//   - SQLite telemetry_settings table when SQLITE_PATH is set (used on all Qubes)
+//   - sensor_map.json file when SQLITE_PATH is not set (legacy JSON fallback only)
 //
 // Key environment variables:
 //

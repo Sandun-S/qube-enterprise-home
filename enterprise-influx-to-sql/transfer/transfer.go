@@ -1,9 +1,9 @@
 // Package transfer orchestrates the ETL loop: read from InfluxDB, map sensor IDs,
 // and send to the Enterprise TP-API.
 //
-// Sensor mapping priority:
-//  1. SQLite telemetry_settings table (if SQLITE_PATH / cfg.Service.SQLitePath is set)
-//  2. sensor_map.json file (cfg.Service.SensorMapPath — written by conf-agent)
+// Sensor mapping source:
+//   - SQLite telemetry_settings table when SQLITE_PATH is set (primary — used on all Qubes)
+//   - sensor_map.json file when SQLITE_PATH is not set (legacy JSON fallback only)
 //
 // The sensor map is reloaded on every run so it picks up updates without a restart.
 package transfer
@@ -93,24 +93,26 @@ func Run(influxClient *influxdb.Client, tpapiClient *tpapi.Client, cfg configs.C
 }
 
 // loadSensorMap returns the sensor map for this run.
-// Prefers SQLite (telemetry_settings) when SQLitePath is set, falls back to JSON file.
+// When SQLITE_PATH is set, SQLite is the sole source of truth — no JSON fallback.
+// Falling back to JSON when SQLite is configured but empty would use stale/wrong mappings.
 func loadSensorMap(cfg configs.Config) schema.SensorMap {
 	if cfg.Service.SQLitePath != "" {
 		m, err := loadFromSQLite(cfg.Service.SQLitePath)
 		if err != nil {
-			log.Printf("[sensor_map] SQLite load failed: %v — trying JSON fallback", err)
-		} else if len(m) > 0 {
-			return m
+			log.Printf("[sensor_map] SQLite load failed: %v", err)
+			return nil
 		}
+		if len(m) == 0 {
+			log.Printf("[sensor_map] SQLite telemetry_settings has 0 rows — no mappings configured yet")
+		}
+		return m
 	}
 	return loadFromJSON(cfg.Service.SensorMapPath)
 }
 
 // loadFromSQLite reads the telemetry_settings table and returns a SensorMap
 // with keys normalised to "device.reading" (dot separator).
-//
-// The sqliteconfig package stores keys as "device:reading" (colon); we convert
-// here so the rest of the code uses a single key format.
+// Keys stored in SQLite are "device:reading" (colon); converted here for consistency.
 func loadFromSQLite(dbPath string) (schema.SensorMap, error) {
 	db, err := sqlite.OpenReadOnly(dbPath)
 	if err != nil {
