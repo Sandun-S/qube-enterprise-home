@@ -28,7 +28,7 @@ def main():
     
     args = parser.parse_args()
 
-    client = mqtt.Client()
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1)
     
     print(f"Connecting to MQTT broker at {args.host}:{args.port}...")
     try:

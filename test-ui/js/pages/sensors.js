@@ -55,11 +55,8 @@ const Sensors = {
                                 </select>
                             </div>
                         </div>
-                        <div id="edit-sensor-key-group" class="form-group hidden">
-                            <label id="edit-sensor-key-label">MQTT Topic</label>
-                            <input type="text" id="edit-sensor-key" placeholder="e.g. qube/sensors/power">
-                            <div id="edit-sensor-key-hint" class="page-subtitle" style="font-size: 11px; margin-top: 4px;"></div>
-                        </div>
+                        <!-- Dynamic param fields from sensor_params_schema — rendered per template -->
+                        <div id="edit-sensor-params-form"></div>
                         <div class="form-group">
                             <label>Tags (JSON)</label>
                             <input type="text" id="edit-sensor-tags" placeholder='{"location": "Room A"}'>
@@ -138,7 +135,7 @@ const Sensors = {
                 allSensors,
                 'sensors-table',
                 (s) => {
-                    // Extract the identifying key from config_json
+                    // Extract the identifying key from config_json (topic for mqtt, ip for snmp, etc.)
                     const cfg = s.config_json || {};
                     const keyVal = cfg.topic || cfg.ip_address || cfg.host || cfg.endpoint || '';
                     const keyDisplay = keyVal
@@ -176,12 +173,14 @@ const Sensors = {
         }
     },
 
-    _openEdit(sensorId) {
+    async _openEdit(sensorId) {
         const s = this._allSensors.find(x => x.id === sensorId);
         if (!s) return;
 
         this._editingId = sensorId;
         this._editingSensor = s;
+        this._editParamsSchema = null;
+
         document.getElementById('edit-sensor-subtitle').textContent = `ID: ${s.id} | Reader: ${s.readerName}`;
         document.getElementById('edit-sensor-name').value = s.name;
         document.getElementById('edit-sensor-output').value = s.output || 'influxdb';
@@ -190,37 +189,34 @@ const Sensors = {
         document.getElementById('edit-sensor-tags').value = s.tags_json ? JSON.stringify(s.tags_json) : '{}';
         document.getElementById('edit-sensor-config').value = s.config_json ? JSON.stringify(s.config_json, null, 2) : '{}';
         document.getElementById('edit-config-error').classList.add('hidden');
-        // Reset config editor visibility
         document.getElementById('edit-sensor-config').style.display = 'none';
         document.getElementById('btn-toggle-config-editor').textContent = '🛠️ Edit Raw Config';
 
-        // Show topic / address key field based on what's in config_json
-        const cfg = s.config_json || {};
-        const keyGroup = document.getElementById('edit-sensor-key-group');
-        const keyInput = document.getElementById('edit-sensor-key');
-        const keyLabel = document.getElementById('edit-sensor-key-label');
-        const keyHint = document.getElementById('edit-sensor-key-hint');
-        if (cfg.topic !== undefined) {
-            keyLabel.textContent = 'MQTT Topic';
-            keyHint.textContent = 'The MQTT subscription topic for this sensor (e.g. qube/sensors/power)';
-            keyInput.value = cfg.topic || '';
-            this._editConfigKey = 'topic';
-            keyGroup.classList.remove('hidden');
-        } else if (cfg.ip_address !== undefined) {
-            keyLabel.textContent = 'Device IP Address';
-            keyHint.textContent = 'IP address of the device this sensor polls';
-            keyInput.value = cfg.ip_address || '';
-            this._editConfigKey = 'ip_address';
-            keyGroup.classList.remove('hidden');
-        } else if (cfg.host !== undefined) {
-            keyLabel.textContent = 'Host / IP';
-            keyHint.textContent = 'Hostname or IP of the device';
-            keyInput.value = cfg.host || '';
-            this._editConfigKey = 'host';
-            keyGroup.classList.remove('hidden');
-        } else {
-            keyGroup.classList.add('hidden');
-            this._editConfigKey = null;
+        // Render dynamic param fields from the template's sensor_params_schema
+        const paramsContainer = document.getElementById('edit-sensor-params-form');
+        paramsContainer.innerHTML = '';
+
+        if (s.template_id) {
+            try {
+                const tmpl = await API.getDeviceTemplate(s.template_id);
+                const schema = tmpl.sensor_params_schema;
+                if (schema && schema.properties && Object.keys(schema.properties).length > 0) {
+                    this._editParamsSchema = schema;
+                    // Render the form fields using the same schema renderer as onboarding
+                    Components.renderSchemaForm(schema, 'edit-sensor-params-form', 'edit-sns');
+                    // Pre-populate each field from the existing config_json
+                    const cfg = s.config_json || {};
+                    for (const key of Object.keys(schema.properties)) {
+                        const el = document.getElementById(`edit-sns-${key}`);
+                        if (el && cfg[key] !== undefined) {
+                            el.value = cfg[key];
+                        }
+                    }
+                }
+            } catch (err) {
+                // Template fetch failed — fall back to raw config only
+                console.warn('Could not load template schema:', err.message);
+            }
         }
 
         document.getElementById('edit-sensor-modal').classList.remove('hidden');
@@ -248,21 +244,22 @@ const Sensors = {
                 return;
             }
 
-            // Build config_json: start from current sensor config, then apply changes
             const configEditor = document.getElementById('edit-sensor-config');
             if (configEditor.style.display !== 'none' && configRaw) {
-                // Raw editor was open — use whatever the user typed
+                // Raw editor open — use it directly
                 try {
                     payload.config_json = JSON.parse(configRaw);
                 } catch {
                     document.getElementById('edit-config-error').classList.remove('hidden');
                     return;
                 }
-            } else if (this._editConfigKey) {
-                // Topic/address field was shown — merge updated key back into existing config
-                const keyVal = document.getElementById('edit-sensor-key').value.trim();
-                const existingConfig = (this._editingSensor?.config_json) ? { ...this._editingSensor.config_json } : {};
-                existingConfig[this._editConfigKey] = keyVal;
+            } else if (this._editParamsSchema) {
+                // Collect values from the dynamic schema form and merge into existing config_json
+                const updatedParams = Components.collectSchemaValues(this._editParamsSchema, 'edit-sns');
+                const existingConfig = { ...(this._editingSensor?.config_json || {}) };
+                for (const [k, v] of Object.entries(updatedParams)) {
+                    existingConfig[k] = v;
+                }
                 payload.config_json = existingConfig;
             }
 

@@ -29,8 +29,8 @@ python mqtt_feeder.py --host localhost --topic qube/sensors/environment
 If you are running the Qube edge stack in a Multipass VM:
 
 1. **Start a Broker on your desktop**: Use Docker for the easiest setup:
-   ```bash
-   docker run -d -p 1883:1883 -v ./test/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf eclipse-mosquitto
+   ```powershell
+   docker run -d --name qube-broker -p 1883:1883 -v "${PWD}/test/mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf" eclipse-mosquitto
    ```
 2. **Run the Feeder**:
    ```bash
