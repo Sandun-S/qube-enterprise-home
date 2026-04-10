@@ -15,6 +15,8 @@ const Onboarding = {
         advancedMode: false,
         readerConnValues: {},    // for endpoint protocols: connection form values
         customSensorConfig: null,
+        sensorName: '',          // captured from step 4 DOM before leaving
+        sensorParams: {},        // captured from step 4 DOM before leaving
     },
 
     async render() {
@@ -366,6 +368,9 @@ const Onboarding = {
                     return;
                 }
             }
+            // Capture name and params from DOM before step 4 is replaced
+            this.state.sensorName = document.getElementById('sensor-name')?.value.trim() || '';
+            this.state.sensorParams = Components.collectSchemaValues(this.state.deviceTemplate.sensor_params_schema, 'sns');
             this.goToStep(5);
         };
     },
@@ -429,9 +434,9 @@ const Onboarding = {
             btn.disabled = true;
             btn.textContent = 'SYNCING...';
 
-            const sensorName = document.getElementById('sensor-name')?.value.trim()
-                || `${this.state.deviceTemplate.name}_Sensor`;
-            const sensorParams = Components.collectSchemaValues(this.state.deviceTemplate.sensor_params_schema, 'sns');
+            // Use values captured from step 4 DOM (step 4 no longer exists in DOM at this point)
+            const sensorName = this.state.sensorName || `${this.state.deviceTemplate.name}_Sensor`;
+            const sensorParams = this.state.sensorParams || {};
 
             if (this.state.selectedReaderId) {
                 // User explicitly selected an existing reader → use classic endpoint

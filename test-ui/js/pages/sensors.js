@@ -55,6 +55,11 @@ const Sensors = {
                                 </select>
                             </div>
                         </div>
+                        <div id="edit-sensor-key-group" class="form-group hidden">
+                            <label id="edit-sensor-key-label">MQTT Topic</label>
+                            <input type="text" id="edit-sensor-key" placeholder="e.g. qube/sensors/power">
+                            <div id="edit-sensor-key-hint" class="page-subtitle" style="font-size: 11px; margin-top: 4px;"></div>
+                        </div>
                         <div class="form-group">
                             <label>Tags (JSON)</label>
                             <input type="text" id="edit-sensor-tags" placeholder='{"location": "Room A"}'>
@@ -129,22 +134,31 @@ const Sensors = {
             };
 
             Components.renderTable(
-                ['Sensor Name', 'Qube', 'Reader', 'Protocol', 'Output', 'Status', 'Actions'],
+                ['Sensor Name', 'Qube', 'Reader', 'Topic / Address', 'Protocol', 'Output', 'Status', 'Actions'],
                 allSensors,
                 'sensors-table',
-                (s) => [
-                    `<b>${s.name}</b><div style="font-size: 10px; color: var(--text-dim);">${s.template_name || 'custom'}</div>`,
-                    `<code>${s.qubeId}</code>`,
-                    `<span style="font-size: 12px;">${s.readerName}</span>`,
-                    `<span class="badge badge-blue" style="font-size: 9px;">${s.protocol || ''}</span>`,
-                    `<span class="badge" style="font-size: 9px; background: rgba(255,255,255,0.05);">${s.output}</span>`,
-                    `<span class="badge badge-${s.status === 'active' ? 'success' : 'error'}">${s.status}</span>`,
-                    `<div class="flex">
-                        <button class="btn btn-primary btn-sm btn-sensor-live" data-id="${s.id}">Live</button>
-                        <button class="btn btn-ghost btn-sm btn-sensor-edit" data-id="${s.id}">Edit</button>
-                        <button class="btn btn-ghost btn-sm btn-sensor-delete" data-id="${s.id}" data-name="${s.name}" style="color: var(--error);">Del</button>
-                    </div>`
-                ]
+                (s) => {
+                    // Extract the identifying key from config_json
+                    const cfg = s.config_json || {};
+                    const keyVal = cfg.topic || cfg.ip_address || cfg.host || cfg.endpoint || '';
+                    const keyDisplay = keyVal
+                        ? `<code style="font-size: 10px; color: var(--primary);">${keyVal}</code>`
+                        : `<span style="color: var(--text-dim); font-size: 11px;">—</span>`;
+                    return [
+                        `<b>${s.name}</b><div style="font-size: 10px; color: var(--text-dim);">${s.template_name || 'custom'}</div>`,
+                        `<code>${s.qubeId}</code>`,
+                        `<span style="font-size: 12px;">${s.readerName}</span>`,
+                        keyDisplay,
+                        `<span class="badge badge-blue" style="font-size: 9px;">${s.protocol || ''}</span>`,
+                        `<span class="badge" style="font-size: 9px; background: rgba(255,255,255,0.05);">${s.output}</span>`,
+                        `<span class="badge badge-${s.status === 'active' ? 'success' : 'error'}">${s.status}</span>`,
+                        `<div class="flex">
+                            <button class="btn btn-primary btn-sm btn-sensor-live" data-id="${s.id}">Live</button>
+                            <button class="btn btn-ghost btn-sm btn-sensor-edit" data-id="${s.id}">Edit</button>
+                            <button class="btn btn-ghost btn-sm btn-sensor-delete" data-id="${s.id}" data-name="${s.name}" style="color: var(--error);">Del</button>
+                        </div>`
+                    ];
+                }
             );
 
             document.querySelectorAll('.btn-sensor-live').forEach(btn => {
@@ -167,6 +181,7 @@ const Sensors = {
         if (!s) return;
 
         this._editingId = sensorId;
+        this._editingSensor = s;
         document.getElementById('edit-sensor-subtitle').textContent = `ID: ${s.id} | Reader: ${s.readerName}`;
         document.getElementById('edit-sensor-name').value = s.name;
         document.getElementById('edit-sensor-output').value = s.output || 'influxdb';
@@ -178,6 +193,35 @@ const Sensors = {
         // Reset config editor visibility
         document.getElementById('edit-sensor-config').style.display = 'none';
         document.getElementById('btn-toggle-config-editor').textContent = '🛠️ Edit Raw Config';
+
+        // Show topic / address key field based on what's in config_json
+        const cfg = s.config_json || {};
+        const keyGroup = document.getElementById('edit-sensor-key-group');
+        const keyInput = document.getElementById('edit-sensor-key');
+        const keyLabel = document.getElementById('edit-sensor-key-label');
+        const keyHint = document.getElementById('edit-sensor-key-hint');
+        if (cfg.topic !== undefined) {
+            keyLabel.textContent = 'MQTT Topic';
+            keyHint.textContent = 'The MQTT subscription topic for this sensor (e.g. qube/sensors/power)';
+            keyInput.value = cfg.topic || '';
+            this._editConfigKey = 'topic';
+            keyGroup.classList.remove('hidden');
+        } else if (cfg.ip_address !== undefined) {
+            keyLabel.textContent = 'Device IP Address';
+            keyHint.textContent = 'IP address of the device this sensor polls';
+            keyInput.value = cfg.ip_address || '';
+            this._editConfigKey = 'ip_address';
+            keyGroup.classList.remove('hidden');
+        } else if (cfg.host !== undefined) {
+            keyLabel.textContent = 'Host / IP';
+            keyHint.textContent = 'Hostname or IP of the device';
+            keyInput.value = cfg.host || '';
+            this._editConfigKey = 'host';
+            keyGroup.classList.remove('hidden');
+        } else {
+            keyGroup.classList.add('hidden');
+            this._editConfigKey = null;
+        }
 
         document.getElementById('edit-sensor-modal').classList.remove('hidden');
     },
@@ -204,15 +248,22 @@ const Sensors = {
                 return;
             }
 
-            // Only send config if the editor was used (textarea is visible or has been changed)
+            // Build config_json: start from current sensor config, then apply changes
             const configEditor = document.getElementById('edit-sensor-config');
             if (configEditor.style.display !== 'none' && configRaw) {
+                // Raw editor was open — use whatever the user typed
                 try {
                     payload.config_json = JSON.parse(configRaw);
                 } catch {
                     document.getElementById('edit-config-error').classList.remove('hidden');
                     return;
                 }
+            } else if (this._editConfigKey) {
+                // Topic/address field was shown — merge updated key back into existing config
+                const keyVal = document.getElementById('edit-sensor-key').value.trim();
+                const existingConfig = (this._editingSensor?.config_json) ? { ...this._editingSensor.config_json } : {};
+                existingConfig[this._editConfigKey] = keyVal;
+                payload.config_json = existingConfig;
             }
 
             await API.updateSensor(this._editingId, payload);
