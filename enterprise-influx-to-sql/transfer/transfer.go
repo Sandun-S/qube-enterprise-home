@@ -153,10 +153,16 @@ func loadFromJSON(path string) schema.SensorMap {
 	return m
 }
 
-// lookupSensor tries "Equipment.Reading" first, then just "Equipment" as a fallback
-// for sensors where every reading maps to the same sensor ID.
+// lookupSensor resolves a sensor ID from the sensor map.
+// Priority:
+//  1. Exact match:    "Equipment.Reading"  (per-field mapping)
+//  2. Wildcard match: "Equipment.*"        (auto-created: all readings → same sensor_id)
+//  3. Device-only:    "Equipment"          (legacy JSON format)
 func lookupSensor(m schema.SensorMap, equipment, reading string) string {
 	if id, ok := m[equipment+"."+reading]; ok {
+		return id
+	}
+	if id, ok := m[equipment+".*"]; ok {
 		return id
 	}
 	if id, ok := m[equipment]; ok {

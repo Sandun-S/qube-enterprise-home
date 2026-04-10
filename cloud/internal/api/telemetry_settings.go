@@ -265,19 +265,15 @@ func deleteTelemetrySettingHandler(pool *pgxpool.Pool) http.HandlerFunc {
 // If a mapping for this reader+sensor already exists it is skipped (no error).
 // This is called automatically from createSensorHandler and smartCreateSensorHandler
 // so users never have to touch the telemetry-settings API for the normal flow.
-func autoCreateTelemetryMapping(ctx context.Context, pool *pgxpool.Pool, qubeID, readerID, sensorID string) {
-	var readerName string
-	if err := pool.QueryRow(ctx, `SELECT name FROM readers WHERE id=$1`, readerID).Scan(&readerName); err != nil {
-		log.Printf("[telemetry_settings] could not fetch reader name for auto-mapping: %v", err)
-		return
-	}
-
+func autoCreateTelemetryMapping(ctx context.Context, pool *pgxpool.Pool, qubeID, readerID, sensorID, sensorName string) {
+	// device must match what readers write as Equipment in line protocol (sensor.Name),
+	// not the reader name — readers use the sensor name, not the reader name, as Equipment.
 	// Skip if an identical mapping already exists (e.g. sensor re-added to same reader)
 	var existing int
 	pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM telemetry_settings
 		 WHERE qube_id=$1 AND device=$2 AND reading='*' AND sensor_id=$3`,
-		qubeID, readerName, sensorID).Scan(&existing)
+		qubeID, sensorName, sensorID).Scan(&existing)
 	if existing > 0 {
 		return
 	}
@@ -285,7 +281,7 @@ func autoCreateTelemetryMapping(ctx context.Context, pool *pgxpool.Pool, qubeID,
 	_, err := pool.Exec(ctx,
 		`INSERT INTO telemetry_settings (qube_id, device, reading, agg_time_min, agg_func, sensor_id, tag_names)
 		 VALUES ($1, $2, '*', 1, 'LAST', $3, '[]')`,
-		qubeID, readerName, sensorID)
+		qubeID, sensorName, sensorID)
 	if err != nil {
 		log.Printf("[telemetry_settings] auto-mapping insert failed: %v", err)
 	}

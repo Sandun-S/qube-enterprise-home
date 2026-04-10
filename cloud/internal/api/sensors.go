@@ -156,8 +156,8 @@ func createSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Auto-create telemetry mapping: device=reader.name, reading=*, sensor_id=sensorID
-		autoCreateTelemetryMapping(ctx, pool, qubeID, readerID, sensorID)
+		// Auto-create telemetry mapping: device=sensor.name, reading=*, sensor_id=sensorID
+		autoCreateTelemetryMapping(ctx, pool, qubeID, readerID, sensorID, req.Name)
 
 		hash, _ := recomputeConfigHash(ctx, pool, qubeID)
 		writeJSON(w, http.StatusCreated, map[string]any{
@@ -446,8 +446,8 @@ func smartCreateSensorHandler(pool *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		// Auto-create telemetry mapping: device=reader.name, reading=*, sensor_id=sensorID
-		autoCreateTelemetryMapping(ctx, pool, qubeID, readerID, sensorID)
+		// Auto-create telemetry mapping: device=sensor.name, reading=*, sensor_id=sensorID
+		autoCreateTelemetryMapping(ctx, pool, qubeID, readerID, sensorID, req.Name)
 
 		hash, _ := recomputeConfigHash(ctx, pool, qubeID)
 		writeJSON(w, http.StatusCreated, map[string]any{
